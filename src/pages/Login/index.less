@@ -1,0 +1,138 @@
+.login-container {
+  height: 100vh;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: linear-gradient(to right, #f7f9fa, #edf1f2);
+  position: relative;
+  overflow: hidden;
+
+  // 背景装饰元素
+  &::before {
+    content: '';
+    position: absolute;
+    width: 200%;
+    height: 200%;
+    top: -50%;
+    left: -50%;
+    z-index: 0;
+    background: radial-gradient(ellipse at center, rgba(24, 144, 255, 0.1) 0%, rgba(24, 144, 255, 0) 70%);
+    animation: rotate 60s infinite linear;
+  }
+
+  @keyframes rotate {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  .login-content {
+    width: 400px;
+    z-index: 1;
+
+    .login-header {
+      text-align: center;
+      margin-bottom: 28px;
+
+      .logo {
+        width: 80px;
+        height: 80px;
+        margin: 0 auto 16px;
+        background-color: #1890ff;
+        border-radius: 50%;
+        // 实际项目中这里应该是logo图片
+        &::after {
+          content: '囧';
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          height: 100%;
+          font-size: 48px;
+          color: white;
+          font-weight: bold;
+        }
+      }
+
+      h3 {
+        margin: 0;
+        color: #333;
+        font-weight: 500;
+      }
+    }
+
+    .login-card {
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+
+      .ant-tabs-nav {
+        margin-bottom: 24px;
+      }
+
+      .ant-tabs-tab {
+        font-size: 16px;
+        padding: 8px 16px;
+      }
+
+      .ant-form-item {
+        margin-bottom: 20px;
+      }
+
+      .login-form-forgot {
+        float: right;
+        color: #1890ff;
+      }
+
+      .captcha-img-container {
+        height: 40px;
+        cursor: pointer;
+        border: 1px solid #d9d9d9;
+        border-radius: 4px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
+        img {
+          max-width: 100%;
+          max-height: 100%;
+        }
+      }
+
+      .other-links {
+        text-align: center;
+        margin-top: 8px;
+        margin-bottom: 0;
+      }
+    }
+
+    .login-footer {
+      margin-top: 40px;
+      text-align: center;
+      color: rgba(0, 0, 0, 0.45);
+      font-size: 12px;
+    }
+  }
+}
+
+// 针对表单元素的样式优化
+.ant-input-affix-wrapper {
+  border-radius: 4px;
+}
+
+.ant-btn-primary {
+  height: 44px;
+  font-size: 16px;
+  border-radius: 4px;
+}
+
+// 响应式调整
+@media screen and (max-width: 576px) {
+  .login-container .login-content {
+    width: 90%;
+    padding: 0 16px;
+  }
+}

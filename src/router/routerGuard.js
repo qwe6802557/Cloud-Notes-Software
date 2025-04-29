@@ -5,7 +5,8 @@ const LoadingSpinner = () => <div>Loading...</div>;
 
 export const RouterGuard = ({ component: Component, meta }) => {
     const location = useLocation();
-    const isAuthenticated = localStorage.getItem('token'); // 根据需求修改认证逻辑
+    // const isAuthenticated = localStorage.getItem('token'); // 根据需求修改认证逻辑
+    const isAuthenticated = true;
 
     // 处理需要认证的路由
     if (meta?.requiresAuth && !isAuthenticated) {

@@ -4,11 +4,20 @@ import { lazy } from 'react';
 export const routes = [
     {
         path: '/',
-        component: lazy(() => import('@/pages/Home')),
+        component: lazy(() => import('@/components/Layout/MainLayout')),
         meta: {
-            title: '首页',
-            requiresAuth: false
-        }
+            requiresAuth: true
+        },
+        children: [
+            {
+                path: '',  // 默认子路由
+                component: lazy(() => import('@/pages/Home')),
+                meta: {
+                    title: '首页',
+                    requiresAuth: true
+                }
+            }
+        ]
     },
     {
         path: '/login',
@@ -18,22 +27,12 @@ export const routes = [
             requiresAuth: false
         }
     },
-    // {
-    //     path: '/settings',
-    //     element: lazy(() => import('../pages/Settings')),
-    //     meta: {
-    //         title: '设置',
-    //         requiresAuth: true
-    //     },
-    //     children: [
-    //         {
-    //             path: 'profile',
-    //             element: lazy(() => import('../pages/Settings/Profile')),
-    //             meta: {
-    //                 title: '个人信息',
-    //                 requiresAuth: true
-    //             }
-    //         }
-    //     ]
-    // }
+    {
+        path: '/register',
+        component: lazy(() => import('@/pages/Register')),
+        meta: {
+            title: '注册页',
+            requiresAuth: false
+        }
+    }
 ];
