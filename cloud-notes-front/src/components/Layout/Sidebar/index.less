@@ -1,0 +1,155 @@
+.sidebar {
+  height: 100vh;
+  background-color: #f7f9fa;
+  border-right: 1px solid #e8e8e8;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.05);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+
+  .user-info {
+    padding: 16px;
+    border-bottom: 1px solid #e8e8e8;
+    background-color: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+
+    .user-content {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .user-avatar {
+      background-color: #1890ff;
+      box-shadow: 0 2px 8px rgba(24, 144, 255, 0.2);
+    }
+
+    .user-details {
+      .username {
+        color: #333;
+        font-size: 14px;
+        font-weight: 500;
+      }
+
+      .user-type {
+        color: #999;
+        font-size: 12px;
+      }
+    }
+  }
+
+  .sidebar-scroll-container {
+    flex: 1;
+    overflow-y: auto;
+    padding-bottom: 120px; // 为底部菜单留出空间
+
+    &::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background-color: rgba(0, 0, 0, 0.1);
+      border-radius: 2px;
+    }
+
+    &:hover::-webkit-scrollbar-thumb {
+      background-color: rgba(0, 0, 0, 0.2);
+    }
+  }
+
+  .menu-section {
+    background-color: transparent;
+
+    .ant-menu-item {
+      margin: 4px 0;
+      border-radius: 0 4px 4px 0;
+
+      &:hover {
+        color: #1890ff;
+        background-color: rgba(24, 144, 255, 0.05);
+      }
+
+      &.ant-menu-item-selected {
+        color: #1890ff;
+        background-color: #e6f7ff;
+        font-weight: 500;
+
+        &::after {
+          opacity: 1;
+          border-right: 3px solid #1890ff;
+        }
+      }
+    }
+  }
+
+  .menu-divider {
+    margin: 8px 0;
+    border-color: #e8e8e8;
+  }
+
+  .notebook-header {
+    padding: 8px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+
+    .notebook-title {
+      color: #999;
+      font-size: 12px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .add-notebook-btn {
+      color: #999;
+
+      &:hover {
+        color: #1890ff;
+        background-color: rgba(24, 144, 255, 0.05);
+      }
+    }
+  }
+
+  .notebooks-menu {
+    .notebook-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 130px;
+    }
+
+    .notebook-count {
+      font-size: 12px;
+      color: #999;
+      padding: 0 6px;
+      background-color: rgba(0, 0, 0, 0.03);
+      border-radius: 10px;
+      min-width: 24px;
+      text-align: center;
+    }
+  }
+
+  .bottom-actions {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    border-top: 1px solid #e8e8e8;
+    background-color: #fff;
+    box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.03);
+
+    .bottom-menu {
+      background-color: transparent;
+
+      .ant-menu-item {
+        &:hover {
+          color: #1890ff;
+          background-color: rgba(24, 144, 255, 0.05);
+        }
+
+        &.ant-menu-item-selected {
+          background-color: transparent !important;
+        }
+      }
+    }
+  }
+}
