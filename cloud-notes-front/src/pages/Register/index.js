@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, Form, Input, Button, Row, Col, message, Typography } from 'antd';
 import { UserOutlined, LockOutlined, SafetyCertificateOutlined, MobileOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { sendVerificationCode } from '@/api/user';
 import './index.less';
 
 const Register = () => {
@@ -12,11 +13,23 @@ const Register = () => {
 
     // 处理发送验证码
     const handleSendCode = () => {
-        form.validateFields(['phone']).then(values => {
-            setCountdown(60);
-            message.success(`验证码已发送至手机号: ${values.phone}`);
+        form.validateFields(['phone']).then(async values => {
+            try {
+                // 调用发送验证码API
+                const response = await sendVerificationCode({ phone: values.phone });
+                console.log(response, '111');
+                if (response && response.code === 200 ) { // 假设成功的响应包含 success: true
+                    setCountdown(60);
+                    message.success(`验证码已成功发送至手机号: ${values.phone}`);
+                } else {
+                    message.error(response.message || '发送验证码失败，请稍后重试');
+                }
+            } catch (error) {
+                console.log('发送验证码API调用失败:', error);
+                message.error('发送验证码失败，请检查网络或稍后重试');
+            }
         }).catch(err => {
-            message.error('请输入有效的手机号');
+            console.log(err);
         });
     };
 

@@ -4,18 +4,13 @@ const AppError = require('../utils/AppError');
 
 // 发送短信验证码
 exports.sendVerificationCode = asyncHandler(async (req, res) => {
-    const { phone } = req.body;
-
-    if (!phone) {
-        throw new AppError('请提供手机号', 400);
-    }
-
+    const { phone } = req.query;
     const result = await authService.sendVerificationCode(phone);
 
     res.status(200).json({
-        status: 'success',
+        code: 200,
         message: '验证码已发送',
-        data: process.env.NODE_ENV === 'development' ? { code: result } : {}
+        data: process.env.NODE_ENV === 'development' ? { verifyCode: result } : {}
     });
 });
 
@@ -35,8 +30,9 @@ exports.register = asyncHandler(async (req, res) => {
 
     const result = await authService.register(req.body);
 
-    res.status(201).json({
-        status: 'success',
+    res.status(200).json({
+        code: 200,
+        message: '注册成功',
         data: result
     });
 });
@@ -52,7 +48,8 @@ exports.login = asyncHandler(async (req, res) => {
     const result = await authService.login(account, password);
 
     res.status(200).json({
-        status: 'success',
+        code: 200,
+        message: '登录成功',
         data: result
     });
 });
@@ -60,7 +57,8 @@ exports.login = asyncHandler(async (req, res) => {
 // 获取当前用户信息 (增加手机号字段)
 exports.getCurrentUser = asyncHandler(async (req, res) => {
     res.status(200).json({
-        status: 'success',
+        code: 200,
+        message: '获取当前用户信息成功',
         data: {
             user: {
                 id: req.user._id,
@@ -78,7 +76,8 @@ exports.getCurrentUser = asyncHandler(async (req, res) => {
 // 退出登录保持不变
 exports.logout = (req, res) => {
     res.status(200).json({
-        status: 'success',
-        message: '退出登录成功'
+        code: 200,
+        message: '退出登录成功',
+        data: null
     });
 };

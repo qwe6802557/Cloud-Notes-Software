@@ -5,9 +5,9 @@ const { protect } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.post('/verifyCode', authController.sendVerificationCode);
-router.post('/register', validate(schemas.userRegister), authController.register);
-router.post('/login', validate(schemas.userLogin), authController.login);
+router.get('/verifyCode', validate(schemas.sendVerificationCode, 'query'), authController.sendVerificationCode);
+router.post('/register', validate(schemas.userRegister, 'body'), authController.register);
+router.post('/login', validate(schemas.userLogin, 'body'), authController.login);
 router.get('/currentUser', protect, authController.getCurrentUser);
 router.post('/logout', authController.logout);
 

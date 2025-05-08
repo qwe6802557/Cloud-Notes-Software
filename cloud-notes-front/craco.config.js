@@ -116,7 +116,7 @@ module.exports = {
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://10.15.2.124:46080',  // 线上地址: http://10.217.240.30:8080 测试地址: http://10.15.2.124:46080
+        target: 'http://localhost:3001',
         changeOrigin: true,
         pathRewrite: { '^/api': '' },
       },

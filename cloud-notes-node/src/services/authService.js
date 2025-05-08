@@ -54,11 +54,6 @@ exports.register = async (userData) => {
 
 // 发送验证码
 exports.sendVerificationCode = async (phone) => {
-    // 检查手机号格式
-    if (!/^1[3-9]\d{9}$/.test(phone)) {
-        throw new AppError('请输入有效的手机号', 400);
-    }
-
     return await smsService.sendVerificationCode(phone);
 };
 

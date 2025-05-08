@@ -170,7 +170,7 @@ const Login = () => {
             </Form.Item>
 
             <Form.Item className="other-links">
-                <Button type="link" href="#/register">注册账号</Button>
+                <Button type="link" href="/register">注册账号</Button>
             </Form.Item>
         </Form>
     );
