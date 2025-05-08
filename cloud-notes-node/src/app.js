@@ -8,6 +8,7 @@ const errorHandler = require('./middleware/errorHandler');
 const AppError = require('./utils/AppError');
 const connectDB = require('./config/db');
 const loggerMiddleware = require('./middleware/logger');
+const session = require('express-session');
 
 // 连接数据库
 connectDB();
@@ -62,6 +63,13 @@ app.use((req, res, next) => {
 
 // 错误处理中间件
 app.use(errorHandler);
+// 注册session
+app.use(session({
+    secret: config.sessionKey,
+    resave: false,
+    saveUninitialized: true,
+    // cookie: { secure: process.env.NODE_ENV === 'production' } // 在生产环境中是否使用 HTTPS
+}));
 
 // 启动服务器
 const PORT = config.port;

@@ -100,6 +100,44 @@ const schemas = {
                 'string.empty': '验证码不能为空'
             })
     }),
+    // 用户名+密码登录验证
+    accountLogin: Joi.object({
+        username: Joi.string().trim().pattern(/^[a-zA-Z0-9]{3,50}$/).required()
+            .messages({
+                'string.pattern.base': '用户名只能包含字母和数字',
+                'string.min': '用户名至少需要3个字符',
+                'string.max': '用户名最多50个字符',
+                'any.required': '用户名不能为空',
+                'string.empty': '用户名不能为空'
+            }),
+        password: Joi.string().min(6).required()
+            .messages({
+                'string.min': '密码至少需要6个字符',
+                'any.required': '密码不能为空',
+                'string.empty': '密码不能为空'
+            }),
+        captcha: Joi.string().length(4).required() // 假设图形验证码为4位
+            .messages({
+                'string.length': '验证码不正确',
+                'any.required': '验证码不能为空',
+                'string.empty': '验证码不能为空'
+            })
+    }),
+    // 手机号+验证码登录验证
+    phoneLogin: Joi.object({
+        phone: Joi.string().pattern(/^1[3-9]\d{9}$/).required()
+            .messages({
+                'string.pattern.base': '请输入有效的手机号',
+                'any.required': '手机号不能为空',
+                'string.empty': '手机号不能为空'
+            }),
+        smsCode: Joi.string().length(6).required()
+            .messages({
+                'string.length': '短信验证码必须是6位',
+                'any.required': '短信验证码不能为空',
+                'string.empty': '短信验证码不能为空'
+            })
+    }),
 
     // 笔记本创建验证
     notebookCreate: Joi.object({
@@ -130,7 +168,7 @@ const schemas = {
             .messages({
                 'any.required': '必须指定笔记本'
             }),
-        tags: Joi.array().items(Joi.string())
+        tags: Joi.array().items(Joi.string()),
     }),
 
     // 发送验证码验证

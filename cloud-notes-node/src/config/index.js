@@ -4,8 +4,9 @@ module.exports = {
     environment: process.env.NODE_ENV || 'development',
     port: process.env.PORT || 3000,
     mongoURI: process.env.MONGODB_URI || 'mongodb://localhost:27017/cloud_note',
-    jwtSecret: process.env.JWT_SECRET || 'your_jwt_secret_key',
+    jwtSecret: process.env.JWT_SECRET || 'cloud_jwt_secret_key',
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
+    sessionKey: process.env.SESSION_KEY || 'cloud_session_secret_key',
     // 文件上传配置
     uploads: {
         path: process.env.UPLOAD_PATH || 'uploads/',
