@@ -6,10 +6,11 @@ exports.getUserNotebooks = asyncHandler(async (req, res) => {
     const notebooks = await notebookService.getUserNotebooks(req.user._id);
 
     res.status(200).json({
-        status: 'success',
-        results: notebooks.length,
+        code: 200,
+        message: '获取笔记本列表成功',
         data: {
-            notebooks
+            notebooks,
+            results: notebooks.length
         }
     });
 });
@@ -19,7 +20,8 @@ exports.createNotebook = asyncHandler(async (req, res) => {
     const notebook = await notebookService.createNotebook(req.body, req.user._id);
 
     res.status(201).json({
-        status: 'success',
+        code: 200,
+        message: '创建笔记本成功',
         data: {
             notebook
         }
@@ -32,7 +34,8 @@ exports.getNotebook = asyncHandler(async (req, res) => {
     const notebook = req.resource;
 
     res.status(200).json({
-        status: 'success',
+        code: 200,
+        message: '获取笔记本成功',
         data: {
             notebook
         }
@@ -48,7 +51,8 @@ exports.updateNotebook = asyncHandler(async (req, res) => {
     );
 
     res.status(200).json({
-        status: 'success',
+        code: 200,
+        message: '更新笔记本成功',
         data: {
             notebook
         }
@@ -59,8 +63,9 @@ exports.updateNotebook = asyncHandler(async (req, res) => {
 exports.deleteNotebook = asyncHandler(async (req, res) => {
     await notebookService.deleteNotebook(req.params.id, req.user._id);
 
-    res.status(204).json({
-        status: 'success',
+    res.status(200).json({
+        code: 200,
+        message: '删除笔记本成功',
         data: null
     });
 });

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Editor, Viewer } from '@bytemd/react';
 import gfm from '@bytemd/plugin-gfm';
 import highlight from '@bytemd/plugin-highlight';
@@ -28,7 +28,7 @@ import 'bytemd/dist/index.css';
 import 'highlight.js/styles/github.css';
 import 'katex/dist/katex.css';
 import './index.less';
-import {replaceTargetDomChild} from "@/utils/common";
+import { getNoteDetail } from '@/api/notes';
 
 // 中文本地化
 const locale = {
@@ -52,63 +52,152 @@ const plugins = [
     breaks() // 换行符支持
 ];
 
-const NoteEditor = ({ selectedNote, onSave }) => {
+const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange }) => {
     const [content, setContent] = useState('# 欢迎使用囧人云笔记\n\n请在左侧选择一个笔记本，然后选择或创建一个笔记开始编辑。');
     const [mode, setMode] = useState('split'); // 'edit', 'split', 'preview'
     const [loading, setLoading] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [autoSaving, setAutoSaving] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
+    const [lastSavedAt, setLastSavedAt] = useState(null);
+    const [saveError, setSaveError] = useState('');
     const [wordCount, setWordCount] = useState({ words: 0, lines: 0 });
+    const autoSaveTimerRef = useRef(null);
+    const lastSavedContentRef = useRef('');
+    const loadingNoteRef = useRef(false);
 
-    // 监听选中笔记变化，加载笔记内容
-    useEffect(() => {
-        if (selectedNote) {
-            setLoading(true);
-            // 模拟加载笔记内容
-            setTimeout(() => {
-                // 模拟加载笔记内容
-                const noteContent = selectedNote === 1
-                    ? '# 项目计划书\n\n这是一个关于云笔记项目的计划书，包含功能规划和时间节点...\n\n## 功能规划\n\n- [x] 用户登录注册\n- [x] 笔记本管理\n- [ ] 笔记编辑器\n- [ ] 笔记分享\n\n## 时间节点\n\n|  阶段  |  时间  |  内容  |\n|  ----  |  ----  |  ----  |\n| 第一阶段 | 5月 | 基础框架搭建 |\n| 第二阶段 | 6月 | 核心功能开发 |\n| 第三阶段 | 7月 | 测试与优化 |\n'
-                    : '# 新建笔记\n\n开始编写你的笔记吧...';
-
-                setContent(noteContent);
-                updateWordCount(noteContent);
-                setLoading(false);
-                setIsDirty(false);
-            }, 500);
-        }
-    }, [selectedNote]);
-
-    // 更新字数统计
-    const updateWordCount = (text) => {
+    const updateWordCount = useCallback((text) => {
         const lines = text.split('\n').length;
         const words = text.trim().split(/\s+/).filter(Boolean).length;
         setWordCount({ words, lines });
-    };
+    }, []);
+
+    useEffect(() => {
+        if (onDirtyChange) {
+            onDirtyChange(isDirty);
+        }
+    }, [isDirty, onDirtyChange]);
+
+    useEffect(() => {
+        if (onSaveStateChange) {
+            onSaveStateChange({ saving, autoSaving });
+        }
+    }, [autoSaving, onSaveStateChange, saving]);
+
+    // 监听选中笔记变化，加载笔记内容
+    useEffect(() => {
+        let mounted = true;
+
+        if (autoSaveTimerRef.current) {
+            clearTimeout(autoSaveTimerRef.current);
+        }
+
+        if (selectedNote) {
+            loadingNoteRef.current = true;
+            setLoading(true);
+            setSaveError('');
+
+            getNoteDetail(selectedNote)
+                .then(result => {
+                    if (!mounted) {
+                        return;
+                    }
+
+                    const noteContent = result?.note?.content || '';
+                    setContent(noteContent);
+                    updateWordCount(noteContent);
+                    lastSavedContentRef.current = noteContent;
+                    setLastSavedAt(result?.note?.updatedAt ? new Date(result.note.updatedAt) : null);
+                    setIsDirty(false);
+                })
+                .catch(error => {
+                    if (mounted) {
+                        message.error('笔记加载失败');
+                    }
+                })
+                .finally(() => {
+                    if (mounted) {
+                        loadingNoteRef.current = false;
+                        setLoading(false);
+                    }
+                });
+        } else {
+            loadingNoteRef.current = false;
+            setContent('# 欢迎使用囧人云笔记\n\n请在左侧选择一个笔记本，然后选择或创建一个笔记开始编辑。');
+            updateWordCount('# 欢迎使用囧人云笔记\n\n请在左侧选择一个笔记本，然后选择或创建一个笔记开始编辑。');
+            lastSavedContentRef.current = '';
+            setIsDirty(false);
+            setSaveError('');
+            setLastSavedAt(null);
+        }
+
+        return () => {
+            mounted = false;
+        };
+    }, [selectedNote, updateWordCount]);
 
     // 内容变更处理
     const handleChange = (value) => {
         setContent(value);
         updateWordCount(value);
-        setIsDirty(true);
+        setSaveError('');
+        if (!loadingNoteRef.current) {
+            setIsDirty(value !== lastSavedContentRef.current);
+        }
     };
 
     // 保存笔记
-    const handleSave = () => {
+    const handleSave = useCallback(async (options = {}) => {
         if (!selectedNote) {
-            message.warning('请先选择一个笔记');
+            if (!options.silent) {
+                message.warning('请先选择一个笔记');
+            }
             return;
         }
 
-        setLoading(true);
-        // 模拟保存操作
-        setTimeout(() => {
+        if (!isDirty && content === lastSavedContentRef.current) {
+            return;
+        }
+
+        if (saving || autoSaving) {
+            return;
+        }
+
+        if (options.auto) {
+            setAutoSaving(true);
+        } else {
+            setSaving(true);
+        }
+
+        try {
             if (onSave) {
-                onSave(selectedNote, content);
+                await onSave(selectedNote, content);
             }
-            setLoading(false);
+            lastSavedContentRef.current = content;
+            setLastSavedAt(new Date());
             setIsDirty(false);
-            message.success('保存成功');
-        }, 800);
+            setSaveError('');
+
+            if (!options.silent) {
+                message.success('保存成功');
+            }
+        } catch (error) {
+            setSaveError('保存失败');
+            if (!options.silent) {
+                message.error('保存失败，请稍后重试');
+            }
+            throw error;
+        } finally {
+            if (options.auto) {
+                setAutoSaving(false);
+            } else {
+                setSaving(false);
+            }
+        }
+    }, [autoSaving, content, isDirty, onSave, saving, selectedNote]);
+
+    const handleRetrySave = () => {
+        handleSave().catch(() => {});
     };
 
     // 编辑时隐藏工具
@@ -129,12 +218,24 @@ const NoteEditor = ({ selectedNote, onSave }) => {
         }
     }
 
-    // 更新状态栏内容
-    const updateStatusBar = () => {
-        setTimeout(() => {
-            replaceTargetDomChild('.bytemd-status-left', ` 自动保存于 ${new Date().toLocaleTimeString()}`)
-        }, 100);
-    };
+    const saveStatusText = useMemo(() => {
+        if (saveError) {
+            return saveError;
+        }
+        if (saving) {
+            return '正在保存...';
+        }
+        if (autoSaving) {
+            return '正在自动保存...';
+        }
+        if (isDirty) {
+            return '有未保存更改';
+        }
+        if (lastSavedAt) {
+            return `已保存于 ${lastSavedAt.toLocaleTimeString()}`;
+        }
+        return '未选择笔记';
+    }, [autoSaving, isDirty, lastSavedAt, saveError, saving]);
 
     // 渲染编辑器工具栏
     const renderToolbar = () => (
@@ -179,9 +280,9 @@ const NoteEditor = ({ selectedNote, onSave }) => {
                     <Button
                         type="primary"
                         icon={<SaveOutlined />}
-                        onClick={handleSave}
-                        loading={loading}
-                        disabled={!isDirty}
+                        onClick={() => handleSave()}
+                        loading={saving}
+                        disabled={!selectedNote || !isDirty || loading || autoSaving}
                     >
                         保存
                     </Button>
@@ -216,10 +317,40 @@ const NoteEditor = ({ selectedNote, onSave }) => {
             }, 50);
         }
     }, [mode]);
-    // 时间更新
+    // 自动保存
     useEffect(() => {
-        updateStatusBar();
-    });
+        if (!selectedNote || !isDirty || loading || saving || autoSaving) {
+            return undefined;
+        }
+
+        autoSaveTimerRef.current = setTimeout(() => {
+            handleSave({ auto: true, silent: true }).catch(() => {});
+        }, 2000);
+
+        return () => {
+            if (autoSaveTimerRef.current) {
+                clearTimeout(autoSaveTimerRef.current);
+            }
+        };
+    }, [autoSaving, content, handleSave, isDirty, loading, saving, selectedNote]);
+
+    // 刷新或关闭页面前提示未保存内容
+    useEffect(() => {
+        const handleBeforeUnload = event => {
+            if (!isDirty) {
+                return;
+            }
+
+            event.preventDefault();
+            event.returnValue = '';
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+        };
+    }, [isDirty]);
 
     // 如果没有选中笔记且非加载状态，显示空状态
     if (!selectedNote && !loading) {
@@ -270,14 +401,16 @@ const NoteEditor = ({ selectedNote, onSave }) => {
                 </Spin>
             </div>
 
-            {/*<div className="editor-footer">*/}
-            {/*    <div className="sync-info">*/}
-            {/*        <SyncOutlined className="sync-icon" /> 自动保存于 {new Date().toLocaleTimeString()}*/}
-            {/*    </div>*/}
-            {/*    <div className="action-info">*/}
-            {/*        字数: {wordCount.words} | 行数: {wordCount.lines}*/}
-            {/*    </div>*/}
-            {/*</div>*/}
+            <div className="editor-footer">
+                <div className={`sync-info ${saveError ? 'sync-error' : ''}`}>
+                    {saveStatusText}
+                    {saveError && selectedNote && (
+                        <Button type="link" size="small" onClick={handleRetrySave} disabled={saving || autoSaving}>
+                            重试
+                        </Button>
+                    )}
+                </div>
+            </div>
         </div>
     );
 };

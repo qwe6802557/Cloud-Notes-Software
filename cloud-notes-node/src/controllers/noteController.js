@@ -3,6 +3,21 @@ const Tag = require('../models/Tag');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 
+const buildKeywordFilter = keyword => {
+    const value = (keyword || '').trim();
+    if (!value) {
+        return null;
+    }
+    const escapedValue = value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+    return {
+        $or: [
+            { title: { $regex: escapedValue, $options: 'i' } },
+            { content: { $regex: escapedValue, $options: 'i' } }
+        ]
+    };
+};
+
 // 创建笔记
 exports.createNote = asyncHandler(async (req, res) => {
     const { title, content, notebookId, tags } = req.body;
@@ -27,7 +42,8 @@ exports.createNote = asyncHandler(async (req, res) => {
     }
 
     res.status(201).json({
-        status: 'success',
+        code: 200,
+        message: '创建笔记成功',
         data: {
             note
         }
@@ -41,6 +57,7 @@ exports.getNotebookNotes = asyncHandler(async (req, res) => {
 
     const { page = 1, limit = 20, sort = '-updatedAt' } = req.query;
     const skip = (page - 1) * limit;
+    const keywordFilter = buildKeywordFilter(req.query.keyword || req.query.search);
 
     const query = {
         notebookId,
@@ -48,26 +65,100 @@ exports.getNotebookNotes = asyncHandler(async (req, res) => {
         isDeleted: false
     };
 
+    if (keywordFilter) {
+        Object.assign(query, keywordFilter);
+    }
+
     const notes = await Note.find(query)
         .sort(sort)
         .skip(parseInt(skip))
         .limit(parseInt(limit))
-        .select('title updatedAt createdAt isStarred tags'); // 不返回完整内容
+        .select('title content updatedAt createdAt isStarred tags');
 
     const total = await Note.countDocuments(query);
 
     res.status(200).json({
-        status: 'success',
-        results: notes.length,
-        total,
+        code: 200,
+        message: '获取笔记列表成功',
         data: {
-            notes
+            notes,
+            results: notes.length,
+            total
+        }
+    });
+});
+
+exports.getStarredNotes = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const { page = 1, limit = 20, sort = '-updatedAt' } = req.query;
+    const skip = (page - 1) * limit;
+    const keywordFilter = buildKeywordFilter(req.query.keyword || req.query.search);
+
+    const query = {
+        userId,
+        isDeleted: false,
+        isStarred: true
+    };
+
+    if (keywordFilter) {
+        Object.assign(query, keywordFilter);
+    }
+
+    const notes = await Note.find(query)
+        .sort(sort)
+        .skip(parseInt(skip))
+        .limit(parseInt(limit))
+        .select('title content updatedAt createdAt isStarred tags notebookId');
+
+    const total = await Note.countDocuments(query);
+
+    res.status(200).json({
+        code: 200,
+        message: '获取收藏笔记成功',
+        data: {
+            notes,
+            results: notes.length,
+            total
+        }
+    });
+});
+
+exports.getRecentNotes = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const { page = 1, limit = 20 } = req.query;
+    const skip = (page - 1) * limit;
+    const keywordFilter = buildKeywordFilter(req.query.keyword || req.query.search);
+
+    const query = {
+        userId,
+        isDeleted: false
+    };
+
+    if (keywordFilter) {
+        Object.assign(query, keywordFilter);
+    }
+
+    const notes = await Note.find(query)
+        .sort({ lastOpenedAt: -1, updatedAt: -1 })
+        .skip(parseInt(skip))
+        .limit(parseInt(limit))
+        .select('title content updatedAt createdAt lastOpenedAt isStarred tags notebookId');
+
+    const total = await Note.countDocuments(query);
+
+    res.status(200).json({
+        code: 200,
+        message: '获取最近文档成功',
+        data: {
+            notes,
+            results: notes.length,
+            total
         }
     });
 });
 
 // 获取单个笔记
-exports.getNote = asyncHandler(async (req, res) => {
+exports.getNote = asyncHandler(async (req, res, next) => {
     const noteId = req.params.id;
     const userId = req.user._id;
 
@@ -83,7 +174,8 @@ exports.getNote = asyncHandler(async (req, res) => {
     await note.save({ validateBeforeSave: false });
 
     res.status(200).json({
-        status: 'success',
+        code: 200,
+        message: '获取笔记成功',
         data: {
             note
         }
@@ -141,7 +233,38 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
     }
 
     res.status(200).json({
-        status: 'success',
+        code: 200,
+        message: '更新笔记成功',
+        data: {
+            note
+        }
+    });
+});
+
+exports.toggleStarred = asyncHandler(async (req, res, next) => {
+    const noteId = req.params.id;
+    const userId = req.user._id;
+    const { isStarred } = req.body;
+
+    const note = await Note.findOneAndUpdate(
+        { _id: noteId, userId, isDeleted: false },
+        {
+            isStarred: Boolean(isStarred),
+            updatedAt: new Date()
+        },
+        {
+            new: true,
+            runValidators: true
+        }
+    ).populate('tags', 'name color');
+
+    if (!note) {
+        return next(new AppError('笔记不存在', 404));
+    }
+
+    res.status(200).json({
+        code: 200,
+        message: isStarred ? '收藏笔记成功' : '取消收藏成功',
         data: {
             note
         }
@@ -175,14 +298,88 @@ exports.deleteNote = asyncHandler(async (req, res, next) => {
         );
     }
 
-    res.status(204).json({
-        status: 'success',
+    res.status(200).json({
+        code: 200,
+        message: '删除笔记成功',
         data: null
     });
 });
 
+// 获取回收站笔记
+exports.getDeletedNotes = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const { page = 1, limit = 20, sort = '-deletedAt' } = req.query;
+    const skip = (page - 1) * limit;
+    const keywordFilter = buildKeywordFilter(req.query.keyword || req.query.search);
+
+    const query = {
+        userId,
+        isDeleted: true
+    };
+
+    if (keywordFilter) {
+        Object.assign(query, keywordFilter);
+    }
+
+    const notes = await Note.find(query)
+        .sort(sort)
+        .skip(parseInt(skip))
+        .limit(parseInt(limit))
+        .select('title content updatedAt createdAt deletedAt notebookId tags');
+
+    const total = await Note.countDocuments(query);
+
+    res.status(200).json({
+        code: 200,
+        message: '获取回收站笔记成功',
+        data: {
+            notes,
+            results: notes.length,
+            total
+        }
+    });
+});
+
+// 恢复笔记
+exports.restoreNote = asyncHandler(async (req, res, next) => {
+    const noteId = req.params.id;
+    const userId = req.user._id;
+
+    const note = await Note.findOneAndUpdate(
+        { _id: noteId, userId, isDeleted: true },
+        {
+            isDeleted: false,
+            deletedAt: null,
+            updatedAt: new Date()
+        },
+        {
+            new: true,
+            runValidators: true
+        }
+    ).populate('tags', 'name color');
+
+    if (!note) {
+        return next(new AppError('笔记不存在', 404));
+    }
+
+    if (note.tags && note.tags.length > 0) {
+        await Tag.updateMany(
+            { _id: { $in: note.tags } },
+            { $inc: { count: 1 } }
+        );
+    }
+
+    res.status(200).json({
+        code: 200,
+        message: '恢复笔记成功',
+        data: {
+            note
+        }
+    });
+});
+
 // 搜索笔记
-exports.searchNotes = asyncHandler(async (req, res) => {
+exports.searchNotes = asyncHandler(async (req, res, next) => {
     const { query } = req.query;
     const userId = req.user._id;
 
@@ -205,10 +402,11 @@ exports.searchNotes = asyncHandler(async (req, res) => {
         .select('title updatedAt createdAt notebookId');
 
     res.status(200).json({
-        status: 'success',
-        results: notes.length,
+        code: 200,
+        message: '搜索笔记成功',
         data: {
-            notes
+            notes,
+            results: notes.length
         }
     });
 });

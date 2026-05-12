@@ -1,9 +1,41 @@
 // 引入所需的 Electron 模块
-const { app, BrowserWindow } = require('electron'); // app 控制应用程序的事件生命周期，BrowserWindow 创建和管理应用窗口
+const { app, BrowserWindow, shell } = require('electron'); // app 控制应用程序的事件生命周期，BrowserWindow 创建和管理应用窗口
 const path = require('path'); // Node.js 的 path 模块，用于处理文件路径
+const { fileURLToPath, pathToFileURL } = require('url');
 
 // 直接检查开发环境
 const isDev = !app.isPackaged;
+const devServerUrl = 'http://localhost:3000';
+const appBuildPath = path.join(__dirname, '../build');
+const appEntryUrl = isDev
+    ? devServerUrl
+    : pathToFileURL(path.join(appBuildPath, 'index.html')).toString();
+
+const isInsideAppBuildPath = targetPath => {
+    const relativePath = path.relative(appBuildPath, targetPath);
+    return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+};
+
+const isAllowedNavigation = targetUrl => {
+    try {
+        const parsedUrl = new URL(targetUrl);
+        if (isDev) {
+            return parsedUrl.origin === new URL(devServerUrl).origin;
+        }
+        return parsedUrl.protocol === 'file:' && isInsideAppBuildPath(fileURLToPath(parsedUrl));
+    } catch (error) {
+        return false;
+    }
+};
+
+const isSafeExternalUrl = targetUrl => {
+    try {
+        const parsedUrl = new URL(targetUrl);
+        return ['http:', 'https:', 'mailto:'].includes(parsedUrl.protocol);
+    } catch (error) {
+        return false;
+    }
+};
 
 // 创建应用窗口的函数
 function createWindow() {
@@ -12,17 +44,33 @@ function createWindow() {
         width: 1200,  // 窗口宽度
         height: 800, // 窗口高度
         webPreferences: {
-            nodeIntegration: true,     // 启用 Node.js 集成
-            contextIsolation: false    // 禁用上下文隔离，允许渲染进程访问 Node.js API
+            preload: path.join(__dirname, 'preload.js'),
+            nodeIntegration: false,     // 禁用 Node.js 集成
+            contextIsolation: true,    // 启用上下文隔离，避免渲染进程直接访问 Node.js API
+            sandbox: true
         }
     });
 
     // 根据开发环境或生产环境加载不同的应用内容
-    mainWindow.loadURL(
-        isDev
-            ? 'http://localhost:3000'  // 开发环境下：加载开发服务器地址
-            : `file://${path.join(__dirname, '../build/index.html')}` // 生产环境下：加载打包后的 HTML 文件
-    );
+    mainWindow.loadURL(appEntryUrl);
+
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+        if (isSafeExternalUrl(url)) {
+            shell.openExternal(url);
+        }
+        return { action: 'deny' };
+    });
+
+    mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+        if (isAllowedNavigation(navigationUrl)) {
+            return;
+        }
+
+        event.preventDefault();
+        if (isSafeExternalUrl(navigationUrl)) {
+            shell.openExternal(navigationUrl);
+        }
+    });
 
     // 在开发环境中打开开发者工具
     if (isDev) {

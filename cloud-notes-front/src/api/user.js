@@ -35,3 +35,12 @@ export const getUserInfo = params => {
         params
     })
 }
+
+// 更新用户信息
+export const updateUserInfo = data => {
+    return request({
+        url: '/auth/currentUser',
+        method: 'put',
+        data
+    })
+}

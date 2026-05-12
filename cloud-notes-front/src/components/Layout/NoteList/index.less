@@ -144,6 +144,15 @@
       margin: 8px;
       box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 
+      .note-meta {
+        min-width: 0;
+        max-width: 76px;
+
+        .note-time {
+          max-width: 58px;
+        }
+      }
+
       &:hover {
         transform: translateY(-2px);
         box-shadow: 0 3px 10px rgba(0, 0, 0, 0.08);
@@ -188,16 +197,23 @@
     .note-meta {
       color: rgba(0, 0, 0, 0.45);
       font-size: 12px;
+      min-width: 0;
 
       .time-icon {
         font-size: 12px;
+      }
+
+      .note-time {
+        display: inline-block;
+        max-width: 130px;
+        vertical-align: bottom;
       }
     }
 
     .more-btn {
       color: #d9d9d9;
 
-      &:hover {
+      &:hover, &.ant-dropdown-open {
         color: #1890ff;
         background-color: rgba(24, 144, 255, 0.05);
       }

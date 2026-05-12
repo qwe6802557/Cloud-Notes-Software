@@ -2,6 +2,8 @@
   "name": "my-electron-app",
   "version": "0.1.0",
   "private": true,
+  "description": "Cloud Notes desktop client",
+  "author": "Cloud Notes",
   "main": "electron/main.js",
   "dependencies": {
     "@ant-design/icons": "^6.0.0",
@@ -20,8 +22,6 @@
     "concurrently": "^9.1.2",
     "cra-template": "1.2.0",
     "cross-env": "^7.0.3",
-    "electron": "^33.3.1",
-    "electron-builder": "^25.1.8",
     "highlight.js": "^11.8.0",
     "katex": "^0.16.8",
     "react": "^18.2.0",
@@ -38,25 +38,34 @@
     "test": "craco test",
     "eject": "react-scripts eject",
     "electron-dev": "concurrently \"cross-env BROWSER=none npm start\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron-pack": "npm run build && electron-builder -c.extraMetadata.main=build/main.js",
+    "electron-pack": "cross-env PUBLIC_URL=./ npm run build && electron-builder",
+    "electron-pack:dir": "cross-env PUBLIC_URL=./ npm run build && electron-builder --dir",
     "postinstall": "electron-builder install-app-deps"
   },
   "build": {
+    "extends": null,
     "appId": "com.myapp.id",
+    "productName": "Cloud Notes",
+    "asar": true,
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
     "files": [
       "build/**/*",
-      "node_modules/**/*"
+      "electron/**/*",
+      "package.json"
     ],
     "directories": {
-      "buildResources": "assets"
+      "buildResources": "assets",
+      "output": "dist"
     },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.utilities"
     },
     "win": {
       "target": [
-        "nsis",
-        "msi"
+        "nsis"
       ]
     },
     "linux": {
@@ -87,6 +96,8 @@
   },
   "devDependencies": {
     "@craco/craco": "^7.1.0",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
     "craco-less": "^3.0.1",
     "less": "^4.3.0",
     "less-loader": "^12.2.0"

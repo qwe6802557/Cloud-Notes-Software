@@ -1,29 +1,22 @@
 const express = require('express');
+const noteController = require('../controllers/noteController');
+const { protect } = require('../middleware/auth');
+const { validate, schemas } = require('../middleware/validator');
+
 const router = express.Router();
 
-// 获取所有笔记
-router.get('/', (req, res) => {
-    res.json({ message: '获取所有笔记' });
-});
+router.use(protect);
 
-// 获取单个笔记
-router.get('/:id', (req, res) => {
-    res.json({ message: `获取ID为${req.params.id}的笔记` });
-});
-
-// 创建笔记
-router.post('/', (req, res) => {
-    res.json({ message: '创建新笔记', data: req.body });
-});
-
-// 更新笔记
-router.put('/:id', (req, res) => {
-    res.json({ message: `更新ID为${req.params.id}的笔记`, data: req.body });
-});
-
-// 删除笔记
-router.delete('/:id', (req, res) => {
-    res.json({ message: `删除ID为${req.params.id}的笔记` });
-});
+router.get('/search', noteController.searchNotes);
+router.get('/recent', noteController.getRecentNotes);
+router.get('/starred', noteController.getStarredNotes);
+router.get('/deleted', noteController.getDeletedNotes);
+router.get('/notebook/:notebookId', noteController.getNotebookNotes);
+router.post('/', validate(schemas.noteCreate, 'body'), noteController.createNote);
+router.get('/:id', noteController.getNote);
+router.put('/:id', noteController.updateNote);
+router.put('/:id/starred', noteController.toggleStarred);
+router.put('/:id/restore', noteController.restoreNote);
+router.delete('/:id', noteController.deleteNote);
 
 module.exports = router;

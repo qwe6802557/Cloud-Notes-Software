@@ -9,7 +9,7 @@ const noteSchema = new mongoose.Schema({
     },
     content: {
         type: String,
-        required: [true, '内容不能为空']
+        default: ''
     },
     rawContent: {
         type: String

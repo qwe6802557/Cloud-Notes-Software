@@ -2,34 +2,40 @@ const User = require('../models/User');
 const Notebook = require('../models/Notebook');
 const AppError = require('../utils/AppError');
 const { generateToken } = require('../utils/tokenUtils');
-const smsService = require('./smsService');
+const emailService = require('./emailService');
+
+const formatUser = user => ({
+    id: user._id,
+    username: user.username,
+    phone: user.phone,
+    email: user.email,
+    avatar: user.avatar,
+    role: user.role,
+    createdAt: user.createdAt
+});
 
 // 用户注册
 exports.register = async (userData) => {
-    // 检查手机号是否已存在
-    const existingUserByPhone = await User.findOne({ phone: userData.phone });
-    if (existingUserByPhone) {
-        throw new AppError('该手机号已注册', 400);
-    }
-
     // 检查邮箱是否已存在
-    if (userData.email) {
-        const existingUserByEmail = await User.findOne({ email: userData.email });
-        if (existingUserByEmail) {
-            throw new AppError('该邮箱已注册', 400);
-        }
+    const existingUserByEmail = await User.findOne({ email: userData.email });
+    if (existingUserByEmail) {
+        throw new AppError('该邮箱已注册', 400);
     }
 
-    // 验证短信验证码
-    await smsService.verifyCode(userData.phone, userData.verificationCode);
+    // 验证邮箱验证码
+    await emailService.verifyCode(userData.email, userData.verificationCode);
 
     // 创建用户
-    const newUser = await User.create({
+    const createUserData = {
         username: userData.username,
-        email: userData.email || null, // 邮箱可选
-        phone: userData.phone, // 手机号必填
+        email: userData.email,
         password: userData.password
-    });
+    };
+    if (userData.phone) {
+        createUserData.phone = userData.phone;
+    }
+
+    const newUser = await User.create(createUserData);
 
     // 创建默认笔记本
     await Notebook.create({
@@ -43,27 +49,18 @@ exports.register = async (userData) => {
 
     return {
         token,
-        user: {
-            id: newUser._id,
-            username: newUser.username,
-            phone: newUser.phone,
-            email: newUser.email
-        }
+        user: formatUser(newUser)
     };
 };
 
 // 发送验证码
-exports.sendVerificationCode = async (phone) => {
-    return await smsService.sendVerificationCode(phone);
+exports.sendVerificationCode = async (email) => {
+    return await emailService.sendVerificationCode(email);
 };
 
-// 用户登录 (修改为支持手机号或邮箱登录)
+// 用户登录
 exports.login = async (account, password) => {
-    // 检查用户是否存在 (支持手机号或邮箱登录)
-    const isEmail = /^\S+@\S+\.\S+$/.test(account);
-    const searchQuery = isEmail ? { email: account } : { phone: account };
-
-    const user = await User.findOne(searchQuery).select('+password');
+    const user = await User.findOne({ email: account.toLowerCase() }).select('+password');
     if (!user) {
         throw new AppError('账号或密码不正确', 401);
     }
@@ -79,11 +76,33 @@ exports.login = async (account, password) => {
 
     return {
         token,
-        user: {
-            id: user._id,
-            username: user.username,
-            phone: user.phone,
-            email: user.email
-        }
+        user: formatUser(user)
+    };
+};
+
+exports.updateCurrentUser = async (userId, updateData) => {
+    const user = await User.findById(userId).select('+password');
+    if (!user) {
+        throw new AppError('用户不存在', 404);
+    }
+
+    const { username, avatar, password } = updateData;
+
+    if (username !== undefined) {
+        user.username = username.trim();
+    }
+
+    if (avatar !== undefined) {
+        user.avatar = avatar || 'default-avatar.png';
+    }
+
+    if (password) {
+        user.password = password;
+    }
+
+    await user.save();
+
+    return {
+        user: formatUser(user)
     };
 };

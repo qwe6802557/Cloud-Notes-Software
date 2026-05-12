@@ -9,6 +9,7 @@ router.get('/verifyCode', validate(schemas.sendVerificationCode, 'query'), authC
 router.post('/register', validate(schemas.userRegister, 'body'), authController.register);
 router.post('/login', validate(schemas.userLogin, 'body'), authController.login);
 router.get('/currentUser', protect, authController.getCurrentUser);
+router.put('/currentUser', protect, validate(schemas.userUpdate, 'body'), authController.updateCurrentUser);
 router.post('/logout', authController.logout);
 
 module.exports = router;

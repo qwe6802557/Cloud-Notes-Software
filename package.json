@@ -1,0 +1,18 @@
+{
+  "name": "cloud-notes-software",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloud Notes full-stack development workspace",
+  "scripts": {
+    "dev": "concurrently -n FRONTEND,BACKEND -c cyan,green --kill-others-on-fail \"npm run dev:front\" \"npm run dev:backend\"",
+    "start": "npm run dev",
+    "dev:front": "npm --prefix cloud-notes-front start",
+    "dev:backend": "npm --prefix cloud-notes-node run dev",
+    "build:front": "npm --prefix cloud-notes-front run build",
+    "pack:electron": "npm --prefix cloud-notes-front run electron-pack",
+    "pack:electron:dir": "npm --prefix cloud-notes-front run electron-pack:dir"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

@@ -1,16 +1,20 @@
 import React, { Suspense } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { isAuthenticated } from '@/utils/auth';
 
 const LoadingSpinner = () => <div>Loading...</div>;
 
 export const RouterGuard = ({ component: Component, meta }) => {
     const location = useLocation();
-    // const isAuthenticated = localStorage.getItem('token'); // 根据需求修改认证逻辑
-    const isAuthenticated = true;
+    const authenticated = isAuthenticated();
 
     // 处理需要认证的路由
-    if (meta?.requiresAuth && !isAuthenticated) {
+    if (meta?.requiresAuth && !authenticated) {
         return <Navigate to="/login" state={{ from: location }} replace />;
+    }
+
+    if (!meta?.requiresAuth && authenticated && ['/login', '/register'].includes(location.pathname)) {
+        return <Navigate to="/" replace />;
     }
 
     // 页面标题

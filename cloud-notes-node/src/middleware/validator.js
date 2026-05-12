@@ -47,15 +47,15 @@ const schemas = {
                 'any.required': '用户名不能为空',
                 'string.empty': '用户名不能为空'
             }),
-        phone: Joi.string().pattern(/^1[3-9]\d{9}$/).required()
+        email: Joi.string().email().required()
             .messages({
-                'string.pattern.base': '请输入有效的手机号',
-                'any.required': '手机号不能为空',
-                'string.empty': '手机号不能为空'
+                'string.email': '请输入有效的邮箱地址',
+                'any.required': '邮箱不能为空',
+                'string.empty': '邮箱不能为空'
             }),
-        email: Joi.string().email().allow('', null)
+        phone: Joi.string().pattern(/^1[3-9]\d{9}$/).allow('', null)
             .messages({
-                'string.email': '请输入有效的邮箱地址'
+                'string.pattern.base': '请输入有效的手机号'
             }),
         password: Joi.string().min(6).required()
             .messages({
@@ -79,25 +79,33 @@ const schemas = {
 
     // 用户登录验证
     userLogin: Joi.object({
-        username: Joi.string().trim().pattern(/^[a-zA-Z0-9]{3,50}$/).required()
+        account: Joi.string().email().required()
             .messages({
-                'string.pattern.base': '用户名只能包含字母和数字',
-                'string.min': '用户名至少需要3个字符',
-                'string.max': '用户名最多50个字符',
-                'any.required': '用户名不能为空',
-                'string.empty': '用户名不能为空'
+                'string.email': '请输入有效的邮箱地址',
+                'any.required': '邮箱不能为空',
+                'string.empty': '邮箱不能为空'
             }),
         password: Joi.string().min(6).required()
             .messages({
                 'string.min': '密码至少需要6个字符',
                 'any.required': '密码不能为空',
                 'string.empty': '密码不能为空'
-            }),
-        verificationCode: Joi.string().length(6).required()
+            })
+    }),
+    userUpdate: Joi.object({
+        username: Joi.string().trim().min(3).max(50)
             .messages({
-                'string.length': '验证码错误',
-                'any.required': '验证码不能为空',
-                'string.empty': '验证码不能为空'
+                'string.min': '用户名至少需要3个字符',
+                'string.max': '用户名最多50个字符',
+                'string.empty': '用户名不能为空'
+            }),
+        password: Joi.string().min(6).allow('', null)
+            .messages({
+                'string.min': '密码至少需要6个字符'
+            }),
+        avatar: Joi.string().max(5 * 1024 * 1024).allow('', null)
+            .messages({
+                'string.max': '头像文件过大'
             })
     }),
     // 用户名+密码登录验证
@@ -123,22 +131,6 @@ const schemas = {
                 'string.empty': '验证码不能为空'
             })
     }),
-    // 手机号+验证码登录验证
-    phoneLogin: Joi.object({
-        phone: Joi.string().pattern(/^1[3-9]\d{9}$/).required()
-            .messages({
-                'string.pattern.base': '请输入有效的手机号',
-                'any.required': '手机号不能为空',
-                'string.empty': '手机号不能为空'
-            }),
-        smsCode: Joi.string().length(6).required()
-            .messages({
-                'string.length': '短信验证码必须是6位',
-                'any.required': '短信验证码不能为空',
-                'string.empty': '短信验证码不能为空'
-            })
-    }),
-
     // 笔记本创建验证
     notebookCreate: Joi.object({
         name: Joi.string().trim().max(100).required()
@@ -160,7 +152,7 @@ const schemas = {
                 'string.max': '标题最多200个字符',
                 'any.required': '标题不能为空'
             }),
-        content: Joi.string().required()
+        content: Joi.string().allow('').required()
             .messages({
                 'any.required': '内容不能为空'
             }),
@@ -173,16 +165,11 @@ const schemas = {
 
     // 发送验证码验证
     sendVerificationCode: Joi.object({
-        phone: Joi.string().pattern(/^1[3-9]\d{9}$/).required()
+        email: Joi.string().email().required()
             .messages({
-                'string.pattern.base': '请输入有效的手机号',
-                'any.required': '手机号不能为空',
-                'string.empty': '手机号不能为空'
-                // 坑点:
-                // Joi 验证库对于“字段缺失”和“字段为空字符串”这两种情况，默认会触发不同的错误类型和消息
-                // 不传 phone 字段: Joi 会触发 any.required 错误，为此已经配置了中文消息 "手机号不能为空"。
-                // 传 phone 字段但值为空 (如 ?phone=): req.query.phone 会是一个空字符串 ""。对于一个 Joi.string().required() 类型的字段，空字符串默认是不被允许的（除非显式使用 .allow('')）。因此，Joi 会认为这是一个无效值。此时触发的默认错误消息是英文的，类似 "[field name]" is not allowed to be empty。
-                // 为了使这两种情况都提示 "手机号不能为空"，需要在 schemas.sendVerificationCode 的 phone 字段的 .messages() 中，为“字符串为空”这种情况也指定中文提示。对应的 Joi 消息键是 string.empty
+                'string.email': '请输入有效的邮箱地址',
+                'any.required': '邮箱不能为空',
+                'string.empty': '邮箱不能为空'
             })
     })
 };

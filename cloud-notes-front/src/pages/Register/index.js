@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Form, Input, Button, Row, Col, message, Typography } from 'antd';
-import { UserOutlined, LockOutlined, SafetyCertificateOutlined, MobileOutlined } from '@ant-design/icons';
+import { UserOutlined, LockOutlined, SafetyCertificateOutlined, MailOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { sendVerificationCode } from '@/api/user';
+import { register, sendVerificationCode } from '@/api/user';
 import './index.less';
 
 const Register = () => {
@@ -13,17 +13,12 @@ const Register = () => {
 
     // 处理发送验证码
     const handleSendCode = () => {
-        form.validateFields(['phone']).then(async values => {
+        form.validateFields(['email']).then(async values => {
             try {
                 // 调用发送验证码API
-                const response = await sendVerificationCode({ phone: values.phone });
-                console.log(response, '111');
-                if (response && response.code === 200 ) { // 假设成功的响应包含 success: true
-                    setCountdown(60);
-                    message.success(`验证码已成功发送至手机号: ${values.phone}`);
-                } else {
-                    message.error(response.message || '发送验证码失败，请稍后重试');
-                }
+                await sendVerificationCode({ email: values.email });
+                setCountdown(60);
+                message.success(`验证码已成功发送至邮箱: ${values.email}`);
             } catch (error) {
                 console.log('发送验证码API调用失败:', error);
                 message.error('发送验证码失败，请检查网络或稍后重试');
@@ -34,11 +29,20 @@ const Register = () => {
     };
 
     // 处理注册
-    const handleRegister = (values) => {
-        console.log('注册信息:', values);
-        // 实际项目中这里应该调用注册API
-        message.success('注册成功，即将跳转到登录页');
-        setTimeout(() => navigate('/login'), 1500);
+    const handleRegister = async (values) => {
+        try {
+            await register({
+                username: values.username,
+                email: values.email,
+                password: values.password,
+                confirmPassword: values.confirmPassword,
+                verificationCode: values.emailCode
+            });
+            message.success('注册成功，即将跳转到登录页');
+            setTimeout(() => navigate('/login'), 1500);
+        } catch (error) {
+            console.log('注册失败:', error);
+        }
     };
 
     // 倒计时处理
@@ -120,15 +124,15 @@ const Register = () => {
                         </Form.Item>
 
                         <Form.Item
-                            name="phone"
+                            name="email"
                             rules={[
-                                { required: true, message: '请输入手机号' },
-                                { pattern: /^1\d{10}$/, message: '请输入有效的手机号' }
+                                { required: true, message: '请输入邮箱' },
+                                { type: 'email', message: '请输入有效的邮箱地址' }
                             ]}
                         >
                             <Input
-                                prefix={<MobileOutlined />}
-                                placeholder="手机号"
+                                prefix={<MailOutlined />}
+                                placeholder="邮箱"
                                 size="large"
                             />
                         </Form.Item>
@@ -137,13 +141,13 @@ const Register = () => {
                             <Row gutter={8}>
                                 <Col span={16}>
                                     <Form.Item
-                                        name="smsCode"
+                                        name="emailCode"
                                         noStyle
                                         rules={[{ required: true, message: '请输入验证码' }]}
                                     >
                                         <Input
                                             prefix={<SafetyCertificateOutlined />}
-                                            placeholder="短信验证码"
+                                            placeholder="邮箱验证码"
                                             size="large"
                                         />
                                     </Form.Item>

@@ -31,14 +31,14 @@ app.use(helmet());
 // 默认行为：无需配置即可获得基本安全保护，适合大多数Web应用
 // Helmet是Express应用的安全最佳实践，通过一行代码即可显著提高应用的安全性，减少常见安全漏洞的风险。
 app.use(loggerMiddleware); // 日志中间件
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: config.uploads.maxSize }));
 // 启用JSON解析中间件，处理Content-Type为application/json的请求
-// limit: '10kb'设置请求体最大大小为10KB，超过此限制的请求会被拒绝
+// limit使用上传配置限制请求体大小，超过此限制的请求会被拒绝
 // 解析后的JSON数据会存储在req.body对象中
-app.use(express.urlencoded({ extended: true, limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: config.uploads.maxSize }));
 //启用URL编码解析中间件，处理Content-Type为application/x-www-form-urlencoded的请求
 // extended: true允许解析复杂对象，使用qs库而非querystring
-// limit: '10kb'同样限制请求体大小为10KB
+// limit同样使用上传配置限制请求体大小
 // 解析后的表单数据会存储在req.body对象中
 
 // 以上两个中间件对保护服务器免受过大请求的攻击很重要，同时也便于在路由处理程序中访问客户端提交的数据

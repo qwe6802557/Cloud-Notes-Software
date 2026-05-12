@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { message } from 'antd';
+import { clearAuth, getToken } from './auth';
 
 const request = axios.create({
     baseURL: process.env.REACT_APP_API_URL || '/api', // 从环境变量获取API地址
@@ -12,6 +13,12 @@ const request = axios.create({
     }]
 });
 
+const redirectToLogin = () => {
+    if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+    }
+};
+
 // 请求拦截器
 request.interceptors.request.use(
     config => {
@@ -22,6 +29,10 @@ request.interceptors.request.use(
         if(config.method === 'get'){
             config.params  =  config.params || {}
             config.params.t = new Date().getTime()
+        }
+        const token = getToken();
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
         }
 
         return config
@@ -49,8 +60,8 @@ request.interceptors.response.use(
             // 处理特定错误码, 如401未授权
             if (res.code === 401) {
                 // 重定向到登录页或清除本地token
-                localStorage.removeItem('token');
-                window.location.href = '/login';
+                clearAuth();
+                redirectToLogin();
             }
 
             return Promise.reject(new Error(res.message || '请求失败'));
@@ -64,27 +75,28 @@ request.interceptors.response.use(
         if (error.response) {
             // 服务器错误状态码
             const status = error.response.status;
+            const responseMessage = error.response.data?.message;
 
             switch(status) {
                 case 400:
-                    errorMessage = '请求参数错误';
+                    errorMessage = responseMessage || '请求参数错误';
                     break;
                 case 401:
-                    errorMessage = '未授权，请重新登录';
-                    localStorage.removeItem('token');
-                    window.location.href = '/login';
+                    errorMessage = responseMessage || '未授权，请重新登录';
+                    clearAuth();
+                    redirectToLogin();
                     break;
                 case 403:
-                    errorMessage = '拒绝访问';
+                    errorMessage = responseMessage || '拒绝访问';
                     break;
                 case 404:
-                    errorMessage = '请求的资源不存在';
+                    errorMessage = responseMessage || '请求的资源不存在';
                     break;
                 case 500:
-                    errorMessage = '服务器内部错误';
+                    errorMessage = responseMessage || '服务器内部错误';
                     break;
                 default:
-                    errorMessage = `请求失败(${status})`;
+                    errorMessage = responseMessage || `请求失败(${status})`;
             }
         } else if (error.request) {
             // 未收到响应

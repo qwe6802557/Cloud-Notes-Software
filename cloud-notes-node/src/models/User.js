@@ -20,8 +20,8 @@ const userSchema = new mongoose.Schema({
     },
     phone: {
         type: String,
-        required: [true, '手机号不能为空'],
         unique: true,
+        sparse: true,
         trim: true,
         match: [/^1[3-9]\d{9}$/, '请输入有效的手机号']
     },

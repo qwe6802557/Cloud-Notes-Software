@@ -1,25 +1,26 @@
 const authService = require('../services/authService');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
+const config = require('../config');
 
-// 发送短信验证码
+// 发送邮箱验证码
 exports.sendVerificationCode = asyncHandler(async (req, res) => {
-    const { phone } = req.query;
-    const result = await authService.sendVerificationCode(phone);
+    const { email } = req.query;
+    const result = await authService.sendVerificationCode(email);
 
     res.status(200).json({
         code: 200,
-        message: '验证码已发送',
-        data: process.env.NODE_ENV === 'development' ? { verifyCode: result } : {}
+        message: '验证码已发送到邮箱',
+        data: config.environment === 'development' ? { verifyCode: result } : {}
     });
 });
 
 // 用户注册
 exports.register = asyncHandler(async (req, res) => {
     // 验证必填字段
-    const { username, password, confirmPassword, phone, verificationCode } = req.body;
+    const { username, password, confirmPassword, email, verificationCode } = req.body;
 
-    if (!username || !password || !confirmPassword || !phone || !verificationCode) {
+    if (!username || !password || !confirmPassword || !email || !verificationCode) {
         throw new AppError('请填写所有必填字段', 400);
     }
 
@@ -70,6 +71,16 @@ exports.getCurrentUser = asyncHandler(async (req, res) => {
                 createdAt: req.user.createdAt
             }
         }
+    });
+});
+
+exports.updateCurrentUser = asyncHandler(async (req, res) => {
+    const result = await authService.updateCurrentUser(req.user._id, req.body);
+
+    res.status(200).json({
+        code: 200,
+        message: '更新用户信息成功',
+        data: result
     });
 });
 
