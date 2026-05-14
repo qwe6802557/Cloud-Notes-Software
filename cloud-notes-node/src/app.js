@@ -18,7 +18,11 @@ const app = express();
 
 // 中间件
 app.use(cors()); // 跨域中间件配置
-app.use(helmet());
+app.use(helmet({
+    crossOriginResourcePolicy: {
+        policy: 'cross-origin'
+    }
+}));
 // 通过设置各种HTTP头来帮助保护应用免受一些常见的Web漏洞：
 // 安全增强：自动设置多种HTTP安全相关的响应头
 // 主要防护功能：

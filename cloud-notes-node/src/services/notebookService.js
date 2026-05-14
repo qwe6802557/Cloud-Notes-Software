@@ -4,10 +4,45 @@ const AppError = require('../utils/AppError');
 
 // 获取用户的所有笔记本
 exports.getUserNotebooks = async (userId) => {
-    return await Notebook.find({
+    const notebooks = await Notebook.find({
         userId,
         isDeleted: false
     }).sort({ isDefault: -1, sort: 1, createdAt: -1 });
+
+    if (notebooks.length === 0) {
+        return [];
+    }
+
+    const noteCounts = await Note.aggregate([
+        {
+            $match: {
+                userId: notebooks[0].userId,
+                isDeleted: false,
+                notebookId: {
+                    $in: notebooks.map(notebook => notebook._id)
+                }
+            }
+        },
+        {
+            $group: {
+                _id: '$notebookId',
+                noteCount: { $sum: 1 }
+            }
+        }
+    ]);
+
+    const noteCountMap = new Map(
+        noteCounts.map(item => [item._id.toString(), item.noteCount])
+    );
+
+    return notebooks.map(notebook => {
+        const notebookObject = notebook.toObject();
+
+        return {
+            ...notebookObject,
+            noteCount: noteCountMap.get(notebook._id.toString()) || 0
+        };
+    });
 };
 
 // 创建笔记本

@@ -2,6 +2,7 @@ const express = require('express');
 const authRoutes = require('./auth');
 const notesRoutes = require('./notes');
 const notebooksRoutes = require('./notebooks');
+const uploadsRoutes = require('./uploads');
 
 const router = express.Router();
 
@@ -9,5 +10,6 @@ const router = express.Router();
 router.use('/auth', authRoutes);
 router.use('/notes', notesRoutes);
 router.use('/notebooks', notebooksRoutes);
+router.use('/uploads', uploadsRoutes);
 
 module.exports = router;

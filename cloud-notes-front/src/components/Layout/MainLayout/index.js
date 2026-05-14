@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Layout, Modal, message } from 'antd';
 import Sidebar from '../Sidebar';
 import NoteList from '../NoteList';
@@ -13,9 +13,10 @@ const MainLayout = () => {
     const [editorDirty, setEditorDirty] = useState(false);
     const [editorSaving, setEditorSaving] = useState(false);
     const [savedNote, setSavedNote] = useState(null);
+    const [syncVersion, setSyncVersion] = useState(0);
     const [modal, contextHolder] = Modal.useModal();
+    const createNoteHandlerRef = useRef(null);
 
-    // 保存笔记的回调函数
     const handleSaveNote = useCallback(async (noteId, content) => {
         const result = await updateNote(noteId, {
             content,
@@ -39,7 +40,7 @@ const MainLayout = () => {
 
         return modal.confirm({
             title: '离开当前笔记？',
-            content: '当前笔记有未保存更改，离开后这些更改将不会保存。',
+            content: '当前笔记有未保存的修改，离开后这些更改将不会被保存。',
             okText: '离开',
             cancelText: '继续编辑',
             okType: 'danger',
@@ -80,37 +81,54 @@ const MainLayout = () => {
         setEditorSaving(Boolean(status?.saving || status?.autoSaving));
     }, []);
 
-  return (
-    <>
-        {contextHolder}
-        <Layout className="main-layout">
-          <Sidebar
-            collapsed={collapsed}
-            setCollapsed={setCollapsed}
-            selectedNotebook={selectedNotebook}
-            setSelectedNotebook={handleNotebookChange}
-          />
-          <NoteList
-            selectedNotebook={selectedNotebook}
-            isTrash={selectedNotebook === 'trash'}
-            isStarred={selectedNotebook === 'starred'}
-            isRecent={selectedNotebook === 'recent'}
-            selectedNote={selectedNote}
-            setSelectedNote={handleNoteChange}
-            canChangeSelection={confirmLeaveUnsavedNote}
-            savedNote={savedNote}
-          />
-            <Layout.Content className="main-content">
-                <NoteEditor
-                    selectedNote={selectedNote}
-                    onSave={handleSaveNote}
-                    onDirtyChange={setEditorDirty}
-                    onSaveStateChange={handleSaveStateChange}
+    const registerCreateNoteHandler = useCallback(handler => {
+        createNoteHandlerRef.current = handler;
+    }, []);
+
+    const handleCreateNote = useCallback(() => {
+        return createNoteHandlerRef.current?.();
+    }, []);
+
+    const handleSync = useCallback(() => {
+        setSyncVersion(version => version + 1);
+    }, []);
+
+    return (
+        <>
+            {contextHolder}
+            <Layout className="main-layout">
+                <Sidebar
+                    collapsed={collapsed}
+                    setCollapsed={setCollapsed}
+                    selectedNotebook={selectedNotebook}
+                    setSelectedNotebook={handleNotebookChange}
+                    syncVersion={syncVersion}
+                    onSync={handleSync}
                 />
-            </Layout.Content>
-        </Layout>
-    </>
-  );
+                <NoteList
+                    selectedNotebook={selectedNotebook}
+                    isTrash={selectedNotebook === 'trash'}
+                    isStarred={selectedNotebook === 'starred'}
+                    isRecent={selectedNotebook === 'recent'}
+                    selectedNote={selectedNote}
+                    setSelectedNote={handleNoteChange}
+                    canChangeSelection={confirmLeaveUnsavedNote}
+                    savedNote={savedNote}
+                    registerCreateNoteHandler={registerCreateNoteHandler}
+                    syncVersion={syncVersion}
+                />
+                <Layout.Content className="main-content">
+                    <NoteEditor
+                        selectedNote={selectedNote}
+                        onSave={handleSaveNote}
+                        onDirtyChange={setEditorDirty}
+                        onSaveStateChange={handleSaveStateChange}
+                        onCreateNote={handleCreateNote}
+                    />
+                </Layout.Content>
+            </Layout>
+        </>
+    );
 };
 
 export default MainLayout;

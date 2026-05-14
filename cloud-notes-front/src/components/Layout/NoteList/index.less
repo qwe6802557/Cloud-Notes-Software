@@ -1,9 +1,17 @@
 .note-list {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   border-right: 1px solid #e8e8e8;
   background-color: #f7f9fa;
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.05);
+
+  .ant-layout-sider-children {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
 
   .note-list-header {
     padding: 16px;
@@ -89,20 +97,28 @@
 
   .note-list-container {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 8px;
+    scrollbar-color: #E1E6ED transparent;
+    scrollbar-width: thin;
 
     &::-webkit-scrollbar {
-      width: 4px;
+      width: 6px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background-color: transparent;
+      border-radius: 999px;
     }
 
     &::-webkit-scrollbar-thumb {
-      background-color: rgba(0, 0, 0, 0.1);
-      border-radius: 2px;
+      background-color: #E1E6ED;
+      border-radius: 999px;
     }
 
     &:hover::-webkit-scrollbar-thumb {
-      background-color: rgba(0, 0, 0, 0.2);
+      background-color: #E1E6ED;
     }
   }
 

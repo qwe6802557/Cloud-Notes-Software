@@ -1,9 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { Layout, Menu, Avatar, Button, Divider, Space, Tooltip, message, Modal, Input } from 'antd';
 import {
-    FileTextOutlined, StarOutlined, DeleteOutlined, BookOutlined,
-    PlusOutlined, LeftOutlined, RightOutlined,
-    SettingOutlined, UserOutlined, SyncOutlined
+    FileTextOutlined,
+    StarOutlined,
+    DeleteOutlined,
+    BookOutlined,
+    PlusOutlined,
+    LeftOutlined,
+    RightOutlined,
+    SettingOutlined,
+    UserOutlined,
+    SyncOutlined
 } from '@ant-design/icons';
 import { createNotebook, getNotebooks } from '@/api/notes';
 import { getUser } from '@/utils/auth';
@@ -12,11 +19,12 @@ import './index.less';
 
 const { Sider } = Layout;
 
-const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNotebook }) => {
+const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNotebook, syncVersion, onSync }) => {
     const [notebooks, setNotebooks] = useState([]);
     const [notebookModalOpen, setNotebookModalOpen] = useState(false);
     const [notebookName, setNotebookName] = useState('');
     const [notebookSubmitting, setNotebookSubmitting] = useState(false);
+    const [syncing, setSyncing] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const user = getUser();
     const userAvatar = user?.avatar && user.avatar !== 'default-avatar.png' ? user.avatar : null;
@@ -25,6 +33,7 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
         let mounted = true;
 
         const loadNotebooks = async () => {
+            setSyncing(true);
             try {
                 const result = await getNotebooks();
                 const list = result?.notebooks || [];
@@ -39,6 +48,10 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
                 }
             } catch (error) {
                 message.error('笔记本加载失败');
+            } finally {
+                if (mounted) {
+                    setSyncing(false);
+                }
             }
         };
 
@@ -47,7 +60,15 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
         return () => {
             mounted = false;
         };
-    }, [selectedNotebook, setSelectedNotebook]);
+    }, [selectedNotebook, setSelectedNotebook, syncVersion]);
+
+    const handleSync = () => {
+        if (syncing) {
+            return;
+        }
+
+        onSync?.();
+    };
 
     const handleCreateNotebook = async () => {
         const name = notebookName.trim();
@@ -102,7 +123,7 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
                 </div>
             </div>
 
-            <div className="sidebar-scroll-container">
+            <div className="sidebar-static-section">
                 <Menu
                     theme="light"
                     mode="inline"
@@ -146,24 +167,28 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
                         />
                     </Tooltip>
                 </div>
+            </div>
 
-                <Menu
-                    theme="light"
-                    mode="inline"
-                    selectedKeys={['trash', 'starred', 'recent'].includes(selectedNotebook) ? [] : [selectedNotebook?.toString()]}
-                    onClick={({ key }) => setSelectedNotebook(key)}
-                    className="menu-section notebooks-menu"
-                    items={notebooks.map(notebook => ({
-                        key: notebook.id || notebook._id,
-                        icon: <BookOutlined />,
-                        label: (
-                            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                                <span className="notebook-name">{notebook.name}</span>
-                                {!collapsed && <span className="notebook-count">{notebook.noteCount || 0}</span>}
-                            </Space>
-                        )
-                    }))}
-                />
+            <div className="sidebar-scroll-container">
+                <div className="notebooks-scroll-container">
+                    <Menu
+                        theme="light"
+                        mode="inline"
+                        selectedKeys={['trash', 'starred', 'recent'].includes(selectedNotebook) ? [] : [selectedNotebook?.toString()]}
+                        onClick={({ key }) => setSelectedNotebook(key)}
+                        className="menu-section notebooks-menu"
+                        items={notebooks.map(notebook => ({
+                            key: notebook.id || notebook._id,
+                            icon: <BookOutlined />,
+                            label: (
+                                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                                    <span className="notebook-name">{notebook.name}</span>
+                                    {!collapsed && <span className="notebook-count">{notebook.noteCount || 0}</span>}
+                                </Space>
+                            )
+                        }))}
+                    />
+                </div>
             </div>
 
             <div className="bottom-actions">
@@ -175,8 +200,9 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
                     items={[
                         {
                             key: 'sync',
-                            icon: <SyncOutlined />,
-                            label: '同步'
+                            icon: <SyncOutlined spin={syncing} />,
+                            label: '同步',
+                            onClick: handleSync
                         },
                         {
                             key: 'settings',
@@ -193,6 +219,7 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
                     ]}
                 />
             </div>
+
             <Modal
                 title="新建笔记本"
                 open={notebookModalOpen}
@@ -214,9 +241,10 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
                     onPressEnter={handleCreateNotebook}
                 />
             </Modal>
-            <SettingsModal 
-                open={settingsOpen} 
-                onClose={() => setSettingsOpen(false)} 
+
+            <SettingsModal
+                open={settingsOpen}
+                onClose={() => setSettingsOpen(false)}
             />
         </Sider>
     );

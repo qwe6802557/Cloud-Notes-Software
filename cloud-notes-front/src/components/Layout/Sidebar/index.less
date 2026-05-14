@@ -2,9 +2,14 @@
   background-color: #f7f9fa;
   border-right: 1px solid #e8e8e8;
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.05);
-  display: flex;
-  flex-direction: column;
-  position: relative;
+  height: 100%;
+  min-height: 0;
+
+  .ant-layout-sider-children {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
 
   .user-info {
     padding: 16px;
@@ -39,21 +44,40 @@
 
   .sidebar-scroll-container {
     flex: 1;
-    overflow-y: auto;
-    padding-bottom: 120px; // 为底部菜单留出空间
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 
-    &::-webkit-scrollbar {
-      width: 4px;
-    }
+    .notebooks-scroll-container {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      scrollbar-color: #E1E6ED transparent;
+      scrollbar-width: thin;
 
-    &::-webkit-scrollbar-thumb {
-      background-color: rgba(0, 0, 0, 0.1);
-      border-radius: 2px;
-    }
+      &::-webkit-scrollbar {
+        width: 6px;
+      }
 
-    &:hover::-webkit-scrollbar-thumb {
-      background-color: rgba(0, 0, 0, 0.2);
+      &::-webkit-scrollbar-track {
+        background-color: transparent;
+        border-radius: 999px;
+      }
+
+      &::-webkit-scrollbar-thumb {
+        background-color: #E1E6ED;
+        border-radius: 999px;
+      }
+
+      &:hover::-webkit-scrollbar-thumb {
+        background-color: #E1E6ED;
+      }
     }
+  }
+
+  .sidebar-static-section {
+    flex-shrink: 0;
   }
 
   .menu-section {
@@ -110,6 +134,9 @@
   }
 
   .notebooks-menu {
+    min-height: 100%;
+    border-inline-end: none !important;
+
     .notebook-name {
       white-space: nowrap;
       overflow: hidden;
@@ -129,17 +156,20 @@
   }
 
   .bottom-actions {
-    position: absolute;
-    bottom: 0;
-    width: 100%;
+    margin-top: auto;
+    flex-shrink: 0;
     border-top: 1px solid #e8e8e8;
     background-color: #fff;
     box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.03);
 
     .bottom-menu {
       background-color: transparent;
+      border-inline-end: none;
+      padding: 8px 0;
 
       .ant-menu-item {
+        margin: 0;
+
         &:hover {
           color: #1890ff;
           background-color: rgba(24, 144, 255, 0.05);

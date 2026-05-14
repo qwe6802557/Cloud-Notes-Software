@@ -22,6 +22,6 @@ module.exports = {
     uploads: {
         path: process.env.UPLOAD_PATH || 'uploads/',
         maxSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 5 * 1024 * 1024, // 5MB
-        allowedTypes: ['image/jpeg', 'image/png', 'image/gif']
+        allowedTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
     }
 };

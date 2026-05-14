@@ -74,6 +74,7 @@ exports.getCurrentUser = asyncHandler(async (req, res) => {
     });
 });
 
+// 更新当前用户
 exports.updateCurrentUser = asyncHandler(async (req, res) => {
     const result = await authService.updateCurrentUser(req.user._id, req.body);
 

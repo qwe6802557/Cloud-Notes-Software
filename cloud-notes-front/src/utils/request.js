@@ -2,6 +2,8 @@ import axios from 'axios';
 import { message } from 'antd';
 import { clearAuth, getToken } from './auth';
 
+const isFormData = data => typeof FormData !== 'undefined' && data instanceof FormData;
+
 const request = axios.create({
     baseURL: process.env.REACT_APP_API_URL || '/api', // 从环境变量获取API地址
     timeout: 60000, // 请求超时时间
@@ -22,9 +24,11 @@ const redirectToLogin = () => {
 // 请求拦截器
 request.interceptors.request.use(
     config => {
-        if(config.data){
+        if(config.data && !isFormData(config.data)){
             config.headers['Content-Type'] = 'application/json;charset=UTF-8'
             config.data = JSON.stringify(config.data)
+        } else if (isFormData(config.data)) {
+            delete config.headers['Content-Type'];
         }
         if(config.method === 'get'){
             config.params  =  config.params || {}
