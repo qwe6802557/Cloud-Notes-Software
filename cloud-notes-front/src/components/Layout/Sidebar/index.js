@@ -10,7 +10,8 @@ import {
     RightOutlined,
     SettingOutlined,
     UserOutlined,
-    SyncOutlined
+    SyncOutlined,
+    LogoutOutlined
 } from '@ant-design/icons';
 import { createNotebook, getNotebooks } from '@/api/notes';
 import { getUser } from '@/utils/auth';
@@ -19,7 +20,7 @@ import './index.less';
 
 const { Sider } = Layout;
 
-const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNotebook, syncVersion, onSync }) => {
+const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNotebook, syncVersion, onSync, onLogout }) => {
     const [notebooks, setNotebooks] = useState([]);
     const [notebookModalOpen, setNotebookModalOpen] = useState(false);
     const [notebookName, setNotebookName] = useState('');
@@ -209,6 +210,12 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
                             icon: <SettingOutlined />,
                             label: '设置',
                             onClick: () => setSettingsOpen(true)
+                        },
+                        {
+                            key: 'logout',
+                            icon: <LogoutOutlined />,
+                            label: '退出',
+                            onClick: onLogout
                         },
                         {
                             key: 'collapse',

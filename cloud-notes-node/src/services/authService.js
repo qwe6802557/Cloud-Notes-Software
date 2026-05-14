@@ -60,7 +60,12 @@ exports.sendVerificationCode = async (email) => {
 
 // 用户登录
 exports.login = async (account, password) => {
-    const user = await User.findOne({ email: account.toLowerCase() }).select('+password');
+    const normalizedAccount = account.trim();
+    const user = await User.findOne(
+        normalizedAccount.includes('@')
+            ? { email: normalizedAccount.toLowerCase() }
+            : { username: normalizedAccount }
+    ).select('+password');
     if (!user) {
         throw new AppError('账号或密码不正确', 401);
     }

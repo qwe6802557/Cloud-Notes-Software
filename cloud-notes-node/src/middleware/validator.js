@@ -79,11 +79,10 @@ const schemas = {
 
     // 用户登录验证
     userLogin: Joi.object({
-        account: Joi.string().email().required()
+        account: Joi.string().trim().required()
             .messages({
-                'string.email': '请输入有效的邮箱地址',
-                'any.required': '邮箱不能为空',
-                'string.empty': '邮箱不能为空'
+                'any.required': '账号不能为空',
+                'string.empty': '账号不能为空'
             }),
         password: Joi.string().min(6).required()
             .messages({

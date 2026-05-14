@@ -44,3 +44,11 @@ export const updateUserInfo = data => {
         data
     })
 }
+
+// 退出登录
+export const logout = () => {
+    return request({
+        url: '/auth/logout',
+        method: 'post'
+    })
+}

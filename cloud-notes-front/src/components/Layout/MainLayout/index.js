@@ -4,6 +4,8 @@ import Sidebar from '../Sidebar';
 import NoteList from '../NoteList';
 import NoteEditor from '../Editor';
 import { updateNote } from '@/api/notes';
+import { logout } from '@/api/user';
+import { clearAuth } from '@/utils/auth';
 import './index.less';
 
 const MainLayout = () => {
@@ -93,6 +95,21 @@ const MainLayout = () => {
         setSyncVersion(version => version + 1);
     }, []);
 
+    const handleLogout = useCallback(async () => {
+        if (!await confirmLeaveUnsavedNote()) {
+            return;
+        }
+
+        try {
+            await logout();
+        } catch (error) {
+            // 本地登录态清理优先，避免接口异常时用户无法退出。
+        } finally {
+            clearAuth();
+            window.location.href = '/login';
+        }
+    }, [confirmLeaveUnsavedNote]);
+
     return (
         <>
             {contextHolder}
@@ -104,6 +121,7 @@ const MainLayout = () => {
                     setSelectedNotebook={handleNotebookChange}
                     syncVersion={syncVersion}
                     onSync={handleSync}
+                    onLogout={handleLogout}
                 />
                 <NoteList
                     selectedNotebook={selectedNotebook}
