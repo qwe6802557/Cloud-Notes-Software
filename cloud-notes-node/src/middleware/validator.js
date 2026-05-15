@@ -92,12 +92,14 @@ const schemas = {
             })
     }),
     userUpdate: Joi.object({
-        username: Joi.string().trim().min(3).max(50)
+        username: Joi.string().trim().pattern(/^[a-zA-Z0-9]{3,50}$/)
             .messages({
+                'string.pattern.base': '用户名只能包含字母和数字',
                 'string.min': '用户名至少需要3个字符',
                 'string.max': '用户名最多50个字符',
                 'string.empty': '用户名不能为空'
             }),
+
         password: Joi.string().min(6).allow('', null)
             .messages({
                 'string.min': '密码至少需要6个字符'

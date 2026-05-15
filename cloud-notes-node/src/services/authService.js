@@ -16,6 +16,12 @@ const formatUser = user => ({
 
 // 用户注册
 exports.register = async (userData) => {
+    const username = userData.username.trim();
+    const existingUserByUsername = await User.findOne({ username });
+    if (existingUserByUsername) {
+        throw new AppError('该用户名已被使用', 400);
+    }
+
     // 检查邮箱是否已存在
     const existingUserByEmail = await User.findOne({ email: userData.email });
     if (existingUserByEmail) {
@@ -27,7 +33,7 @@ exports.register = async (userData) => {
 
     // 创建用户
     const createUserData = {
-        username: userData.username,
+        username,
         email: userData.email,
         password: userData.password
     };
@@ -94,7 +100,18 @@ exports.updateCurrentUser = async (userId, updateData) => {
     const { username, avatar, password } = updateData;
 
     if (username !== undefined) {
-        user.username = username.trim();
+        const nextUsername = username.trim();
+        if (nextUsername !== user.username) {
+            const existingUserByUsername = await User.findOne({
+                username: nextUsername,
+                _id: { $ne: userId }
+            });
+            if (existingUserByUsername) {
+                throw new AppError('该用户名已被使用', 400);
+            }
+        }
+
+        user.username = nextUsername;
     }
 
     if (avatar !== undefined) {

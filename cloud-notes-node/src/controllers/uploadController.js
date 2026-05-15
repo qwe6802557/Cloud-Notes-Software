@@ -1,8 +1,13 @@
 const path = require('path');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
+const config = require('../config');
 
 const getFileUrl = req => {
+    if (config.publicBaseUrl) {
+        return config.publicBaseUrl;
+    }
+
     const protocol = req.protocol;
     const host = req.get('host');
 

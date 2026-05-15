@@ -5,6 +5,7 @@ const userSchema = new mongoose.Schema({
     username: {
         type: String,
         required: [true, '用户名不能为空'],
+        unique: true,
         trim: true,
         minlength: [3, '用户名至少3个字符'],
         maxlength: [50, '用户名最多50个字符']

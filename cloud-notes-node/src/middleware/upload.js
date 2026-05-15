@@ -3,7 +3,7 @@ const path = require('path');
 const multer = require('multer');
 const config = require('../config');
 
-const notesUploadDir = path.join(__dirname, '..', '..', config.uploads.path, 'notes');
+const notesUploadDir = path.join(config.uploads.path, 'notes');
 const allowedImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
 
 fs.mkdirSync(notesUploadDir, { recursive: true });

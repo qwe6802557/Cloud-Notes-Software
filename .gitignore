@@ -19,3 +19,9 @@ yarn-error.log*
 *.ntvs*
 *.njsproj
 *.sln
+
+# 环境变量文件（包含密钥，绝不提交）
+.env
+.env.local
+.env.production
+.env.*.local
