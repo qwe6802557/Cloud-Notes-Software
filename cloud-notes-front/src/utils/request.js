@@ -4,6 +4,9 @@ import { clearAuth, getToken } from './auth';
 
 const isFormData = data => typeof FormData !== 'undefined' && data instanceof FormData;
 
+// 路由 basename：子路径部署时 401 跳转需拼接该前缀，避免跳到根路径 /login
+const routerBasename = process.env.REACT_APP_ROUTER_URL || '';
+
 const request = axios.create({
     baseURL: process.env.REACT_APP_API_URL || '/api', // 从环境变量获取API地址
     timeout: 60000, // 请求超时时间
@@ -16,8 +19,10 @@ const request = axios.create({
 });
 
 const redirectToLogin = () => {
-    if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+    // 拼接 basename，子路径部署时正确跳转到 /cloudNotes/login
+    const loginPath = `${routerBasename}/login`;
+    if (!window.location.pathname.endsWith('/login')) {
+        window.location.href = loginPath;
     }
 };
 
