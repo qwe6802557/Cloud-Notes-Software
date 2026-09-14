@@ -5,9 +5,14 @@
 cloud-notes-front/node_modules/
 cloud-notes-node/node_modules/
 
+# 构建产物与打包输出
+build/
+**/build/
+dist/
+**/dist/
+
 .DS_Store
 node_modules/
-*/dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -20,8 +25,19 @@ yarn-error.log*
 *.njsproj
 *.sln
 
+# 代码图谱与本地分析缓存
+.codegraph/
+
 # 环境变量文件（包含密钥，绝不提交）
 .env
 .env.local
-.env.production
 .env.*.local
+cloud-notes-node/.env
+**/.env.local
+!cloud-notes-node/.env.example
+!cloud-notes-front/.env.development
+!cloud-notes-front/.env.production
+
+# 本地上传的测试/运行图片（生产环境采用独立持久化存储）
+cloud-notes-node/uploads/notes/*
+!cloud-notes-node/uploads/notes/.gitkeep
