@@ -115,10 +115,11 @@ exports.createNote = asyncHandler(async (req, res, next) => {
     });
 });
 
-// 获取笔记本中的所有笔记与目录（返回平铺与组装树）
+// 获取笔记本中的所有笔记与目录（支持 parentId 分层懒加载与整树兼容）
 exports.getNotebookNotes = asyncHandler(async (req, res) => {
     const { notebookId } = req.params;
     const userId = req.user._id;
+    const { parentId, all } = req.query;
     const keywordFilter = buildKeywordFilter(req.query.keyword || req.query.search);
 
     const query = {
@@ -129,14 +130,21 @@ exports.getNotebookNotes = asyncHandler(async (req, res) => {
 
     if (keywordFilter) {
         Object.assign(query, keywordFilter);
+    } else if (parentId !== undefined && all !== 'true') {
+        if (parentId === 'null' || parentId === 'root' || parentId === '') {
+            query.parentId = null;
+        } else {
+            query.parentId = parentId;
+        }
     }
 
-    // 排序优先级：目录优先，其次按修改时间倒序
+    // 排序优先级：目录优先，其次按修改时间倒序；剔除正文字段 content 极大提升检索与传输性能
     const notes = await Note.find(query)
         .sort({ type: -1, updatedAt: -1 })
-        .select('title content type parentId isStarred tags updatedAt createdAt notebookId');
+        .select('title type parentId isStarred tags updatedAt createdAt notebookId');
 
-    const tree = buildNodeTree(notes);
+    // 如果指定了 parentId 或进行了关键词搜索，返回扁平节点；否则构建整树保持向下兼容
+    const tree = (parentId !== undefined || keywordFilter) ? notes : buildNodeTree(notes);
 
     res.status(200).json({
         code: 200,

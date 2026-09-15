@@ -60,6 +60,86 @@ const SYSTEM_VIEWS = [
     { key: 'trash', label: '回收站', icon: <DeleteOutlined /> }
 ];
 
+// 不可变更新树中指定节点的子节点
+const updateTreeChildren = (list, key, children) => {
+    return list.map(node => {
+        if (node.key === key) {
+            return {
+                ...node,
+                children
+            };
+        }
+        if (node.children && Array.isArray(node.children)) {
+            return {
+                ...node,
+                children: updateTreeChildren(node.children, key, children)
+            };
+        }
+        return node;
+    });
+};
+
+// 不可变更新树中指定节点的标题
+const updateNodeTitleInTree = (list, key, newTitle) => {
+    return list.map(node => {
+        if (node.key === key) {
+            return { ...node, title: newTitle };
+        }
+        if (node.children && Array.isArray(node.children)) {
+            return { ...node, children: updateNodeTitleInTree(node.children, key, newTitle) };
+        }
+        return node;
+    });
+};
+
+// 不可变更新树中指定节点的收藏状态
+const updateNodeStarredInTree = (list, key, isStarred) => {
+    return list.map(node => {
+        if (node.key === key) {
+            return { ...node, isStarred };
+        }
+        if (node.children && Array.isArray(node.children)) {
+            return { ...node, children: updateNodeStarredInTree(node.children, key, isStarred) };
+        }
+        return node;
+    });
+};
+
+// 不可变从树中移除指定节点
+const removeNodeFromTree = (list, key) => {
+    return list
+        .filter(node => node.key !== key)
+        .map(node => {
+            if (node.children && Array.isArray(node.children)) {
+                return { ...node, children: removeNodeFromTree(node.children, key) };
+            }
+            return node;
+        });
+};
+
+// 不可变向树中指定父节点插入新节点
+const insertNodeToTree = (list, parentId, newNode) => {
+    if (!parentId || parentId === 'root') {
+        return [newNode, ...list];
+    }
+    return list.map(node => {
+        if (node.key === parentId) {
+            const currentChildren = Array.isArray(node.children) ? node.children : [];
+            return {
+                ...node,
+                children: [newNode, ...currentChildren]
+            };
+        }
+        if (node.children && Array.isArray(node.children)) {
+            return {
+                ...node,
+                children: insertNodeToTree(node.children, parentId, newNode)
+            };
+        }
+        return node;
+    });
+};
+
 const NavTree = forwardRef(({
     collapsed,
     setCollapsed,
@@ -78,8 +158,10 @@ const NavTree = forwardRef(({
     const [treeData, setTreeData] = useState([]);
     const [flatListNotes, setFlatListNotes] = useState([]);
     const [expandedKeys, setExpandedKeys] = useState([]);
-    const [autoExpandParent, setAutoExpandParent] = useState(true);
+    const [autoExpandParent, setAutoExpandParent] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [searchResults, setSearchResults] = useState([]);
+    const [searchLoading, setSearchLoading] = useState(false);
     const [loading, setLoading] = useState(false);
     const [syncing, setSyncing] = useState(false);
 
@@ -92,6 +174,7 @@ const NavTree = forwardRef(({
         title: ''
     });
     const [dialogSubmitting, setDialogSubmitting] = useState(false);
+    const [moveFolderTree, setMoveFolderTree] = useState([]);
     const [settingsOpen, setSettingsOpen] = useState(false);
 
     // 右键上下文菜单定位状态
@@ -122,9 +205,9 @@ const NavTree = forwardRef(({
         }
     }, [selectedNotebook, setSelectedNotebook]);
 
-    // 格式化后端数据为 Ant Design Tree 结构
+    // 格式化后端数据为 Ant Design Tree 懒加载结构
     const formatTreeData = useCallback(nodes => {
-        return nodes.map(item => {
+        return (nodes || []).map(item => {
             const isFolder = item.type === 'folder';
             const nodeKey = item._id ? item._id.toString() : item.id;
             const hasChildren = Array.isArray(item.children) && item.children.length > 0;
@@ -133,52 +216,47 @@ const NavTree = forwardRef(({
                 title: item.title,
                 key: nodeKey,
                 isFolder,
+                isLeaf: !isFolder, // 文件夹不是叶子节点，支持异步懒加载展开
                 isStarred: Boolean(item.isStarred),
                 parentId: item.parentId ? item.parentId.toString() : null,
                 notebookId: item.notebookId,
                 rawItem: item,
-                children: hasChildren ? formatTreeData(item.children) : []
+                children: hasChildren 
+                    ? formatTreeData(item.children) 
+                    : (isFolder ? (item.children === undefined ? undefined : []) : undefined)
             };
         });
     }, []);
 
-    // 递归筛选树节点
-    const filterTreeByKeyword = useCallback((nodes, keyword) => {
-        if (!keyword) {
-            return nodes;
+    // 异步懒加载子节点 (loadData 回调)
+    const onLoadData = useCallback(async node => {
+        const { key, children } = node;
+        // 如果 children 已加载（即已为数组），无需重复拉取
+        if (children !== undefined) {
+            return;
         }
-        const lower = keyword.toLowerCase();
+        try {
+            const result = await getNotebookNotes(selectedNotebook, { parentId: key });
+            const childList = result?.notes || [];
+            const formattedChildren = formatTreeData(childList);
+            setTreeData(origin => updateTreeChildren(origin, key, formattedChildren));
+        } catch {
+            message.error('加载子目录失败');
+        }
+    }, [selectedNotebook, formatTreeData]);
 
-        return nodes.reduce((acc, node) => {
-            const matchCurrent = (node.title || '').toLowerCase().includes(lower);
-            const filteredChildren = node.children ? filterTreeByKeyword(node.children, keyword) : [];
-
-            if (matchCurrent || filteredChildren.length > 0) {
-                acc.push({
-                    ...node,
-                    children: filteredChildren
-                });
-            }
-            return acc;
-        }, []);
-    }, []);
-
-    // 加载全部树形笔记
+    // 加载顶级树形笔记（仅拉取 parentId 为 null 的一级数据）
     const loadNotebookTree = useCallback(async notebookId => {
         if (!notebookId) {
             return;
         }
         setLoading(true);
         try {
-            const result = await getNotebookNotes(notebookId);
-            const raw = result?.notes || [];
-            const tree = result?.tree || [];
-            const formatted = formatTreeData(tree);
+            const result = await getNotebookNotes(notebookId, { parentId: 'null' });
+            const rawNotes = result?.notes || [];
+            const formatted = formatTreeData(rawNotes);
             setTreeData(formatted);
-
-            // 首次加载默认展开根级目录
-            const folderKeys = raw.filter(n => n.type === 'folder').map(n => n._id.toString());
-            setExpandedKeys(prev => (prev.length === 0 ? folderKeys : prev));
+            setExpandedKeys([]); // 默认全部收起，提高初次加载与渲染性能
         } catch {
             message.error('加载目录树失败');
         } finally {
@@ -219,6 +297,34 @@ const NavTree = forwardRef(({
         }
     }, [viewType, selectedNotebook, loadNotebookTree, loadSystemListView, syncVersion]);
 
+    // 笔记本内全局服务端关键词搜索与防抖联动
+    useEffect(() => {
+        if (!selectedNotebook || viewType !== 'all') {
+            return;
+        }
+        const term = searchTerm.trim();
+        if (!term) {
+            setSearchResults([]);
+            setSearchLoading(false);
+            return;
+        }
+
+        const timer = setTimeout(async () => {
+            setSearchLoading(true);
+            try {
+                const res = await getNotebookNotes(selectedNotebook, { keyword: term });
+                const list = res?.notes || [];
+                setSearchResults(formatTreeData(list));
+            } catch {
+                message.error('搜索失败');
+            } finally {
+                setSearchLoading(false);
+            }
+        }, 300);
+
+        return () => clearTimeout(timer);
+    }, [searchTerm, selectedNotebook, viewType, formatTreeData]);
+
     // 当外部保存笔记后局部更新树中对应节点的标题
     useEffect(() => {
         if (!savedNote) {
@@ -228,18 +334,7 @@ const NavTree = forwardRef(({
         if (!noteId) {
             return;
         }
-
-        const updateNodeTitle = list => list.map(item => {
-            if (item.key === noteId) {
-                return { ...item, title: savedNote.title };
-            }
-            if (item.children) {
-                return { ...item, children: updateNodeTitle(item.children) };
-            }
-            return item;
-        });
-
-        setTreeData(prev => updateNodeTitle(prev));
+        setTreeData(prev => updateNodeTitleInTree(prev, noteId, savedNote.title));
     }, [savedNote]);
 
     // 关闭右键菜单
@@ -253,10 +348,13 @@ const NavTree = forwardRef(({
         return () => window.removeEventListener('click', handleClickOutside);
     }, [contextMenu.visible]);
 
-    // 搜索过滤后的树数据
+    // 当前展示的树数据（搜索模式 vs 懒加载目录树）
     const displayedTreeData = useMemo(() => {
-        return filterTreeByKeyword(treeData, searchTerm);
-    }, [treeData, searchTerm, filterTreeByKeyword]);
+        if (searchTerm.trim()) {
+            return searchResults;
+        }
+        return treeData;
+    }, [searchTerm, searchResults, treeData]);
 
     // 切换树节点展开收起
     const handleExpand = expanded => {
@@ -273,13 +371,18 @@ const NavTree = forwardRef(({
         const node = info.node;
 
         if (node.isFolder) {
-            // 点击文件夹仅切换展开/收起状态
+            // 点击文件夹行切换展开/收起状态
             setAutoExpandParent(false);
-            setExpandedKeys(prev => {
-                return prev.includes(targetKey)
-                    ? prev.filter(k => k !== targetKey)
-                    : [...prev, targetKey];
-            });
+            const isCurrentlyExpanded = expandedKeys.includes(targetKey);
+            if (isCurrentlyExpanded) {
+                setExpandedKeys(prev => prev.filter(k => k !== targetKey));
+            } else {
+                setExpandedKeys(prev => [...prev, targetKey]);
+                // 若该目录尚未加载过子节点，主动触发懒加载
+                if (node.children === undefined) {
+                    await onLoadData(node);
+                }
+            }
             return;
         }
 
@@ -332,16 +435,49 @@ const NavTree = forwardRef(({
         });
     };
 
-    // 触发移动对话框
-    const triggerMove = node => {
+    // 触发移动对话框（异步获取全量目录树供选择）
+    const triggerMove = async node => {
         setContextMenu(prev => ({ ...prev, visible: false }));
-        setDialogState({
-            open: true,
-            type: 'move',
-            node,
-            targetParentId: node.parentId || 'root',
-            title: node.title
-        });
+        try {
+            const res = await getNotebookNotes(selectedNotebook, { all: 'true' });
+            const allNotes = res?.notes || [];
+            const folders = allNotes.filter(n => n.type === 'folder' && (n._id?.toString() || n.id) !== node.key);
+
+            const buildFolderOptions = (items, pId = null) => {
+                return items
+                    .filter(item => {
+                        const itemPid = item.parentId ? item.parentId.toString() : null;
+                        return itemPid === pId;
+                    })
+                    .map(item => {
+                        const fKey = (item._id || item.id).toString();
+                        return {
+                            title: item.title,
+                            value: fKey,
+                            key: fKey,
+                            children: buildFolderOptions(items, fKey)
+                        };
+                    });
+            };
+
+            const rootOption = {
+                title: '【笔记本根目录】',
+                value: 'root',
+                key: 'root',
+                children: buildFolderOptions(folders, null)
+            };
+
+            setMoveFolderTree([rootOption]);
+            setDialogState({
+                open: true,
+                type: 'move',
+                node,
+                targetParentId: node.parentId || 'root',
+                title: node.title
+            });
+        } catch {
+            message.error('获取目录列表失败');
+        }
     };
 
     // 执行删除操作
@@ -362,9 +498,8 @@ const NavTree = forwardRef(({
                     if (selectedNote === node.key) {
                         setSelectedNote(null);
                     }
-                    if (selectedNotebook) {
-                        loadNotebookTree(selectedNotebook);
-                    }
+                    // 局部移除节点，无需重载整棵树
+                    setTreeData(prev => removeNodeFromTree(prev, node.key));
                 } catch {
                     message.error('删除失败');
                 }
@@ -379,8 +514,8 @@ const NavTree = forwardRef(({
             const nextStatus = !node.isStarred;
             await updateNoteStarred(node.key, nextStatus);
             message.success(nextStatus ? '已收藏' : '已取消收藏');
-            if (viewType === 'all' && selectedNotebook) {
-                loadNotebookTree(selectedNotebook);
+            if (viewType === 'all') {
+                setTreeData(prev => updateNodeStarredInTree(prev, node.key, nextStatus));
             } else {
                 loadSystemListView(viewType);
             }
@@ -442,7 +577,14 @@ const NavTree = forwardRef(({
                 if (viewType !== 'all') {
                     setViewType('all');
                 }
-                await loadNotebookTree(activeNotebook);
+
+                const createdItem = res?.note || res?.data?.note || res;
+                if (createdItem) {
+                    const formattedNode = formatTreeData([createdItem])[0];
+                    setTreeData(prev => insertNodeToTree(prev, parentId, formattedNode));
+                } else {
+                    await loadNotebookTree(activeNotebook);
+                }
 
                 if (parentId) {
                     setExpandedKeys(prev => Array.from(new Set([...prev, parentId])));
@@ -454,7 +596,7 @@ const NavTree = forwardRef(({
             } else if (type === 'rename') {
                 await updateNote(node.key, { title: finalTitle });
                 message.success('重命名成功');
-                await loadNotebookTree(selectedNotebook);
+                setTreeData(prev => updateNodeTitleInTree(prev, node.key, finalTitle));
             } else if (type === 'move') {
                 const parentId = targetParentId === 'root' ? null : targetParentId;
                 await moveNoteNode(node.key, { targetParentId: parentId });
@@ -548,30 +690,6 @@ const NavTree = forwardRef(({
             </div>
         );
     };
-
-    // 构建移动目标目录树
-    const folderTreeSelectData = useMemo(() => {
-        const rootOption = {
-            title: '【笔记本根目录】',
-            value: 'root',
-            key: 'root',
-            children: []
-        };
-
-        const buildFolderNodes = nodes => {
-            return nodes
-                .filter(n => n.isFolder && (!dialogState.node || n.key !== dialogState.node.key))
-                .map(f => ({
-                    title: f.title,
-                    value: f.key,
-                    key: f.key,
-                    children: f.children ? buildFolderNodes(f.children) : []
-                }));
-        };
-
-        rootOption.children = buildFolderNodes(treeData);
-        return [rootOption];
-    }, [treeData, dialogState.node]);
 
     // 自定义渲染树节点
     const renderTreeNodeTitle = nodeData => {
@@ -794,6 +912,7 @@ const NavTree = forwardRef(({
                         {viewType === 'all' ? (
                             displayedTreeData.length > 0 ? (
                                 <Tree
+                                    loadData={searchTerm.trim() ? undefined : onLoadData}
                                     treeData={displayedTreeData}
                                     showIcon={false}
                                     blockNode
@@ -808,7 +927,7 @@ const NavTree = forwardRef(({
                             ) : (
                                 <Empty
                                     image={Empty.PRESENTED_IMAGE_SIMPLE}
-                                    description={loading ? '加载中...' : '暂无笔记或目录'}
+                                    description={loading || searchLoading ? '加载中...' : (searchTerm.trim() ? '未找到相关笔记或目录' : '暂无笔记或目录')}
                                     className="tree-empty"
                                 />
                             )
@@ -940,7 +1059,7 @@ const NavTree = forwardRef(({
                     <div style={{ padding: '16px 0' }}>
                         <p style={{ color: '#64748b', marginBottom: 8 }}>请选择要移动到的目标位置：</p>
                         <TreeSelect
-                            treeData={folderTreeSelectData}
+                            treeData={moveFolderTree}
                             value={dialogState.targetParentId}
                             onChange={val => setDialogState(prev => ({ ...prev, targetParentId: val }))}
                             style={{ width: '100%' }}
