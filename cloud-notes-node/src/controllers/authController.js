@@ -1,7 +1,18 @@
 const authService = require('../services/authService');
+const captchaService = require('../services/captchaService');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
 const config = require('../config');
+
+// 获取图形验证码
+exports.getCaptcha = asyncHandler(async (req, res) => {
+    const data = captchaService.generateCaptcha();
+    res.status(200).json({
+        code: 200,
+        message: '获取验证码成功',
+        data
+    });
+});
 
 // 发送邮箱验证码
 exports.sendVerificationCode = asyncHandler(async (req, res) => {
@@ -38,13 +49,15 @@ exports.register = asyncHandler(async (req, res) => {
     });
 });
 
-// 用户登录 (修改为接收account字段)
+// 用户登录 (增加图形验证码校验)
 exports.login = asyncHandler(async (req, res) => {
-    const { account, password } = req.body;
+    const { account, password, captcha, captchaKey } = req.body;
 
     if (!account || !password) {
         throw new AppError('请提供账号和密码', 400);
     }
+
+    captchaService.verifyCaptcha(captchaKey, captcha);
 
     const result = await authService.login(account, password);
 

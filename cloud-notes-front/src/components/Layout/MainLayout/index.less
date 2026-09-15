@@ -1,18 +1,23 @@
 .main-layout {
   height: 100vh;
   min-height: 100vh;
+  display: flex !important;
+  flex-direction: row !important;
+  overflow: hidden;
 
-  .sidebar,
-  .note-list,
-  .main-content {
+  .nav-tree-sidebar {
     height: 100%;
     min-height: 0;
   }
-}
 
-.main-content {
-  flex: 1;
-  padding: 16px;
-  background-color: #f7f9fa;
-  display: flex;
+  .main-content {
+    flex: 1;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    padding: 12px;
+    background-color: #f1f5f9;
+    display: flex;
+    overflow: hidden;
+  }
 }

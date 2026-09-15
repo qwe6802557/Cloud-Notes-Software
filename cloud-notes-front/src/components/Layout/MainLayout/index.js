@@ -1,14 +1,14 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { Layout, Modal, message } from 'antd';
-import Sidebar from '../Sidebar';
-import NoteList from '../NoteList';
+import NavTree from '../NavTree';
 import NoteEditor from '../Editor';
-import { updateNote } from '@/api/notes';
+import { updateNote, createNote } from '@/api/notes';
 import { logout } from '@/api/user';
 import { clearAuth } from '@/utils/auth';
 import './index.less';
 
 const MainLayout = () => {
+    const navTreeRef = useRef(null);
     const [collapsed, setCollapsed] = useState(false);
     const [selectedNotebook, setSelectedNotebook] = useState(null);
     const [selectedNote, setSelectedNote] = useState(null);
@@ -17,7 +17,6 @@ const MainLayout = () => {
     const [savedNote, setSavedNote] = useState(null);
     const [syncVersion, setSyncVersion] = useState(0);
     const [modal, contextHolder] = Modal.useModal();
-    const createNoteHandlerRef = useRef(null);
 
     const handleSaveNote = useCallback(async (noteId, content) => {
         const result = await updateNote(noteId, {
@@ -83,13 +82,33 @@ const MainLayout = () => {
         setEditorSaving(Boolean(status?.saving || status?.autoSaving));
     }, []);
 
-    const registerCreateNoteHandler = useCallback(handler => {
-        createNoteHandlerRef.current = handler;
-    }, []);
+    const handleCreateNote = useCallback(async () => {
+        if (navTreeRef.current?.triggerCreateNote) {
+            navTreeRef.current.triggerCreateNote();
+            return;
+        }
 
-    const handleCreateNote = useCallback(() => {
-        return createNoteHandlerRef.current?.();
-    }, []);
+        if (!selectedNotebook) {
+            message.warning('请先选择笔记本');
+            return;
+        }
+
+        try {
+            const res = await createNote({
+                title: '无标题笔记',
+                content: '',
+                notebookId: selectedNotebook,
+                type: 'note'
+            });
+            const newNoteId = res?.note?._id || res?.data?.note?._id || res?._id;
+            if (newNoteId) {
+                setSelectedNote(newNoteId);
+                setSyncVersion(v => v + 1);
+            }
+        } catch {
+            message.error('创建笔记失败');
+        }
+    }, [selectedNotebook]);
 
     const handleSync = useCallback(() => {
         setSyncVersion(version => version + 1);
@@ -102,8 +121,8 @@ const MainLayout = () => {
 
         try {
             await logout();
-        } catch (error) {
-            // 本地登录态清理优先，避免接口异常时用户无法退出。
+        } catch {
+            // 本地清理优先，确保即便网络异常也能正常退出
         } finally {
             clearAuth();
             window.location.href = '/login';
@@ -113,27 +132,20 @@ const MainLayout = () => {
     return (
         <>
             {contextHolder}
-            <Layout className="main-layout">
-                <Sidebar
+            <Layout hasSider className="main-layout">
+                <NavTree
+                    ref={navTreeRef}
                     collapsed={collapsed}
                     setCollapsed={setCollapsed}
                     selectedNotebook={selectedNotebook}
                     setSelectedNotebook={handleNotebookChange}
-                    syncVersion={syncVersion}
-                    onSync={handleSync}
-                    onLogout={handleLogout}
-                />
-                <NoteList
-                    selectedNotebook={selectedNotebook}
-                    isTrash={selectedNotebook === 'trash'}
-                    isStarred={selectedNotebook === 'starred'}
-                    isRecent={selectedNotebook === 'recent'}
                     selectedNote={selectedNote}
                     setSelectedNote={handleNoteChange}
                     canChangeSelection={confirmLeaveUnsavedNote}
                     savedNote={savedNote}
-                    registerCreateNoteHandler={registerCreateNoteHandler}
                     syncVersion={syncVersion}
+                    onSync={handleSync}
+                    onLogout={handleLogout}
                 />
                 <Layout.Content className="main-content">
                     <NoteEditor

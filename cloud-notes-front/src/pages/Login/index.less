@@ -82,6 +82,44 @@
         margin-top: 8px;
         margin-bottom: 0;
       }
+
+      .captcha-img-box {
+        height: 40px;
+        background: #f8fafc;
+        border: 1px solid #d9d9d9;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        overflow: hidden;
+        user-select: none;
+        transition: all 0.2s ease;
+
+        &:hover {
+          border-color: #1890ff;
+          box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+        }
+
+        .captcha-svg {
+          width: 100%;
+          height: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+
+          svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+          }
+        }
+
+        .captcha-refresh-text {
+          font-size: 13px;
+          color: #64748b;
+        }
+      }
     }
 
     .login-footer {

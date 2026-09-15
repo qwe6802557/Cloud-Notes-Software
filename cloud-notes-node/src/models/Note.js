@@ -24,6 +24,16 @@ const noteSchema = new mongoose.Schema({
         ref: 'User',
         required: [true, '笔记必须关联用户']
     },
+    type: {
+        type: String,
+        enum: ['note', 'folder'],
+        default: 'note'
+    },
+    parentId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Note',
+        default: null
+    },
     tags: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Tag'
@@ -63,6 +73,7 @@ const noteSchema = new mongoose.Schema({
 // 索引优化查询
 noteSchema.index({ userId: 1, isDeleted: 1 });
 noteSchema.index({ notebookId: 1, isDeleted: 1 });
+noteSchema.index({ notebookId: 1, parentId: 1, isDeleted: 1 });
 noteSchema.index({ tags: 1 });
 noteSchema.index({ title: 'text', content: 'text' });
 

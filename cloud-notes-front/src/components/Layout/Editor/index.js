@@ -29,6 +29,7 @@ import 'katex/dist/katex.css';
 import './index.less';
 import { getNoteDetail } from '@/api/notes';
 import { uploadNoteImage } from '@/api/upload';
+import { getEditorPreferences } from '@/utils/preferences';
 
 const locale = {
     ...zhHans
@@ -287,7 +288,7 @@ const createEditorContextPlugin = (editorContextRef, onHandleImageFiles) => ({
 const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, onCreateNote }) => {
     const [noteTitle, setNoteTitle] = useState('');
     const [content, setContent] = useState('');
-    const [mode, setMode] = useState('split');
+    const [mode, setMode] = useState(() => getEditorPreferences().defaultMode || 'split');
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [autoSaving, setAutoSaving] = useState(false);
@@ -302,6 +303,19 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
     const editorContextRef = useRef(null);
     const imageInputRef = useRef(null);
     const contentRef = useRef('');
+
+    useEffect(() => {
+        const handlePreferencesChange = event => {
+            if (event?.detail?.defaultMode) {
+                setMode(event.detail.defaultMode);
+            }
+        };
+
+        window.addEventListener('editor-preferences-changed', handlePreferencesChange);
+        return () => {
+            window.removeEventListener('editor-preferences-changed', handlePreferencesChange);
+        };
+    }, []);
 
     const updateWordCount = useCallback(text => {
         const lines = text.split('\n').length;

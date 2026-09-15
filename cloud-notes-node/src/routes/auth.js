@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const authController = require('../controllers/authController');
 const { validate, schemas } = require('../middleware/validator');
 const { protect } = require('../middleware/auth');
@@ -6,6 +6,7 @@ const { loginLimiter, verifyCodeLimiter } = require('../middleware/rateLimiter')
 
 const router = express.Router();
 
+router.get('/captcha', authController.getCaptcha);
 router.get('/verifyCode', verifyCodeLimiter, validate(schemas.sendVerificationCode, 'query'), authController.sendVerificationCode);
 router.post('/register', validate(schemas.userRegister, 'body'), authController.register);
 router.post('/login', loginLimiter, validate(schemas.userLogin, 'body'), authController.login);

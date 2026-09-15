@@ -89,6 +89,17 @@ const schemas = {
                 'string.min': '密码至少需要6个字符',
                 'any.required': '密码不能为空',
                 'string.empty': '密码不能为空'
+            }),
+        captcha: Joi.string().trim().length(4).required()
+            .messages({
+                'string.length': '请输入4位验证码',
+                'any.required': '请输入验证码',
+                'string.empty': '请输入验证码'
+            }),
+        captchaKey: Joi.string().trim().required()
+            .messages({
+                'any.required': '验证码已失效，请刷新',
+                'string.empty': '验证码已失效，请刷新'
             })
     }),
     userUpdate: Joi.object({
@@ -146,22 +157,30 @@ const schemas = {
         isDefault: Joi.boolean()
     }),
 
-    // 笔记创建验证
+    // 笔记与目录创建验证
     noteCreate: Joi.object({
         title: Joi.string().trim().max(200).required()
             .messages({
                 'string.max': '标题最多200个字符',
                 'any.required': '标题不能为空'
             }),
-        content: Joi.string().allow('').required()
-            .messages({
-                'any.required': '内容不能为空'
-            }),
+        content: Joi.string().allow('').optional(),
         notebookId: Joi.string().required()
             .messages({
                 'any.required': '必须指定笔记本'
             }),
+        type: Joi.string().valid('note', 'folder').default('note'),
+        parentId: Joi.string().allow(null, '').optional(),
         tags: Joi.array().items(Joi.string()),
+    }),
+
+    // 节点移动验证
+    noteMove: Joi.object({
+        targetParentId: Joi.string().allow(null, '').required()
+            .messages({
+                'any.required': '目标父节点不能为空'
+            }),
+        notebookId: Joi.string().optional()
     }),
 
     // 发送验证码验证

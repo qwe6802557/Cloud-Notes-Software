@@ -105,3 +105,12 @@ export const restoreNote = noteId => {
         method: 'put'
     });
 };
+
+// 移动笔记或目录
+export const moveNoteNode = (noteId, data) => {
+    return request({
+        url: `/notes/${noteId}/move`,
+        method: 'put',
+        data
+    });
+};
