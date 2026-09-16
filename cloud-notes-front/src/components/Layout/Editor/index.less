@@ -494,11 +494,81 @@
   }
 }
 
-// medium-zoom 图片放大预览层级
-.medium-zoom-overlay {
-  z-index: 1000 !important;
+// Markdown 渲染区域图片交互
+.markdown-body img {
+  cursor: zoom-in;
+  transition: opacity 0.2s ease;
+
+  &:hover {
+    opacity: 0.92;
+  }
 }
 
-.medium-zoom-image--opened {
-  z-index: 1001 !important;
+// 全功能图片画廊与长截图预览样式
+.cloud-note-image-preview {
+  // 长截图模式：从头部开始展示，解除视口高度限制，支持鼠标滚轮顺畅向下阅读长图
+  &.is-tall-image {
+    .ant-image-preview-wrap {
+      overflow-y: auto !important;
+      overflow-x: hidden !important;
+      scroll-behavior: smooth;
+
+      &::-webkit-scrollbar {
+        width: 8px;
+      }
+      &::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.25);
+        border-radius: 4px;
+
+        &:hover {
+          background: rgba(255, 255, 255, 0.45);
+        }
+      }
+    }
+
+    .ant-image-preview-body {
+      position: static !important;
+      overflow: visible !important;
+      min-height: 100vh;
+    }
+
+    .ant-image-preview-img-wrapper {
+      position: static !important;
+      display: flex !important;
+      justify-content: center !important;
+      align-items: flex-start !important;
+      padding: 0 16px 120px 16px !important;
+      min-height: 100vh !important;
+      pointer-events: none !important;
+    }
+
+    .ant-image-preview-img {
+      position: relative !important;
+      margin: 0 !important;
+      max-height: none !important;
+      max-width: min(94vw, 1080px) !important;
+      width: auto !important;
+      height: auto !important;
+      transform: none !important;
+      cursor: default !important;
+      pointer-events: auto !important;
+      box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+      border-radius: 0 0 6px 6px;
+    }
+  }
+
+  .cloud-note-preview-custom-toolbar {
+    align-items: center;
+
+    .cloud-note-preview-toolbar-btn {
+      color: rgba(255, 255, 255, 0.85);
+      cursor: pointer;
+      font-size: 18px;
+      transition: color 0.2s;
+
+      &:hover {
+        color: #fff;
+      }
+    }
+  }
 }

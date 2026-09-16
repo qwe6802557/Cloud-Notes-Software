@@ -3,11 +3,10 @@ import { Editor, Viewer } from '@bytemd/react';
 import gfm from '@bytemd/plugin-gfm';
 import highlight from '@bytemd/plugin-highlight';
 import gemoji from '@bytemd/plugin-gemoji';
-import mediumZoom from '@bytemd/plugin-medium-zoom';
 import math from '@bytemd/plugin-math';
 import mermaid from '@bytemd/plugin-mermaid';
 import breaks from '@bytemd/plugin-breaks';
-import { Empty, Spin, Button, Space, message, Tooltip, Dropdown } from 'antd';
+import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image } from 'antd';
 import {
     EditOutlined,
     EyeOutlined,
@@ -15,7 +14,8 @@ import {
     SaveOutlined,
     ShareAltOutlined,
     FileImageOutlined,
-    DownloadOutlined
+    DownloadOutlined,
+    ExportOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -41,7 +41,6 @@ const basePlugins = [
     }),
     highlight(),
     gemoji(),
-    mediumZoom(),
     math({
         locale: zhHansMath
     }),
@@ -297,6 +296,11 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
     const [saveError, setSaveError] = useState('');
     const [uploadingImage, setUploadingImage] = useState(false);
     const [wordCount, setWordCount] = useState({ words: 0, lines: 0 });
+    const [imagePreview, setImagePreview] = useState({
+        visible: false,
+        current: 0,
+        images: []
+    });
     const autoSaveTimerRef = useRef(null);
     const lastSavedContentRef = useRef('');
     const loadingNoteRef = useRef(false);
@@ -516,6 +520,58 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
             event.target.value = '';
         }
     };
+
+    // 代理 Markdown 渲染区图片点击，组装画廊并呼出全功能预览器
+    const handlePreviewContainerClick = useCallback(event => {
+        const target = event.target;
+        if (!target || target.tagName !== 'IMG' || !target.closest('.markdown-body')) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const container = target.closest('.markdown-body');
+        const imgElements = Array.from(container.querySelectorAll('img'));
+        const images = imgElements.map(img => {
+            const naturalWidth = img.naturalWidth || 1;
+            const naturalHeight = img.naturalHeight || 1;
+            return {
+                src: img.getAttribute('src') || img.src,
+                alt: img.getAttribute('alt') || '笔记图片',
+                isTall: naturalHeight / naturalWidth > 1.6
+            };
+        });
+
+        const clickedIndex = imgElements.indexOf(target);
+        setImagePreview({
+            visible: true,
+            current: clickedIndex >= 0 ? clickedIndex : 0,
+            images: images.length > 0 ? images : [{
+                src: target.getAttribute('src') || target.src,
+                alt: target.getAttribute('alt') || '笔记图片',
+                isTall: (target.naturalHeight || 1) / (target.naturalWidth || 1) > 1.6
+            }]
+        });
+    }, []);
+
+    const { visible: isPreviewVisible, current: previewCurrentIndex } = imagePreview;
+
+    // 打开或切换预览图片时，重置长图视口滚动条至头部顶端
+    useEffect(() => {
+        if (!isPreviewVisible) {
+            return undefined;
+        }
+
+        const timer = setTimeout(() => {
+            const wrap = document.querySelector('.ant-image-preview-wrap');
+            if (wrap) {
+                wrap.scrollTop = 0;
+            }
+        }, 16);
+
+        return () => clearTimeout(timer);
+    }, [isPreviewVisible, previewCurrentIndex]);
 
     const handleExportMarkdown = async () => {
         if (!selectedNote) {
@@ -970,7 +1026,10 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
 
             <div className="editor-content">
                 <Spin spinning={loading} tip="加载中...">
-                    <div className={mode === 'edit' ? 'editor-container editor-container-edit' : 'editor-container'}>
+                    <div
+                        className={mode === 'edit' ? 'editor-container editor-container-edit' : 'editor-container'}
+                        onClick={handlePreviewContainerClick}
+                    >
                         {mode === 'edit' ? (
                             <Editor
                                 value={content}
@@ -1013,6 +1072,42 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
                     </div>
                 </div>
             )}
+
+            <div style={{ display: 'none' }}>
+                <Image.PreviewGroup
+                    preview={{
+                        visible: imagePreview.visible,
+                        onVisibleChange: visible => {
+                            setImagePreview(prev => ({ ...prev, visible }));
+                        },
+                        current: imagePreview.current,
+                        onChange: current => {
+                            setImagePreview(prev => ({ ...prev, current }));
+                        },
+                        rootClassName: `cloud-note-image-preview ${imagePreview.images[imagePreview.current]?.isTall ? 'is-tall-image' : ''}`,
+                        toolbarRender: originalNode => (
+                            <Space size={12} className="cloud-note-preview-custom-toolbar">
+                                {originalNode}
+                                <Tooltip title="在新标签页查看原图">
+                                    <ExportOutlined
+                                        className="cloud-note-preview-toolbar-btn"
+                                        onClick={() => {
+                                            const activeImg = imagePreview.images[imagePreview.current]?.src;
+                                            if (activeImg) {
+                                                window.open(activeImg, '_blank');
+                                            }
+                                        }}
+                                    />
+                                </Tooltip>
+                            </Space>
+                        )
+                    }}
+                >
+                    {imagePreview.images.map((item, index) => (
+                        <Image key={`${item.src}-${index}`} src={item.src} alt={item.alt} />
+                    ))}
+                </Image.PreviewGroup>
+            </div>
         </div>
     );
 };
