@@ -179,21 +179,73 @@
         align-items: center;
 
         .ant-tree-switcher {
+          position: relative;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 20px;
+          width: 22px;
           height: 36px;
           line-height: 36px;
           color: #94a3b8;
           flex-shrink: 0;
+          cursor: pointer;
+          user-select: none;
+          outline: none !important;
 
-          &:hover {
-            color: #475569;
+          // 核心对齐：强制重置并居中 AntD 默认 top:0 错位的 ::before 背景框
+          &::before {
+            content: '' !important;
+            position: absolute !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            width: 22px !important;
+            height: 22px !important;
+            border-radius: 4px !important;
+            background-color: transparent !important;
+            transition: background-color 0.18s ease, transform 0.18s ease !important;
+            pointer-events: none;
+          }
+
+          // 悬停/激活微交互：居中微圆角背景
+          &:not(.ant-tree-switcher-noop):hover {
+            color: #1e293b;
+
+            &::before {
+              background-color: rgba(15, 23, 42, 0.06) !important;
+            }
+          }
+
+          &:not(.ant-tree-switcher-noop):active {
+            &::before {
+              background-color: rgba(15, 23, 42, 0.1) !important;
+              transform: translate(-50%, -50%) scale(0.94) !important;
+            }
+          }
+
+          // 小箭头图标自身对齐
+          .ant-tree-switcher-icon {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            font-size: 11px !important;
+            line-height: 1 !important;
+            position: relative;
+            z-index: 1;
+            margin: 0 !important;
+
+            svg {
+              transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            }
           }
 
           &.ant-tree-switcher-noop {
             width: 14px;
+            cursor: default;
+
+            &::before {
+              display: none !important;
+            }
           }
         }
 

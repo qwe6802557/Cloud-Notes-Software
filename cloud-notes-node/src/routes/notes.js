@@ -18,6 +18,9 @@ router.put('/:id', noteController.updateNote);
 router.put('/:id/starred', noteController.toggleStarred);
 router.put('/:id/restore', noteController.restoreNote);
 router.put('/:id/move', validate(schemas.noteMove, 'body'), noteController.moveNote);
+router.get('/:id/histories', noteController.getNoteHistories);
+router.get('/:id/histories/:historyId', noteController.getNoteHistoryDetail);
+router.post('/:id/histories/:historyId/rollback', noteController.rollbackNoteHistory);
 router.delete('/:id', noteController.deleteNote);
 
 module.exports = router;

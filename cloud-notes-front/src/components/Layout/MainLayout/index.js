@@ -16,12 +16,14 @@ const MainLayout = () => {
     const [editorSaving, setEditorSaving] = useState(false);
     const [savedNote, setSavedNote] = useState(null);
     const [syncVersion, setSyncVersion] = useState(0);
+    const [zenMode, setZenMode] = useState(false);
     const [modal, contextHolder] = Modal.useModal();
 
-    const handleSaveNote = useCallback(async (noteId, content) => {
+    const handleSaveNote = useCallback(async (noteId, content, meta = {}) => {
         const result = await updateNote(noteId, {
             content,
-            rawContent: content
+            rawContent: content,
+            ...meta
         });
         if (result?.note) {
             setSavedNote(result.note);
@@ -132,7 +134,7 @@ const MainLayout = () => {
     return (
         <>
             {contextHolder}
-            <Layout hasSider className="main-layout">
+            <Layout hasSider className={`main-layout ${zenMode ? 'is-zen-mode' : ''}`}>
                 <NavTree
                     ref={navTreeRef}
                     collapsed={collapsed}
@@ -154,6 +156,8 @@ const MainLayout = () => {
                         onDirtyChange={setEditorDirty}
                         onSaveStateChange={handleSaveStateChange}
                         onCreateNote={handleCreateNote}
+                        zenMode={zenMode}
+                        onToggleZenMode={setZenMode}
                     />
                 </Layout.Content>
             </Layout>

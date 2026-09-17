@@ -1,7 +1,15 @@
 const Note = require('../models/Note');
 const Tag = require('../models/Tag');
+const NoteHistory = require('../models/NoteHistory');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
+
+const countWords = text => {
+    if (!text) return 0;
+    const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const englishWords = (text.replace(/[\u4e00-\u9fa5]/g, ' ').trim().split(/\s+/).filter(Boolean) || []).length;
+    return chineseChars + englishWords;
+};
 
 const buildKeywordFilter = keyword => {
     const value = (keyword || '').trim();
@@ -255,7 +263,7 @@ exports.getNote = asyncHandler(async (req, res, next) => {
 exports.updateNote = asyncHandler(async (req, res, next) => {
     const noteId = req.params.id;
     const userId = req.user._id;
-    const updateData = req.body;
+    const { saveType, ...updateData } = req.body;
 
     // 检查并处理标签变更
     if (updateData.tags) {
@@ -299,6 +307,50 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
 
     if (!note) {
         return next(new AppError('笔记不存在', 404));
+    }
+
+    if (note.type === 'note' && (updateData.content !== undefined || updateData.title !== undefined)) {
+        const currentSaveType = saveType === 'auto' ? 'auto' : (saveType === 'rollback' ? 'rollback' : 'manual');
+        let shouldCreateSnapshot = false;
+
+        if (currentSaveType === 'manual' || currentSaveType === 'rollback') {
+            shouldCreateSnapshot = true;
+        } else if (currentSaveType === 'auto') {
+            const latestHistory = await NoteHistory.findOne({ noteId: note._id, userId }).sort({ createdAt: -1 });
+            if (!latestHistory) {
+                shouldCreateSnapshot = true;
+            } else {
+                const timeDiff = Date.now() - new Date(latestHistory.createdAt).getTime();
+                const isContentDifferent = latestHistory.content !== note.content || latestHistory.title !== note.title;
+                if (timeDiff >= 5 * 60 * 1000 && isContentDifferent) {
+                    shouldCreateSnapshot = true;
+                }
+            }
+        }
+
+        if (shouldCreateSnapshot) {
+            await NoteHistory.create({
+                noteId: note._id,
+                userId,
+                title: note.title,
+                content: note.content,
+                saveType: currentSaveType,
+                wordCount: countWords(note.content)
+            });
+
+            const totalHistories = await NoteHistory.countDocuments({ noteId: note._id, userId });
+            if (totalHistories > 30) {
+                const excess = totalHistories - 30;
+                const oldestRecords = await NoteHistory.find({ noteId: note._id, userId })
+                    .sort({ createdAt: 1 })
+                    .limit(excess)
+                    .select('_id');
+                const oldestIds = oldestRecords.map(item => item._id);
+                if (oldestIds.length > 0) {
+                    await NoteHistory.deleteMany({ _id: { $in: oldestIds } });
+                }
+            }
+        }
     }
 
     res.status(200).json({
@@ -558,6 +610,91 @@ exports.searchNotes = asyncHandler(async (req, res, next) => {
         data: {
             notes,
             results: notes.length
+        }
+    });
+});
+
+// 获取笔记历史版本列表
+exports.getNoteHistories = asyncHandler(async (req, res, next) => {
+    const noteId = req.params.id;
+    const userId = req.user._id;
+
+    const note = await Note.findOne({ _id: noteId, userId, isDeleted: false });
+    if (!note) {
+        return next(new AppError('笔记不存在', 404));
+    }
+
+    const histories = await NoteHistory.find({ noteId, userId })
+        .sort({ createdAt: -1 })
+        .select('_id noteId title saveType wordCount createdAt');
+
+    res.status(200).json({
+        code: 200,
+        message: '获取历史版本成功',
+        data: {
+            histories
+        }
+    });
+});
+
+// 获取单个历史版本详情
+exports.getNoteHistoryDetail = asyncHandler(async (req, res, next) => {
+    const { id: noteId, historyId } = req.params;
+    const userId = req.user._id;
+
+    const history = await NoteHistory.findOne({ _id: historyId, noteId, userId });
+    if (!history) {
+        return next(new AppError('历史版本不存在', 404));
+    }
+
+    res.status(200).json({
+        code: 200,
+        message: '获取版本详情成功',
+        data: {
+            history
+        }
+    });
+});
+
+// 回滚至指定历史版本
+exports.rollbackNoteHistory = asyncHandler(async (req, res, next) => {
+    const { id: noteId, historyId } = req.params;
+    const userId = req.user._id;
+
+    const history = await NoteHistory.findOne({ _id: historyId, noteId, userId });
+    if (!history) {
+        return next(new AppError('历史版本不存在', 404));
+    }
+
+    const note = await Note.findOneAndUpdate(
+        { _id: noteId, userId, isDeleted: false },
+        {
+            title: history.title,
+            content: history.content,
+            rawContent: history.content,
+            updatedAt: new Date()
+        },
+        { new: true, runValidators: true }
+    ).populate('tags', 'name color');
+
+    if (!note) {
+        return next(new AppError('笔记不存在', 404));
+    }
+
+    await NoteHistory.create({
+        noteId: note._id,
+        userId,
+        title: note.title,
+        content: note.content,
+        saveType: 'rollback',
+        wordCount: countWords(note.content)
+    });
+
+    res.status(200).json({
+        code: 200,
+        message: '版本回滚成功',
+        data: {
+            note
         }
     });
 });

@@ -114,3 +114,27 @@ export const moveNoteNode = (noteId, data) => {
         data
     });
 };
+
+// 获取笔记历史版本列表
+export const getNoteHistories = noteId => {
+    return request({
+        url: `/notes/${noteId}/histories`,
+        method: 'get'
+    });
+};
+
+// 获取历史版本详情
+export const getNoteHistoryDetail = (noteId, historyId) => {
+    return request({
+        url: `/notes/${noteId}/histories/${historyId}`,
+        method: 'get'
+    });
+};
+
+// 回滚至指定历史版本
+export const rollbackNoteHistory = (noteId, historyId) => {
+    return request({
+        url: `/notes/${noteId}/histories/${historyId}/rollback`,
+        method: 'post'
+    });
+};

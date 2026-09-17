@@ -6,7 +6,7 @@ import gemoji from '@bytemd/plugin-gemoji';
 import math from '@bytemd/plugin-math';
 import mermaid from '@bytemd/plugin-mermaid';
 import breaks from '@bytemd/plugin-breaks';
-import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image } from 'antd';
+import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image, Popover } from 'antd';
 import {
     EditOutlined,
     EyeOutlined,
@@ -15,7 +15,12 @@ import {
     ShareAltOutlined,
     FileImageOutlined,
     DownloadOutlined,
-    ExportOutlined
+    ExportOutlined,
+    CompassOutlined,
+    HistoryOutlined,
+    FullscreenOutlined,
+    FullscreenExitOutlined,
+    FileTextOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -30,6 +35,8 @@ import './index.less';
 import { getNoteDetail } from '@/api/notes';
 import { uploadNoteImage } from '@/api/upload';
 import { getEditorPreferences } from '@/utils/preferences';
+import TOCDrawer from './TOCDrawer';
+import VersionHistoryModal from './VersionHistoryModal';
 
 const locale = {
     ...zhHans
@@ -49,6 +56,45 @@ const basePlugins = [
     }),
     breaks()
 ];
+
+const calculateContentAnalytics = text => {
+    if (!text) {
+        return {
+            chineseChars: 0,
+            englishWords: 0,
+            punctuationChars: 0,
+            totalChars: 0,
+            lines: 0,
+            readingTimeMinutes: 0,
+            effectiveWords: 0
+        };
+    }
+
+    const lines = text.split('\n').length;
+    const totalChars = text.length;
+    const chineseMatch = text.match(/[\u4e00-\u9fa5]/g);
+    const chineseChars = chineseMatch ? chineseMatch.length : 0;
+
+    const textWithoutChinese = text.replace(/[\u4e00-\u9fa5]/g, ' ');
+    const wordsMatch = textWithoutChinese.trim().split(/\s+/).filter(Boolean);
+    const englishWords = wordsMatch.length;
+
+    const punctuationMatch = text.match(/[，。！？、；：“”‘’（）《》【】…—.,!?;:'"()[\]{}]/g);
+    const punctuationChars = punctuationMatch ? punctuationMatch.length : 0;
+
+    const effectiveWords = chineseChars + englishWords;
+    const readingTimeMinutes = Math.max(1, Math.ceil(effectiveWords / 300));
+
+    return {
+        chineseChars,
+        englishWords,
+        punctuationChars,
+        totalChars,
+        lines,
+        readingTimeMinutes,
+        effectiveWords
+    };
+};
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 const ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
@@ -284,7 +330,15 @@ const createEditorContextPlugin = (editorContextRef, onHandleImageFiles) => ({
     }
 });
 
-const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, onCreateNote }) => {
+const NoteEditor = ({
+    selectedNote,
+    onSave,
+    onDirtyChange,
+    onSaveStateChange,
+    onCreateNote,
+    zenMode = false,
+    onToggleZenMode
+}) => {
     const [noteTitle, setNoteTitle] = useState('');
     const [content, setContent] = useState('');
     const [mode, setMode] = useState(() => getEditorPreferences().defaultMode || 'split');
@@ -295,7 +349,8 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
     const [lastSavedAt, setLastSavedAt] = useState(null);
     const [saveError, setSaveError] = useState('');
     const [uploadingImage, setUploadingImage] = useState(false);
-    const [wordCount, setWordCount] = useState({ words: 0, lines: 0 });
+    const [tocVisible, setTocVisible] = useState(false);
+    const [historyModalVisible, setHistoryModalVisible] = useState(false);
     const [imagePreview, setImagePreview] = useState({
         visible: false,
         current: 0,
@@ -307,6 +362,81 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
     const editorContextRef = useRef(null);
     const imageInputRef = useRef(null);
     const contentRef = useRef('');
+    const previousModeRef = useRef(mode);
+
+    const contentAnalytics = useMemo(() => calculateContentAnalytics(content), [content]);
+
+    useEffect(() => {
+        if (zenMode) {
+            setMode(currentMode => {
+                previousModeRef.current = currentMode;
+                return 'preview';
+            });
+
+            if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+                document.documentElement.requestFullscreen().catch(() => {});
+            }
+        } else {
+            if (previousModeRef.current) {
+                setMode(previousModeRef.current);
+            }
+
+            if (document.fullscreenElement && document.exitFullscreen) {
+                document.exitFullscreen().catch(() => {});
+            }
+        }
+    }, [zenMode]);
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            const editorInstance = editorContextRef.current?.editor;
+            if (editorInstance?.refresh) {
+                editorInstance.refresh();
+            }
+        }, 50);
+
+        return () => clearTimeout(timer);
+    }, [mode, zenMode]);
+
+    useEffect(() => {
+        const handleFullscreenChange = () => {
+            if (!document.fullscreenElement && zenMode && onToggleZenMode) {
+                onToggleZenMode(false);
+            }
+        };
+
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        return () => {
+            document.removeEventListener('fullscreenchange', handleFullscreenChange);
+        };
+    }, [zenMode, onToggleZenMode]);
+
+    useEffect(() => {
+        const handleKeyDown = event => {
+            if (event.key === 'Escape' || event.code === 'Escape') {
+                if (zenMode && onToggleZenMode) {
+                    onToggleZenMode(false);
+                }
+            }
+
+            if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.key === 'O' || event.key === 'o')) {
+                event.preventDefault();
+                setTocVisible(prev => !prev);
+            }
+
+            if ((event.ctrlKey || event.metaKey) && event.shiftKey && (event.key === 'F' || event.key === 'f')) {
+                event.preventDefault();
+                if (onToggleZenMode) {
+                    onToggleZenMode(prev => !prev);
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [zenMode, onToggleZenMode]);
 
     useEffect(() => {
         const handlePreferencesChange = event => {
@@ -321,22 +451,15 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
         };
     }, []);
 
-    const updateWordCount = useCallback(text => {
-        const lines = text.split('\n').length;
-        const words = text.trim().split(/\s+/).filter(Boolean).length;
-        setWordCount({ words, lines });
-    }, []);
-
     const syncContentState = useCallback(nextContent => {
         contentRef.current = nextContent;
         setContent(nextContent);
-        updateWordCount(nextContent);
         setSaveError('');
 
         if (!loadingNoteRef.current) {
             setIsDirty(nextContent !== lastSavedContentRef.current);
         }
-    }, [updateWordCount]);
+    }, []);
 
     const syncContentFromEditor = useCallback(editorInstance => {
         if (!editorInstance?.getValue) {
@@ -686,7 +809,6 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
             setSaveError('');
             contentRef.current = '';
             setContent('');
-            updateWordCount('');
             lastSavedContentRef.current = '';
 
             getNoteDetail(selectedNote)
@@ -699,7 +821,6 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
                     setNoteTitle(result?.note?.title || '');
                     contentRef.current = noteContent;
                     setContent(noteContent);
-                    updateWordCount(noteContent);
                     lastSavedContentRef.current = noteContent;
                     setLastSavedAt(result?.note?.updatedAt ? new Date(result.note.updatedAt) : null);
                     setIsDirty(false);
@@ -720,7 +841,6 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
             loadingNoteRef.current = false;
             contentRef.current = '';
             setContent('');
-            updateWordCount('');
             lastSavedContentRef.current = '';
             setIsDirty(false);
             setSaveError('');
@@ -730,12 +850,11 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
         return () => {
             mounted = false;
         };
-    }, [selectedNote, updateWordCount]);
+    }, [selectedNote]);
 
     const handleChange = value => {
         contentRef.current = value;
         setContent(value);
-        updateWordCount(value);
         setSaveError('');
 
         if (!loadingNoteRef.current) {
@@ -767,7 +886,10 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
 
         try {
             if (onSave) {
-                await onSave(selectedNote, content);
+                await onSave(selectedNote, content, {
+                    title: noteTitle,
+                    saveType: options.auto ? 'auto' : 'manual'
+                });
             }
 
             lastSavedContentRef.current = content;
@@ -791,7 +913,25 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
                 setSaving(false);
             }
         }
-    }, [autoSaving, content, isDirty, onSave, saving, selectedNote]);
+    }, [autoSaving, content, isDirty, noteTitle, onSave, saving, selectedNote]);
+
+    const handleRollbackSuccess = useCallback(rolledBackNote => {
+        if (!rolledBackNote) return;
+        const newContent = rolledBackNote.content || '';
+        const newTitle = rolledBackNote.title || '';
+        setNoteTitle(newTitle);
+        setContent(newContent);
+        contentRef.current = newContent;
+        lastSavedContentRef.current = newContent;
+        setIsDirty(false);
+        setSaveError('');
+        setLastSavedAt(new Date());
+
+        const editorInstance = editorContextRef.current?.editor;
+        if (editorInstance?.setValue) {
+            editorInstance.setValue(newContent);
+        }
+    }, []);
 
     const handleRetrySave = () => {
         handleSave().catch(() => {});
@@ -897,14 +1037,78 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
                     >
                         预览
                     </Button>
+                    <Tooltip title="文章大纲 (Ctrl+Shift+O)">
+                        <Button
+                            type={tocVisible ? 'primary' : 'default'}
+                            icon={<CompassOutlined />}
+                            onClick={() => setTocVisible(!tocVisible)}
+                        >
+                            大纲
+                        </Button>
+                    </Tooltip>
+                    <Tooltip title="历史版本快照">
+                        <Button
+                            icon={<HistoryOutlined />}
+                            disabled={!selectedNote}
+                            onClick={() => setHistoryModalVisible(true)}
+                        >
+                            版本
+                        </Button>
+                    </Tooltip>
+                    <Tooltip title={zenMode ? '退出沉浸模式 (Esc)' : '专注沉浸模式 (Ctrl+Shift+F)'}>
+                        <Button
+                            type={zenMode ? 'primary' : 'default'}
+                            icon={zenMode ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                            onClick={() => onToggleZenMode?.(!zenMode)}
+                        >
+                            {zenMode ? '还原' : '专注'}
+                        </Button>
+                    </Tooltip>
                 </Space>
 
                 <div className="word-count">
-                    <Tooltip title="字数统计">
-                        <span>
-                            <span className="count-label">字数:</span> {wordCount.words}
+                    <Popover
+                        placement="bottomLeft"
+                        title={<span style={{ fontWeight: 600 }}>文档统计与阅读预估</span>}
+                        content={
+                            <div className="word-count-popover-content">
+                                <div className="word-count-stat-row">
+                                    <span>总字数 (中+英)：</span>
+                                    <strong>{contentAnalytics.effectiveWords}</strong>
+                                </div>
+                                <div className="word-count-stat-row">
+                                    <span>中文字数：</span>
+                                    <strong>{contentAnalytics.chineseChars}</strong>
+                                </div>
+                                <div className="word-count-stat-row">
+                                    <span>英文单词数：</span>
+                                    <strong>{contentAnalytics.englishWords}</strong>
+                                </div>
+                                <div className="word-count-stat-row">
+                                    <span>标点字符数：</span>
+                                    <strong>{contentAnalytics.punctuationChars}</strong>
+                                </div>
+                                <div className="word-count-stat-row">
+                                    <span>总字符数：</span>
+                                    <strong>{contentAnalytics.totalChars}</strong>
+                                </div>
+                                <div className="word-count-stat-row">
+                                    <span>总行数：</span>
+                                    <strong>{contentAnalytics.lines}</strong>
+                                </div>
+                                <div className="word-count-stat-divider" />
+                                <div className="word-count-stat-row reading-time-row">
+                                    <span>预计阅读用时：</span>
+                                    <strong>约 {contentAnalytics.readingTimeMinutes} 分钟</strong>
+                                </div>
+                            </div>
+                        }
+                    >
+                        <span className="word-count-interactive-badge">
+                            <FileTextOutlined style={{ marginRight: 4, color: '#2563eb' }} />
+                            <span className="count-label">字数:</span> {contentAnalytics.effectiveWords}
                             <span className="count-separator">|</span>
-                            <span className="count-label">行数:</span> {wordCount.lines}
+                            <span className="count-label">阅读:</span> 约 {contentAnalytics.readingTimeMinutes} 分钟
                             {savedTimeText && (
                                 <>
                                     <span className="count-separator">|</span>
@@ -912,7 +1116,7 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
                                 </>
                             )}
                         </span>
-                    </Tooltip>
+                    </Popover>
                 </div>
             </div>
 
@@ -998,7 +1202,7 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
 
     if (!selectedNote && !loading) {
         return (
-            <div className="note-editor">
+            <div className={`note-editor ${zenMode ? 'is-zen-mode' : ''}`}>
                 {renderToolbar()}
                 <div className="empty-state">
                     <Empty
@@ -1013,7 +1217,60 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
     }
 
     return (
-        <div className="note-editor">
+        <div className={`note-editor ${zenMode ? 'is-zen-mode' : ''} ${zenMode ? `is-zen-${mode}` : ''}`}>
+            {zenMode ? (
+                <div className="zen-top-reveal-group">
+                    <div className="zen-hover-trigger" />
+                    <div className="zen-toolbar-container">
+                        {renderToolbar()}
+                    </div>
+                </div>
+            ) : (
+                renderToolbar()
+            )}
+            {zenMode && (
+                <div className="zen-top-actions">
+                    <div className="zen-mode-switch-pill" role="group" aria-label="视图模式切换">
+                        <button
+                            type="button"
+                            className={`zen-switch-btn ${mode === 'preview' ? 'is-active' : ''}`}
+                            onClick={() => setMode('preview')}
+                            title="阅读模式 (只看排版与图文)"
+                        >
+                            <EyeOutlined className="btn-icon" />
+                            <span>阅读</span>
+                        </button>
+                        <button
+                            type="button"
+                            className={`zen-switch-btn ${mode === 'edit' ? 'is-active' : ''}`}
+                            onClick={() => setMode('edit')}
+                            title="写作模式 (专注纯源码编辑)"
+                        >
+                            <EditOutlined className="btn-icon" />
+                            <span>写作</span>
+                        </button>
+                        <button
+                            type="button"
+                            className={`zen-switch-btn ${mode === 'split' ? 'is-active' : ''}`}
+                            onClick={() => setMode('split')}
+                            title="分屏模式 (左编辑右预览)"
+                        >
+                            <ColumnWidthOutlined className="btn-icon" />
+                            <span>分屏</span>
+                        </button>
+                    </div>
+
+                    <div
+                        className="zen-exit-pill"
+                        onClick={() => onToggleZenMode?.(false)}
+                        title="退出沉浸专注 (Esc)"
+                    >
+                        <FullscreenExitOutlined className="btn-icon" />
+                        <span>退出专注</span>
+                        <kbd className="zen-shortcut-key">Esc</kbd>
+                    </div>
+                </div>
+            )}
             <input
                 ref={imageInputRef}
                 type="file"
@@ -1022,12 +1279,11 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
                 hidden
                 onChange={handleInsertImageChange}
             />
-            {renderToolbar()}
 
             <div className="editor-content">
                 <Spin spinning={loading} tip="加载中...">
                     <div
-                        className={mode === 'edit' ? 'editor-container editor-container-edit' : 'editor-container'}
+                        className={`editor-container editor-container-${mode}`}
                         onClick={handlePreviewContainerClick}
                     >
                         {mode === 'edit' ? (
@@ -1072,6 +1328,21 @@ const NoteEditor = ({ selectedNote, onSave, onDirtyChange, onSaveStateChange, on
                     </div>
                 </div>
             )}
+
+            <TOCDrawer
+                visible={tocVisible}
+                onClose={() => setTocVisible(false)}
+                content={content}
+                editorContextRef={editorContextRef}
+            />
+
+            <VersionHistoryModal
+                visible={historyModalVisible}
+                onClose={() => setHistoryModalVisible(false)}
+                noteId={selectedNote}
+                currentNoteTitle={noteTitle}
+                onRollbackSuccess={handleRollbackSuccess}
+            />
 
             <div style={{ display: 'none' }}>
                 <Image.PreviewGroup
