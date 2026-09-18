@@ -67,6 +67,13 @@ function RootNavigation() {
             headerBackTitle: '取消',
           }}
         />
+        <Stack.Screen
+          name="folder/[id]"
+          options={{
+            headerTitle: '文件夹',
+            headerBackTitle: '返回',
+          }}
+        />
       </Stack>
     </>
   );

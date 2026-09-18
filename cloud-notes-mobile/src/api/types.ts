@@ -10,8 +10,9 @@ export interface User {
 export interface Notebook {
   _id: string;
   title: string;
-  parentId: string | null;
-  userId: string;
+  name?: string;
+  parentId?: string | null;
+  userId?: string;
   icon?: string;
   color?: string;
   children?: Notebook[];
@@ -26,6 +27,8 @@ export interface Note {
   content: string;
   notebookId: string;
   userId: string;
+  type?: 'note' | 'folder';
+  parentId?: string | null;
   isStarred?: boolean;
   isDeleted?: boolean;
   tags?: string[];

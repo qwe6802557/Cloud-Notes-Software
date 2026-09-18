@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -11,7 +11,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { Config } from '../../constants/Config';
@@ -19,22 +19,37 @@ import axios from 'axios';
 
 export default function SettingsScreen() {
   const router = useRouter();
-  const { user, serverUrl, updateServerUrl, logout } = useAuth();
+  const { user, serverUrl, updateServerUrl, logout, refreshUser } = useAuth();
 
   const [showServerModal, setShowServerModal] = useState(false);
   const [customUrl, setCustomUrl] = useState(serverUrl);
   const [isTestingPing, setIsTestingPing] = useState(false);
 
+  useFocusEffect(
+    useCallback(() => {
+      refreshUser();
+    }, [refreshUser])
+  );
+
   const handleLogout = () => {
+    const doLogout = async () => {
+      await logout();
+      router.replace('/login');
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm('确定要退出当前登录账号吗？')) {
+        doLogout();
+      }
+      return;
+    }
+
     Alert.alert('退出登录', '确定要退出当前登录账号吗？', [
       { text: '取消', style: 'cancel' },
       {
         text: '退出',
         style: 'destructive',
-        onPress: async () => {
-          await logout();
-          router.replace('/login');
-        },
+        onPress: doLogout,
       },
     ]);
   };
@@ -45,12 +60,24 @@ export default function SettingsScreen() {
       const clean = urlToTest.trim().replace(/\/+$/, '');
       const res = await axios.get(`${clean}/api/auth/captcha?t=${Date.now()}`, { timeout: 5000 });
       if (res.status === 200) {
-        Alert.alert('连接测试成功', `成功联通服务器：\n${clean}`);
+        if (Platform.OS === 'web') {
+          window.alert(`成功联通服务器：\n${clean}`);
+        } else {
+          Alert.alert('连接测试成功', `成功联通服务器：\n${clean}`);
+        }
       } else {
-        Alert.alert('连接告警', `服务响应异常（HTTP ${res.status}）`);
+        if (Platform.OS === 'web') {
+          window.alert(`服务响应异常（HTTP ${res.status}）`);
+        } else {
+          Alert.alert('连接告警', `服务响应异常（HTTP ${res.status}）`);
+        }
       }
     } catch (e: any) {
-      Alert.alert('连接失败', `无法连通目标服务：\n${e.message}`);
+      if (Platform.OS === 'web') {
+        window.alert(`无法连通目标服务：\n${e.message}`);
+      } else {
+        Alert.alert('连接失败', `无法连通目标服务：\n${e.message}`);
+      }
     } finally {
       setIsTestingPing(false);
     }
@@ -60,24 +87,32 @@ export default function SettingsScreen() {
     if (!customUrl.trim()) return;
     await updateServerUrl(customUrl.trim());
     setShowServerModal(false);
-    Alert.alert('成功', '服务器地址已切换');
+    if (Platform.OS === 'web') {
+      window.alert('服务器地址已切换');
+    } else {
+      Alert.alert('成功', '服务器地址已切换');
+    }
   };
+
+  const displayUser = (user as any)?.user || user;
+  const username = displayUser?.username || '未登录用户';
+  const email = displayUser?.email || '无邮箱信息';
+  const role = displayUser?.role || '普通用户';
+  const avatarChar = username && username !== '未登录用户' ? username.slice(0, 1).toUpperCase() : '囧';
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* 用户信息卡片 */}
       <View style={styles.profileCard}>
         <View style={styles.avatarCircle}>
-          <Text style={styles.avatarText}>
-            {user?.username ? user.username.slice(0, 1).toUpperCase() : '囧'}
-          </Text>
+          <Text style={styles.avatarText}>{avatarChar}</Text>
         </View>
 
         <View style={styles.profileInfo}>
-          <Text style={styles.username}>{user?.username || '未登录用户'}</Text>
-          <Text style={styles.userEmail}>{user?.email || '无邮箱信息'}</Text>
+          <Text style={styles.username}>{username}</Text>
+          <Text style={styles.userEmail}>{email}</Text>
           <View style={styles.roleBadge}>
-            <Text style={styles.roleText}>{user?.role || '普通用户'}</Text>
+            <Text style={styles.roleText}>{role}</Text>
           </View>
         </View>
       </View>
@@ -148,13 +183,6 @@ export default function SettingsScreen() {
           <Text style={styles.itemValue}>{Config.appName} Mobile</Text>
         </View>
 
-        <View style={styles.settingItem}>
-          <View style={styles.itemLeft}>
-            <Ionicons name="hardware-chip-outline" size={20} color="#64748b" style={styles.itemIcon} />
-            <Text style={styles.itemTitle}>技术架构</Text>
-          </View>
-          <Text style={styles.itemValueMono}>React Native + Expo 57</Text>
-        </View>
 
         <View style={styles.settingItem}>
           <View style={styles.itemLeft}>

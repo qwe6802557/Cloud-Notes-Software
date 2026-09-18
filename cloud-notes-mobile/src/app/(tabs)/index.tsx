@@ -29,28 +29,44 @@ export default function NotesScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   // 加载数据
-  const loadData = useCallback(async (isRefresh = false) => {
+  const loadData = useCallback(async (isRefresh = false, overrideNbId?: string | null) => {
     try {
       if (isRefresh) setIsRefreshing(true);
       else setIsLoading(true);
 
-      // 并行拉取笔记本列表与笔记
       const [nbRes, activeNbStored] = await Promise.all([
         notesApi.getNotebooks().catch(() => ({ code: 500, data: [] as Notebook[] })),
         AsyncStorage.getItem(Config.storageKeys.activeNotebookId).catch(() => null),
       ]);
 
+      let loadedNotebooks: Notebook[] = [];
       if (nbRes.code === 200 && Array.isArray(nbRes.data)) {
-        setNotebooks(nbRes.data);
+        // 确保“默认笔记本”排在首位
+        loadedNotebooks = [...nbRes.data].sort((a, b) => {
+          const aIsDefault = (a.title || a.name) === '默认笔记本';
+          const bIsDefault = (b.title || b.name) === '默认笔记本';
+          if (aIsDefault && !bIsDefault) return -1;
+          if (!aIsDefault && bIsDefault) return 1;
+          return 0;
+        });
+        setNotebooks(loadedNotebooks);
       }
 
-      const targetNbId = activeNotebookId || activeNbStored;
-      let notesRes;
+      // 默认选中“默认笔记本”，若无则选首个笔记本
+      const defaultNb =
+        loadedNotebooks.find(nb => (nb.title || nb.name) === '默认笔记本') ||
+        loadedNotebooks[0];
 
+      let targetNbId = overrideNbId !== undefined ? overrideNbId : activeNbStored;
+      if (!targetNbId || !loadedNotebooks.some(nb => nb._id === targetNbId)) {
+        targetNbId = defaultNb ? defaultNb._id : null;
+      }
+      setActiveNotebookId(targetNbId);
+
+      let notesRes;
       if (targetNbId) {
         notesRes = await notesApi.getNotebookNotes(targetNbId);
       } else {
-        // 默认拉取全部笔记 / 最近笔记
         notesRes = await notesApi.getRecentNotes();
       }
 
@@ -63,7 +79,7 @@ export default function NotesScreen() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [activeNotebookId]);
+  }, []);
 
   // 页面聚焦时自动刷新
   useFocusEffect(
@@ -72,13 +88,10 @@ export default function NotesScreen() {
     }, [loadData])
   );
 
-  const handleSelectNotebook = async (id: string | null) => {
+  const handleSelectNotebook = async (id: string) => {
     setActiveNotebookId(id);
-    if (id) {
-      await AsyncStorage.setItem(Config.storageKeys.activeNotebookId, id);
-    } else {
-      await AsyncStorage.removeItem(Config.storageKeys.activeNotebookId);
-    }
+    await AsyncStorage.setItem(Config.storageKeys.activeNotebookId, id);
+    loadData(false, id);
   };
 
   const toggleStar = async (item: Note) => {
@@ -106,6 +119,11 @@ export default function NotesScreen() {
       (n.content && n.content.toLowerCase().includes(query))
     );
   });
+
+  // 在最外层笔记列表中，仅展示顶级条目（!item.parentId），子笔记收纳进文件夹内；搜索时展示所有匹配项
+  const displayNotes = searchQuery.trim()
+    ? filteredNotes
+    : filteredNotes.filter(item => !item.parentId);
 
   const activeNotebook = notebooks.find(nb => nb._id === activeNotebookId);
 
@@ -137,52 +155,85 @@ export default function NotesScreen() {
     return `${d.getMonth() + 1}/${d.getDate()}`;
   };
 
-  const renderNoteCard = ({ item }: { item: Note }) => (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={() => router.push({ pathname: '/note/[id]', params: { id: item._id } })}
-      activeOpacity={0.7}
-    >
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardTitle} numberOfLines={1}>
-          {item.title || '无标题笔记'}
-        </Text>
-        <TouchableOpacity
-          onPress={() => toggleStar(item)}
-          style={styles.starButton}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons
-            name={item.isStarred ? 'star' : 'star-outline'}
-            size={18}
-            color={item.isStarred ? '#eab308' : '#cbd5e1'}
-          />
-        </TouchableOpacity>
-      </View>
+  const renderNoteCard = ({ item }: { item: Note }) => {
+    const isFolder = item.type === 'folder';
 
-      <Text style={styles.cardSnippet} numberOfLines={2}>
-        {cleanSnippet(item.content)}
-      </Text>
-
-      <View style={styles.cardFooter}>
-        <View style={styles.cardFooterLeft}>
-          <Text style={styles.cardDate}>{formatDate(item.updatedAt || item.createdAt)}</Text>
-          {(() => {
+    return (
+      <TouchableOpacity
+        style={styles.card}
+        onPress={() => {
+          if (isFolder) {
             const nb = notebooks.find(n => n._id === item.notebookId);
-            return nb ? (
-              <View style={styles.notebookBadge}>
-                <Ionicons name="folder-outline" size={11} color="#64748b" style={{ marginRight: 3 }} />
-                <Text style={styles.notebookBadgeText} numberOfLines={1}>
-                  {nb.title}
-                </Text>
-              </View>
-            ) : null;
-          })()}
+            router.push({
+              pathname: '/folder/[id]',
+              params: {
+                id: item._id,
+                title: item.title,
+                notebookId: item.notebookId || activeNotebookId || '',
+                notebookName: nb?.title || nb?.name || activeNotebook?.title || '笔记本',
+              },
+            });
+          } else {
+            router.push({ pathname: '/note/[id]', params: { id: item._id } });
+          }
+        }}
+        activeOpacity={0.7}
+      >
+        <View style={styles.cardHeader}>
+          <View style={styles.cardHeaderTitleRow}>
+            <Ionicons
+              name={isFolder ? 'folder' : 'document-text-outline'}
+              size={18}
+              color={isFolder ? '#f59e0b' : '#3b82f6'}
+              style={{ marginRight: 6 }}
+            />
+            <Text style={styles.cardTitle} numberOfLines={1}>
+              {item.title || (isFolder ? '未命名文件夹' : '无标题笔记')}
+            </Text>
+          </View>
+          {isFolder ? (
+            <View style={styles.folderBadge}>
+              <Text style={styles.folderBadgeText}>文件夹</Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              onPress={() => toggleStar(item)}
+              style={styles.starButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Ionicons
+                name={item.isStarred ? 'star' : 'star-outline'}
+                size={18}
+                color={item.isStarred ? '#eab308' : '#cbd5e1'}
+              />
+            </TouchableOpacity>
+          )}
         </View>
-        <Ionicons name="chevron-forward" size={14} color="#94a3b8" />
-      </View>
-    </TouchableOpacity>
-  );
+
+        <Text style={[styles.cardSnippet, isFolder && styles.folderSnippet]} numberOfLines={2}>
+          {isFolder ? '📁 点击浏览文件夹内容' : cleanSnippet(item.content)}
+        </Text>
+
+        <View style={styles.cardFooter}>
+          <View style={styles.cardFooterLeft}>
+            <Text style={styles.cardDate}>{formatDate(item.updatedAt || item.createdAt)}</Text>
+            {(() => {
+              const nb = notebooks.find(n => n._id === item.notebookId);
+              return nb ? (
+                <View style={styles.notebookBadge}>
+                  <Ionicons name="book-outline" size={11} color="#64748b" style={{ marginRight: 3 }} />
+                  <Text style={styles.notebookBadgeText} numberOfLines={1}>
+                    {nb.title || nb.name}
+                  </Text>
+                </View>
+              ) : null;
+            })()}
+          </View>
+          <Ionicons name="chevron-forward" size={14} color="#94a3b8" />
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -207,15 +258,6 @@ export default function NotesScreen() {
       {/* 分类过滤器条 */}
       <View style={styles.filterRow}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          <TouchableOpacity
-            style={[styles.filterChip, !activeNotebookId && styles.filterChipActive]}
-            onPress={() => handleSelectNotebook(null)}
-          >
-            <Text style={[styles.filterChipText, !activeNotebookId && styles.filterChipTextActive]}>
-              全部笔记 ({notes.length})
-            </Text>
-          </TouchableOpacity>
-
           {notebooks.map(nb => {
             const isActive = activeNotebookId === nb._id;
             return (
@@ -225,7 +267,7 @@ export default function NotesScreen() {
                 onPress={() => handleSelectNotebook(nb._id)}
               >
                 <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
-                  {nb.title}
+                  {nb.title || nb.name}
                 </Text>
               </TouchableOpacity>
             );
@@ -240,7 +282,7 @@ export default function NotesScreen() {
         </View>
       ) : (
         <FlatList
-          data={filteredNotes}
+          data={displayNotes}
           keyExtractor={item => item._id}
           renderItem={renderNoteCard}
           contentContainerStyle={styles.listContent}
@@ -314,10 +356,10 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
   },
   filterRow: {
+    marginHorizontal: 16,
     marginBottom: 8,
   },
   filterScroll: {
-    paddingHorizontal: 16,
     paddingVertical: 4,
     gap: 8,
   },
@@ -365,21 +407,41 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 8,
   },
+  cardHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 8,
+  },
   cardTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#0f172a',
     flex: 1,
-    marginRight: 8,
   },
   starButton: {
     padding: 4,
+  },
+  folderBadge: {
+    backgroundColor: '#fef3c7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  folderBadgeText: {
+    fontSize: 11,
+    color: '#d97706',
+    fontWeight: '500',
   },
   cardSnippet: {
     fontSize: 13,
     color: '#64748b',
     lineHeight: 18,
     marginBottom: 12,
+  },
+  folderSnippet: {
+    color: '#94a3b8',
+    fontStyle: 'italic',
   },
   cardFooter: {
     flexDirection: 'row',

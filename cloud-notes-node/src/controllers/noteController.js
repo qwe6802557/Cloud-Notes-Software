@@ -185,7 +185,7 @@ exports.getStarredNotes = asyncHandler(async (req, res) => {
         .sort(sort)
         .skip(parseInt(skip))
         .limit(parseInt(limit))
-        .select('title content updatedAt createdAt isStarred tags notebookId');
+        .select('title content updatedAt createdAt isStarred tags notebookId type parentId');
 
     const total = await Note.countDocuments(query);
 
@@ -219,7 +219,7 @@ exports.getRecentNotes = asyncHandler(async (req, res) => {
         .sort({ lastOpenedAt: -1, updatedAt: -1 })
         .skip(parseInt(skip))
         .limit(parseInt(limit))
-        .select('title content updatedAt createdAt lastOpenedAt isStarred tags notebookId');
+        .select('title content updatedAt createdAt lastOpenedAt isStarred tags notebookId type parentId');
 
     const total = await Note.countDocuments(query);
 
@@ -602,7 +602,7 @@ exports.searchNotes = asyncHandler(async (req, res, next) => {
     )
         .sort('-updatedAt')
         .limit(20)
-        .select('title updatedAt createdAt notebookId');
+        .select('title updatedAt createdAt notebookId type parentId');
 
     res.status(200).json({
         code: 200,

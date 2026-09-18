@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Config } from '../constants/Config';
 import { User } from '../api/types';
@@ -40,15 +40,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (storedToken) {
           setToken(storedToken);
           if (storedUser) {
-            setUser(JSON.parse(storedUser));
+            try {
+              const parsed = JSON.parse(storedUser);
+              setUser(parsed?.user || parsed);
+            } catch (e) {}
           }
 
           // 验证 Token 有效性并静默拉取最新用户信息
           try {
             const res = await authApi.getCurrentUser();
-            if (res && res.code === 200 && res.data) {
-              setUser(res.data);
-              await AsyncStorage.setItem(Config.storageKeys.user, JSON.stringify(res.data));
+            const userData = (res?.data as any)?.user || res?.data;
+            if (res && res.code === 200 && userData) {
+              setUser(userData);
+              await AsyncStorage.setItem(Config.storageKeys.user, JSON.stringify(userData));
             }
           } catch (err: any) {
             // 若 401，拦截器已清理凭证
@@ -71,15 +75,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initAuth();
   }, []);
 
-  const updateServerUrl = async (newUrl: string) => {
+  const updateServerUrl = useCallback(async (newUrl: string) => {
     await setServerUrl(newUrl);
     setLocalServerUrl(newUrl);
-  };
+  }, []);
 
-  const login = async (account: string, password: string, captcha?: string, captchaKey?: string) => {
+  const login = useCallback(async (account: string, password: string, captcha?: string, captchaKey?: string) => {
     const res = await authApi.login({ account, password, captcha, captchaKey });
     if (res.code === 200 && res.data) {
-      const { user: loggedInUser, token: receivedToken } = res.data;
+      const receivedToken = res.data.token;
+      const loggedInUser = (res.data as any).user || res.data;
       setUser(loggedInUser);
       setToken(receivedToken);
 
@@ -88,9 +93,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else {
       throw new Error(res.message || '登录失败');
     }
-  };
+  }, []);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await authApi.logout();
     } catch (e) {}
@@ -99,29 +104,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await AsyncStorage.removeItem(Config.storageKeys.user);
     setToken(null);
     setUser(null);
-  };
+  }, []);
 
-  const refreshUser = async () => {
-    const res = await authApi.getCurrentUser();
-    if (res.code === 200 && res.data) {
-      setUser(res.data);
-      await AsyncStorage.setItem(Config.storageKeys.user, JSON.stringify(res.data));
+  const isRefreshingUserRef = useRef(false);
+  const refreshUser = useCallback(async () => {
+    if (isRefreshingUserRef.current) return;
+    isRefreshingUserRef.current = true;
+    try {
+      const res = await authApi.getCurrentUser();
+      const userData = (res?.data as any)?.user || res?.data;
+      if (res.code === 200 && userData) {
+        setUser(userData);
+        await AsyncStorage.setItem(Config.storageKeys.user, JSON.stringify(userData));
+      }
+    } catch (e: any) {
+      console.warn('refreshUser error:', e?.message);
+    } finally {
+      isRefreshingUserRef.current = false;
     }
-  };
+  }, []);
+
+  const contextValue = useMemo(
+    () => ({
+      user,
+      token,
+      isLoading,
+      serverUrl,
+      updateServerUrl,
+      login,
+      logout,
+      refreshUser,
+    }),
+    [user, token, isLoading, serverUrl, updateServerUrl, login, logout, refreshUser]
+  );
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        token,
-        isLoading,
-        serverUrl,
-        updateServerUrl,
-        login,
-        logout,
-        refreshUser,
-      }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Image,
   Modal,
   Platform,
   ScrollView,
@@ -16,20 +17,117 @@ import { Ionicons } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 import * as notesApi from '../../api/notesApi';
 import { Note } from '../../api/types';
+import { useAuth } from '../../context/AuthContext';
 
 interface TocItem {
   level: number;
   text: string;
 }
 
+function MarkdownImage({
+  sourceUri,
+  alt,
+  style,
+}: {
+  sourceUri: string;
+  alt?: string;
+  style?: any;
+}) {
+  const [aspectRatio, setAspectRatio] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!sourceUri) return;
+    Image.getSize(
+      sourceUri,
+      (width, height) => {
+        if (width > 0 && height > 0) {
+          setAspectRatio(width / height);
+        }
+      },
+      () => {}
+    );
+  }, [sourceUri]);
+
+  return (
+    <View style={imageComponentStyles.container}>
+      <Image
+        source={{ uri: sourceUri }}
+        accessibilityLabel={alt}
+        accessible={!!alt}
+        resizeMode="contain"
+        style={[
+          imageComponentStyles.image,
+          aspectRatio ? { aspectRatio } : { height: 220 },
+          style,
+        ]}
+      />
+    </View>
+  );
+}
+
+const imageComponentStyles = StyleSheet.create({
+  container: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 8,
+  },
+  image: {
+    width: '100%',
+    maxWidth: '100%',
+    borderRadius: 8,
+  },
+});
+
 export default function NoteDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const { serverUrl } = useAuth();
 
   const [note, setNote] = useState<Note | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showTocModal, setShowTocModal] = useState(false);
   const [tocList, setTocList] = useState<TocItem[]>([]);
+
+  const markdownRules = useMemo(
+    () => ({
+      image: (
+        node: any,
+        children: any,
+        parent: any,
+        styles: any,
+        allowedImageHandlers: string[] = [
+          'data:image/png;base64',
+          'data:image/gif;base64',
+          'data:image/jpeg;base64',
+          'https://',
+          'http://',
+        ],
+        defaultImageHandler: string | null = null
+      ) => {
+        const { src, alt } = node.attributes;
+        if (!src) return null;
+
+        const show = (allowedImageHandlers || []).some((prefix: string) =>
+          src.toLowerCase().startsWith(prefix.toLowerCase())
+        );
+        let resolvedUri = show ? src : defaultImageHandler ? `${defaultImageHandler}${src}` : src;
+        if (resolvedUri.startsWith('/') && serverUrl) {
+          resolvedUri = `${serverUrl.replace(/\/+$/, '')}${resolvedUri}`;
+        }
+
+        return (
+          <MarkdownImage
+            key={node.key}
+            sourceUri={resolvedUri}
+            alt={alt}
+            style={styles._VIEW_SAFE_image || styles.image}
+          />
+        );
+      },
+    }),
+    [serverUrl]
+  );
 
   const fetchNote = async () => {
     if (!id) return;
@@ -68,21 +166,38 @@ export default function NoteDetailScreen() {
   }, [id]);
 
   const handleDeleteNote = () => {
+    const executeDelete = async () => {
+      try {
+        if (!id) return;
+        await notesApi.deleteNote(id);
+        if (Platform.OS === 'web') {
+          window.alert('笔记已成功删除');
+        } else {
+          Alert.alert('已删除', '笔记已成功删除');
+        }
+        router.back();
+      } catch (e: any) {
+        if (Platform.OS === 'web') {
+          window.alert('删除失败: ' + e.message);
+        } else {
+          Alert.alert('删除失败', e.message);
+        }
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm('确定要将这篇笔记移入回收站吗？')) {
+        executeDelete();
+      }
+      return;
+    }
+
     Alert.alert('删除确认', '确定要将这篇笔记移入回收站吗？', [
       { text: '取消', style: 'cancel' },
       {
         text: '删除',
         style: 'destructive',
-        onPress: async () => {
-          try {
-            if (!id) return;
-            await notesApi.deleteNote(id);
-            Alert.alert('已删除', '笔记已成功删除');
-            router.back();
-          } catch (e: any) {
-            Alert.alert('删除失败', e.message);
-          }
-        },
+        onPress: executeDelete,
       },
     ]);
   };
@@ -167,7 +282,7 @@ export default function NoteDetailScreen() {
 
           {/* 原生 Markdown 渲染主体 */}
           <View style={styles.markdownWrapper}>
-            <Markdown style={markdownStyles}>
+            <Markdown style={markdownStyles} rules={markdownRules}>
               {note.content || '*该笔记暂无正文内容*'}
             </Markdown>
           </View>
@@ -287,7 +402,6 @@ const markdownStyles = {
     marginVertical: 12,
     width: Dimensions.get('window').width - 48,
     height: 220,
-    resizeMode: 'contain' as const,
   },
 };
 

@@ -21,9 +21,10 @@ import { Config } from '../../constants/Config';
 
 export default function NoteEditScreen() {
   const router = useRouter();
-  const { id, notebookId: initialNotebookId } = useLocalSearchParams<{
+  const { id, notebookId: initialNotebookId, parentId: initialParentId } = useLocalSearchParams<{
     id?: string;
     notebookId?: string;
+    parentId?: string;
   }>();
 
   const [title, setTitle] = useState('');
@@ -130,7 +131,7 @@ export default function NoteEditScreen() {
       const asset = result.assets[0];
       setIsUploadingImage(true);
 
-      const res = await notesApi.uploadNoteImage(asset.uri);
+      const res = await notesApi.uploadNoteImage(asset);
       if (res.code === 200 && res.data && res.data.url) {
         // 在光标处插入 Markdown 图像引用
         const imgMarkdown = `\n![${asset.fileName || 'image'}](${res.data.url})\n`;
@@ -182,6 +183,7 @@ export default function NoteEditScreen() {
           title: title.trim(),
           content,
           notebookId: targetNbId,
+          parentId: initialParentId || null,
         });
 
         if (res.code === 200) {
@@ -254,14 +256,39 @@ export default function NoteEditScreen() {
               value={content}
               onChangeText={setContent}
               multiline
+              scrollEnabled={Platform.OS === 'web' ? true : false}
               textAlignVertical="top"
               onSelectionChange={e => setCursorPosition(e.nativeEvent.selection)}
             />
           </ScrollView>
 
-          {/* 键盘上方快捷符号工具栏 */}
+          {/* 键盘上方快捷工具栏 */}
           <View style={styles.toolbar}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.toolbarContent}>
+            {/* 左侧固定功能：相册插图 */}
+            <TouchableOpacity
+              style={[styles.toolBtn, styles.imageToolBtn]}
+              onPress={handlePickImage}
+              disabled={isUploadingImage}
+              activeOpacity={0.7}
+            >
+              {isUploadingImage ? (
+                <ActivityIndicator size="small" color="#1890ff" />
+              ) : (
+                <Ionicons name="image-outline" size={20} color="#1890ff" />
+              )}
+            </TouchableOpacity>
+
+            {/* 功能分区指示隔断 */}
+            <View style={styles.toolbarDivider} />
+
+            {/* 右侧横向滚动的快捷格式标记工具 */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.toolbarScroll}
+              contentContainerStyle={styles.toolbarContent}
+              keyboardShouldPersistTaps="handled"
+            >
               <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('## ')}>
                 <Text style={styles.toolText}>H2</Text>
               </TouchableOpacity>
@@ -285,19 +312,6 @@ export default function NoteEditScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('```\n', '\n```')}>
                 <Ionicons name="terminal-outline" size={18} color="#0f172a" />
-              </TouchableOpacity>
-
-              {/* 相册插图按钮 */}
-              <TouchableOpacity
-                style={[styles.toolBtn, styles.imageToolBtn]}
-                onPress={handlePickImage}
-                disabled={isUploadingImage}
-              >
-                {isUploadingImage ? (
-                  <ActivityIndicator size="small" color="#1890ff" />
-                ) : (
-                  <Ionicons name="image-outline" size={18} color="#1890ff" />
-                )}
               </TouchableOpacity>
             </ScrollView>
           </View>
@@ -333,35 +347,58 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   editorContent: {
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 16,
     paddingBottom: 40,
+    flexGrow: 1,
   },
   titleInput: {
     fontSize: 22,
     fontWeight: '700',
     color: '#0f172a',
     marginBottom: 16,
-    paddingVertical: 4,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: '#f1f5f9',
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
   },
   contentInput: {
+    flex: 1,
     fontSize: 16,
     lineHeight: 26,
     color: '#1e293b',
-    minHeight: 300,
+    minHeight: 480,
+    textAlignVertical: 'top',
+    ...(Platform.OS === 'web'
+      ? ({
+          outlineStyle: 'none',
+          fieldSizing: 'content',
+        } as any)
+      : {}),
   },
   toolbar: {
     backgroundColor: '#ffffff',
     borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
-    paddingVertical: 6,
-    paddingHorizontal: 8,
+    borderTopColor: '#f1f5f9',
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  toolbarDivider: {
+    width: 1,
+    height: 22,
+    backgroundColor: '#e2e8f0',
+    marginHorizontal: 8,
+  },
+  toolbarScroll: {
+    flex: 1,
   },
   toolbarContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    paddingRight: 16,
   },
   toolBtn: {
     minWidth: 38,
@@ -374,6 +411,8 @@ const styles = StyleSheet.create({
   },
   imageToolBtn: {
     backgroundColor: '#e6f7ff',
+    borderWidth: 1,
+    borderColor: '#bae0ff',
   },
   toolText: {
     fontSize: 14,

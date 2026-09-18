@@ -103,9 +103,9 @@ export default function NotebooksScreen() {
 
         <View style={styles.itemInfo}>
           <Text style={styles.itemTitle} numberOfLines={1}>
-            {item.title}
+            {item.title || item.name}
           </Text>
-          <Text style={styles.itemSub}>点击查看归档笔记</Text>
+          <Text style={styles.itemSub}>点击查看笔记</Text>
         </View>
 
         <View style={styles.rightAction}>

@@ -33,11 +33,15 @@ export const register = (data: any): Promise<ApiResponse<any>> => {
 };
 
 // 获取当前登录用户信息
-export const getCurrentUser = (): Promise<ApiResponse<User>> => {
-  return request({
+export const getCurrentUser = async (): Promise<ApiResponse<User>> => {
+  const res: any = await request({
     url: '/auth/currentUser',
     method: 'get',
   });
+  return {
+    ...res,
+    data: res?.data?.user || res?.data,
+  };
 };
 
 // 退出登录

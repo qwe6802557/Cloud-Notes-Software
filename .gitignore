@@ -41,3 +41,14 @@ cloud-notes-node/.env
 # 本地上传的测试/运行图片（生产环境采用独立持久化存储）
 cloud-notes-node/uploads/notes/*
 !cloud-notes-node/uploads/notes/.gitkeep
+
+# 本地一键启动与部署运维脚本（无需上传至 GitHub）
+start-*.bat
+start-*.ps1
+deploy-*.ps1
+
+# 本地临时归档与压缩文件
+*.tar.gz
+*.tar
+*.zip
+build.tar.gz
