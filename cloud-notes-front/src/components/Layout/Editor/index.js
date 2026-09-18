@@ -6,7 +6,7 @@ import gemoji from '@bytemd/plugin-gemoji';
 import math from '@bytemd/plugin-math';
 import mermaid from '@bytemd/plugin-mermaid';
 import breaks from '@bytemd/plugin-breaks';
-import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image, Popover } from 'antd';
+import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image, Popover, Radio } from 'antd';
 import {
     EditOutlined,
     EyeOutlined,
@@ -20,7 +20,8 @@ import {
     HistoryOutlined,
     FullscreenOutlined,
     FullscreenExitOutlined,
-    FileTextOutlined
+    FileTextOutlined,
+    FontSizeOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -34,7 +35,7 @@ import 'katex/dist/katex.css';
 import './index.less';
 import { getNoteDetail } from '@/api/notes';
 import { uploadNoteImage } from '@/api/upload';
-import { getEditorPreferences } from '@/utils/preferences';
+import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences';
 import TOCDrawer from './TOCDrawer';
 import VersionHistoryModal from './VersionHistoryModal';
 
@@ -342,6 +343,8 @@ const NoteEditor = ({
     const [noteTitle, setNoteTitle] = useState('');
     const [content, setContent] = useState('');
     const [mode, setMode] = useState(() => getEditorPreferences().defaultMode || 'split');
+    const [fontFamily, setFontFamily] = useState(() => getEditorPreferences().fontFamily || 'lxgw');
+    const [fontSize, setFontSize] = useState(() => getEditorPreferences().fontSize || 'medium');
     const [loading, setLoading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [autoSaving, setAutoSaving] = useState(false);
@@ -443,12 +446,28 @@ const NoteEditor = ({
             if (event?.detail?.defaultMode) {
                 setMode(event.detail.defaultMode);
             }
+            if (event?.detail?.fontFamily) {
+                setFontFamily(event.detail.fontFamily);
+            }
+            if (event?.detail?.fontSize) {
+                setFontSize(event.detail.fontSize);
+            }
         };
 
         window.addEventListener('editor-preferences-changed', handlePreferencesChange);
         return () => {
             window.removeEventListener('editor-preferences-changed', handlePreferencesChange);
         };
+    }, []);
+
+    const handleTypographyChange = useCallback((key, value) => {
+        if (key === 'fontFamily') {
+            setFontFamily(value);
+        } else if (key === 'fontSize') {
+            setFontSize(value);
+        }
+        setEditorPreferences({ [key]: value });
+        window.dispatchEvent(new CustomEvent('editor-preferences-changed', { detail: { [key]: value } }));
     }, []);
 
     const syncContentState = useCallback(nextContent => {
@@ -1064,6 +1083,48 @@ const NoteEditor = ({
                             {zenMode ? '还原' : '专注'}
                         </Button>
                     </Tooltip>
+                    <Popover
+                        placement="bottomLeft"
+                        title={<span style={{ fontWeight: 600 }}>排版与字体风格</span>}
+                        trigger="click"
+                        content={(
+                            <div className="typography-popover-content">
+                                <div className="typography-popover-section">
+                                    <div className="popover-section-label">阅读字体</div>
+                                    <Radio.Group
+                                        size="small"
+                                        value={fontFamily}
+                                        onChange={e => handleTypographyChange('fontFamily', e.target.value)}
+                                        buttonStyle="solid"
+                                    >
+                                        <Radio.Button value="lxgw">霞鹜文楷</Radio.Button>
+                                        <Radio.Button value="sans">思源黑体</Radio.Button>
+                                        <Radio.Button value="system">系统默认</Radio.Button>
+                                    </Radio.Group>
+                                </div>
+                                <div className="typography-popover-divider" />
+                                <div className="typography-popover-section">
+                                    <div className="popover-section-label">正文字号</div>
+                                    <Radio.Group
+                                        size="small"
+                                        value={fontSize}
+                                        onChange={e => handleTypographyChange('fontSize', e.target.value)}
+                                        buttonStyle="solid"
+                                    >
+                                        <Radio.Button value="small">小 (14px)</Radio.Button>
+                                        <Radio.Button value="medium">标准 (16px)</Radio.Button>
+                                        <Radio.Button value="large">大 (18px)</Radio.Button>
+                                    </Radio.Group>
+                                </div>
+                            </div>
+                        )}
+                    >
+                        <Tooltip title="排版与字体风格">
+                            <Button icon={<FontSizeOutlined />}>
+                                排版
+                            </Button>
+                        </Tooltip>
+                    </Popover>
                 </Space>
 
                 <div className="word-count">
@@ -1283,7 +1344,7 @@ const NoteEditor = ({
             <div className="editor-content">
                 <Spin spinning={loading} tip="加载中...">
                     <div
-                        className={`editor-container editor-container-${mode}`}
+                        className={`editor-container editor-container-${mode} font-family-${fontFamily} font-size-${fontSize}`}
                         onClick={handlePreviewContainerClick}
                     >
                         {mode === 'edit' ? (

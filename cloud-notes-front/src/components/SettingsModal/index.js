@@ -48,7 +48,9 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                 password: '',
                 confirmPassword: '',
                 defaultMode: currentPrefs.defaultMode || 'split',
-                defaultSyncScroll: currentPrefs.defaultSyncScroll ?? true
+                defaultSyncScroll: currentPrefs.defaultSyncScroll ?? true,
+                fontFamily: currentPrefs.fontFamily || 'lxgw',
+                fontSize: currentPrefs.fontSize || 'medium'
             });
             setAvatarUrl(currentUser.avatar || '');
             setActiveTab('profile');
@@ -62,7 +64,9 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
 
             setEditorPreferences({
                 defaultMode: values.defaultMode,
-                defaultSyncScroll: values.defaultSyncScroll
+                defaultSyncScroll: values.defaultSyncScroll,
+                fontFamily: values.fontFamily,
+                fontSize: values.fontSize
             });
             window.dispatchEvent(new CustomEvent('editor-preferences-changed', { detail: values }));
 
@@ -381,6 +385,35 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                     <Switch />
                                 </Form.Item>
                             </div>
+
+                            <div className="panel-divider" />
+
+                            <div className="panel-section-title">排版与正文字体</div>
+                            <Form.Item
+                                name="fontFamily"
+                                label="默认阅读字体"
+                                extra="推荐【霞鹜文楷】，接近有道云笔记/微信读书温润墨水质感，久读不累"
+                            >
+                                <Radio.Group className="preference-font-group">
+                                    <Radio.Button value="lxgw" className="font-option font-lxgw-preview">
+                                        霞鹜文楷 (推荐)
+                                    </Radio.Button>
+                                    <Radio.Button value="sans" className="font-option font-sans-preview">
+                                        思源黑体
+                                    </Radio.Button>
+                                    <Radio.Button value="system" className="font-option font-system-preview">
+                                        系统默认
+                                    </Radio.Button>
+                                </Radio.Group>
+                            </Form.Item>
+
+                            <Form.Item name="fontSize" label="默认正文字号">
+                                <Radio.Group className="preference-size-group">
+                                    <Radio.Button value="small">小 (14px)</Radio.Button>
+                                    <Radio.Button value="medium">标准 (16px / 默认)</Radio.Button>
+                                    <Radio.Button value="large">大 (18px)</Radio.Button>
+                                </Radio.Group>
+                            </Form.Item>
                         </div>
                     </Form>
                 </div>

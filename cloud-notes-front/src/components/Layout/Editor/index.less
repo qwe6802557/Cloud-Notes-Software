@@ -194,9 +194,11 @@
 
         .CodeMirror {
           height: 100% !important; // 强制高度100%
-          font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
-          font-size: 14px;
-          line-height: 1.6;
+          font-family: var(--active-editor-font, 'Menlo', 'Monaco', 'Courier New', monospace);
+          font-size: var(--active-editor-font-size, 16px);
+          line-height: var(--editor-line-height, 1.75);
+          letter-spacing: var(--editor-letter-spacing, 0.015em);
+          color: #262626;
 
           .CodeMirror-scroll {
             min-height: 100%; // 最小高度100%
@@ -235,17 +237,18 @@
 
         .markdown-body {
           padding-bottom: 200px; // 添加底部填充
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-          font-size: 14px;
-          color: #333;
-          line-height: 1.6;
+          font-family: var(--active-editor-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif);
+          font-size: var(--active-editor-font-size, 16px);
+          color: #262626;
+          line-height: var(--editor-line-height, 1.75);
+          letter-spacing: var(--editor-letter-spacing, 0.015em);
 
           h1, h2, h3, h4, h5, h6 {
             margin-top: 24px;
             margin-bottom: 16px;
             font-weight: 600;
-            line-height: 1.25;
-            color: #333;
+            line-height: 1.35;
+            color: #1a1a1a;
           }
 
           h1 {
@@ -263,11 +266,11 @@
           pre {
             background-color: #f6f8fa;
             border-radius: 4px;
-            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-family: var(--editor-font-mono, 'JetBrains Mono', Consolas, monospace) !important;
           }
 
           code {
-            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-family: var(--editor-font-mono, 'JetBrains Mono', Consolas, monospace) !important;
             background-color: rgba(27, 31, 35, 0.05);
             border-radius: 3px;
             padding: 0.2em 0.4em;
@@ -341,17 +344,18 @@
         max-width: 900px;
         margin: 0 auto;
         
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-        font-size: 14px;
-        color: #333;
-        line-height: 1.6;
+        font-family: var(--active-editor-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif);
+        font-size: var(--active-editor-font-size, 16px);
+        color: #262626;
+        line-height: var(--editor-line-height, 1.75);
+        letter-spacing: var(--editor-letter-spacing, 0.015em);
         
         h1, h2, h3, h4, h5, h6 {
           margin-top: 24px;
           margin-bottom: 16px;
           font-weight: 600;
-          line-height: 1.25;
-          color: #333;
+          line-height: 1.35;
+          color: #1a1a1a;
         }
 
         h1 {
@@ -369,11 +373,11 @@
         pre {
           background-color: #f6f8fa;
           border-radius: 4px;
-          font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+          font-family: var(--editor-font-mono, 'JetBrains Mono', Consolas, monospace) !important;
         }
 
         code {
-          font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+          font-family: var(--editor-font-mono, 'JetBrains Mono', Consolas, monospace) !important;
           background-color: rgba(27, 31, 35, 0.05);
           border-radius: 3px;
           padding: 0.2em 0.4em;
@@ -808,9 +812,11 @@
           .markdown-body {
             max-width: 880px;
             margin: 0 auto;
-            font-size: 16px;
-            line-height: 1.85;
-            color: #1e293b;
+            font-family: var(--active-editor-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+            font-size: var(--active-editor-font-size, 16px);
+            line-height: var(--editor-line-height, 1.75);
+            letter-spacing: var(--editor-letter-spacing, 0.015em);
+            color: #262626;
             padding-bottom: 80px;
 
             img {
@@ -867,10 +873,11 @@
 
               .CodeMirror {
                 height: 100% !important;
-                font-size: 16px;
-                line-height: 1.8;
-                color: #0f172a;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                font-size: var(--active-editor-font-size, 16px);
+                line-height: var(--editor-line-height, 1.75);
+                letter-spacing: var(--editor-letter-spacing, 0.015em);
+                color: #262626;
+                font-family: var(--active-editor-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
                 background: transparent;
 
                 .CodeMirror-scroll {
@@ -929,10 +936,11 @@
 
               .CodeMirror {
                 height: 100% !important;
-                font-size: 15px;
-                line-height: 1.8;
-                color: #0f172a;
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                font-size: var(--active-editor-font-size, 15px);
+                line-height: var(--editor-line-height, 1.75);
+                letter-spacing: var(--editor-letter-spacing, 0.015em);
+                color: #262626;
+                font-family: var(--active-editor-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif);
                 background: transparent;
 
                 .CodeMirror-scroll {
@@ -955,9 +963,11 @@
               padding: 20px 28px;
 
               .markdown-body {
-                font-size: 15px;
-                line-height: 1.75;
-                color: #1e293b;
+                font-family: var(--active-editor-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+                font-size: var(--active-editor-font-size, 15px);
+                line-height: var(--editor-line-height, 1.75);
+                letter-spacing: var(--editor-letter-spacing, 0.015em);
+                color: #262626;
                 padding-bottom: 160px;
 
                 img {
@@ -1040,6 +1050,42 @@
     height: 1px;
     background: #f1f5f9;
     margin: 6px 0;
+  }
+}
+
+// 排版偏好悬浮面板
+.typography-popover-content {
+  min-width: 250px;
+  padding: 4px 2px;
+
+  .typography-popover-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    .popover-section-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #64748b;
+    }
+
+    .ant-radio-group {
+      display: flex;
+      width: 100%;
+
+      .ant-radio-button-wrapper {
+        flex: 1;
+        text-align: center;
+        font-size: 12px;
+        padding: 0 4px;
+      }
+    }
+  }
+
+  .typography-popover-divider {
+    height: 1px;
+    background: #f1f5f9;
+    margin: 12px 0;
   }
 }
 

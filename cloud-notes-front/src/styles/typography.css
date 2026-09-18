@@ -1,0 +1,53 @@
+/* ==========================================================================
+   排版与字体系统 (Typography Design System)
+   内置霞鹜文楷 (LXGW WenKai)、思源黑体 (Noto Sans SC)、系统字体及 JetBrains Mono 等宽字体
+   ========================================================================== */
+
+/* 引入霞鹜文楷屏幕阅读优化版 WebFont */
+@import url('https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.1.0/style.css');
+
+/* 引入思源黑体与 JetBrains Mono 等宽代码字体 */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+
+:root {
+  /* 字体家族变量 */
+  --editor-font-lxgw: 'LXGW WenKai Screen', 'LXGW WenKai', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'WenQuanYi Micro Hei', sans-serif;
+  --editor-font-sans: 'Noto Sans SC', 'Source Han Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', Roboto, sans-serif;
+  --editor-font-system: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'WenQuanYi Micro Hei', 'Segoe UI', Roboto, sans-serif;
+  --editor-font-mono: 'JetBrains Mono', Consolas, 'SFMono-Regular', Menlo, Monaco, 'Courier New', monospace;
+
+  /* 字号分级 */
+  --editor-font-size-small: 14px;
+  --editor-font-size-medium: 16px;
+  --editor-font-size-large: 18px;
+
+  /* 行高与字间距 */
+  --editor-line-height: 1.75;
+  --editor-letter-spacing: 0.015em;
+}
+
+/* 动态字体类定义 */
+.font-family-lxgw {
+  --active-editor-font: var(--editor-font-lxgw);
+}
+
+.font-family-sans {
+  --active-editor-font: var(--editor-font-sans);
+}
+
+.font-family-system {
+  --active-editor-font: var(--editor-font-system);
+}
+
+/* 动态字号类定义 */
+.font-size-small {
+  --active-editor-font-size: var(--editor-font-size-small);
+}
+
+.font-size-medium {
+  --active-editor-font-size: var(--editor-font-size-medium);
+}
+
+.font-size-large {
+  --active-editor-font-size: var(--editor-font-size-large);
+}
