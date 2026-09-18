@@ -6,9 +6,9 @@
 
 ---
 
-## 🌟 核心特性与设计亮点
+## 核心特性与设计亮点
 
-### 1. 🖥️ PC 客户端：温润排版与沉浸式写作体验 (`cloud-notes-front`)
+### 1. PC 客户端：温润排版与沉浸式写作体验 (`cloud-notes-front`)
 - **匠心阅读排版系统**：
   - **霞鹜文楷（LXGW WenKai Screen）**：默认启用，针对屏幕阅读深度优化，具备类纸质墨水屏的温润笔触，大幅减轻长文阅读视觉疲劳。
   - **多字体自由切换**：内置思源黑体（现代利落）、系统默认字体，代码块统一强制采用 **JetBrains Mono** 等宽字体。
@@ -22,7 +22,7 @@
 - **多格式导出与实时统计**：支持导出标准 Markdown (.md) 与内联样式的 HTML (.html)；实时中英混合字数统计与预计阅读用时估算。
 - **Electron 桌面端**：安全沙箱架构（ContextIsolation / Preload），支持跨平台桌面安装包构建。
 
-### 2. 📱 移动端客户端：极简高效的跨平台体验 (`cloud-notes-mobile`)
+### 2. 移动端客户端：极简高效的跨平台体验 (`cloud-notes-mobile`)
 - **跨平台多端架构**：基于 React Native + Expo SDK 52 + Expo Router v4，无缝适配 Android、iOS 与 Web 浏览器。
 - **多层文件夹下钻与面包屑**：
   - 文件夹专属视觉卡片（专属图标、微徽标、无星标）。
@@ -31,7 +31,7 @@
 - **自适应 Markdown 渲染**：深度封装 `MarkdownImage`，解决大图与长图宽高比自适应，完全杜绝 React key spread 警告。
 - **全流程接口防抖与记忆化**：全面固化 Context Provider 与回调函数，消除网络请求重复死循环。
 
-### 3. ⚙️ 后端服务：高可用架构与数据安全 (`cloud-notes-node`)
+### 3. 后端服务：高可用架构与数据安全 (`cloud-notes-node`)
 - **Express 5 + MongoDB / Mongoose 8**：严格的数据模型设计与投影优化。
 - **安全鉴权**：JWT Token 认证、路由守卫与 Joi 参数强校验。
 - **邮件服务**：集成阿里云 DirectMail 发送验证码，开发环境具备自动兜底机制。
@@ -39,7 +39,7 @@
 
 ---
 
-## 🏗️ 仓库结构
+## 仓库结构
 
 ```text
 Cloud-Notes-Software
@@ -76,7 +76,7 @@ Cloud-Notes-Software
 
 ---
 
-## 🚀 快速开始
+## 快速开始
 
 ### 1. 环境准备
 - **Node.js**：`v18+` 或 `v20+`
@@ -97,7 +97,7 @@ npm --prefix cloud-notes-node install
 
 ---
 
-## 💻 本地联调与开发
+## 本地联调与开发
 
 ### 方式 A：使用一键快捷脚本
 
@@ -128,7 +128,7 @@ npx expo start
 
 ---
 
-## 📦 打包与桌面端构建
+## 打包与桌面端构建
 
 ### PC 网页端编译打包
 
@@ -152,7 +152,7 @@ npm --prefix cloud-notes-front run electron-pack:dir
 
 ---
 
-## 🌐 生产部署与运维指南
+## 生产部署与运维指南
 
 项目内置生产核心部署脚本 [deploy-core.ps1](deploy-core.ps1)，提供全自动构建、分发、Nginx 与 PM2 平滑重载和冒烟自检。
 
@@ -178,7 +178,7 @@ powershell -ExecutionPolicy Bypass -File .\deploy-core.ps1 -Mode all
 
 ---
 
-## 📡 API 概览
+## API 概览
 
 ### 用户鉴权 (`/auth`)
 | 方法 | 路径 | 说明 |
@@ -217,7 +217,7 @@ powershell -ExecutionPolicy Bypass -File .\deploy-core.ps1 -Mode all
 
 ---
 
-## 🔗 代码仓库与同步状态
+## 代码仓库与同步状态
 
 本项目配置双端远端镜像备份，每次代码提交与发布均双向保持同步：
 
@@ -226,6 +226,6 @@ powershell -ExecutionPolicy Bypass -File .\deploy-core.ps1 -Mode all
 
 ---
 
-## 📄 开源许可证
+## 开源许可证
 
 本项目基于 [MIT License](LICENSE) 开源发布。
