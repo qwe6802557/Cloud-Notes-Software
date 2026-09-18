@@ -180,7 +180,7 @@ export default function SettingsScreen() {
             <Ionicons name="information-circle-outline" size={20} color="#64748b" style={styles.itemIcon} />
             <Text style={styles.itemTitle}>应用名称</Text>
           </View>
-          <Text style={styles.itemValue}>{Config.appName} Mobile</Text>
+          <Text style={styles.itemValue}>{Config.appName}</Text>
         </View>
 
 

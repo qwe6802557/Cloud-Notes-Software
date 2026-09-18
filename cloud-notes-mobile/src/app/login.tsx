@@ -106,8 +106,8 @@ export default function LoginScreen() {
             <View style={styles.logoBadge}>
               <Text style={styles.logoText}>囧</Text>
             </View>
-            <Text style={styles.title}>JiongRenNote</Text>
-            <Text style={styles.subtitle}>极简高效的移动端云笔记</Text>
+            <Text style={styles.title}>囧人云笔记</Text>
+            <Text style={styles.subtitle}>极简高效的云笔记平台</Text>
           </View>
 
           {/* 表单卡片 */}

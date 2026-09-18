@@ -1,5 +1,5 @@
 export const Config = {
-  appName: 'JiongRenNote',
+  appName: '囧人云笔记',
   defaultServerUrl: 'https://notes.yanggenbwebsite.site',
   storageKeys: {
     token: '@jiong_ren_note_token',
