@@ -54,6 +54,10 @@ const noteSchema = new mongoose.Schema({
         type: Date,
         default: null
     },
+    order: {
+        type: Number,
+        default: 0
+    },
     createdAt: {
         type: Date,
         default: Date.now
@@ -74,6 +78,7 @@ const noteSchema = new mongoose.Schema({
 noteSchema.index({ userId: 1, isDeleted: 1 });
 noteSchema.index({ notebookId: 1, isDeleted: 1 });
 noteSchema.index({ notebookId: 1, parentId: 1, isDeleted: 1 });
+noteSchema.index({ notebookId: 1, parentId: 1, order: 1 });
 noteSchema.index({ tags: 1 });
 noteSchema.index({ title: 'text', content: 'text' });
 

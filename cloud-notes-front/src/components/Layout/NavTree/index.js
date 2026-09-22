@@ -140,6 +140,48 @@ const insertNodeToTree = (list, parentId, newNode) => {
     });
 };
 
+// 递归判断 targetKey 是否为 dragKey 自身或其子孙节点
+const isDescendantNode = (list, dragKey, targetKey) => {
+    if (!list || !Array.isArray(list)) return false;
+    if (dragKey === targetKey) return true;
+
+    const findNode = (nodes, key) => {
+        for (const n of nodes) {
+            if (n.key === key) return n;
+            if (n.children && Array.isArray(n.children)) {
+                const found = findNode(n.children, key);
+                if (found) return found;
+            }
+        }
+        return null;
+    };
+
+    const dragNode = findNode(list, dragKey);
+    if (!dragNode || !dragNode.children) return false;
+
+    const containsKey = (children, key) => {
+        if (!Array.isArray(children)) return false;
+        for (const child of children) {
+            if (child.key === key) return true;
+            if (child.children && containsKey(child.children, key)) return true;
+        }
+        return false;
+    };
+
+    return containsKey(dragNode.children, targetKey);
+};
+
+// 深拷贝树节点结构
+const cloneTreeData = data => {
+    if (!Array.isArray(data)) return [];
+    return data.map(item => ({
+        ...item,
+        children: item.children && Array.isArray(item.children)
+            ? cloneTreeData(item.children)
+            : (item.isFolder ? (item.children === undefined ? undefined : []) : undefined)
+    }));
+};
+
 const NavTree = forwardRef(({
     collapsed,
     setCollapsed,
@@ -177,6 +219,12 @@ const NavTree = forwardRef(({
     const [moveFolderTree, setMoveFolderTree] = useState([]);
     const [settingsOpen, setSettingsOpen] = useState(false);
 
+    // 拖拽交互状态
+    const [draggingKey, setDraggingKey] = useState(null);
+    const [isOverRootDropZone, setIsOverRootDropZone] = useState(false);
+    const draggingNodeRef = useRef(null);
+    const dragHoverTimerRef = useRef(null);
+
     // 右键上下文菜单定位状态
     const [contextMenu, setContextMenu] = useState({
         visible: false,
@@ -189,6 +237,16 @@ const NavTree = forwardRef(({
     const user = getUser();
     const userAvatar = user?.avatar && user.avatar !== 'default-avatar.png' ? user.avatar : null;
     const treeContainerRef = useRef(null);
+
+    // 组件卸载时清理悬停定时器
+    useEffect(() => {
+        return () => {
+            if (dragHoverTimerRef.current) {
+                clearTimeout(dragHoverTimerRef.current);
+                dragHoverTimerRef.current = null;
+            }
+        };
+    }, []);
 
     // 加载笔记本列表
     const loadNotebooks = useCallback(async () => {
@@ -220,6 +278,7 @@ const NavTree = forwardRef(({
                 isStarred: Boolean(item.isStarred),
                 parentId: item.parentId ? item.parentId.toString() : null,
                 notebookId: item.notebookId,
+                order: item.order ?? 0,
                 rawItem: item,
                 children: hasChildren 
                     ? formatTreeData(item.children) 
@@ -263,6 +322,298 @@ const NavTree = forwardRef(({
             setLoading(false);
         }
     }, [formatTreeData]);
+
+    // 重新拉取整树数据并保持指定父级处于展开状态
+    const refreshNotebookTree = useCallback(async (notebookId, targetParentToExpand = null) => {
+        if (!notebookId) return;
+        try {
+            const result = await getNotebookNotes(notebookId, { all: 'true' });
+            const rawTree = result?.tree || result?.notes || [];
+            const formatted = formatTreeData(rawTree);
+            setTreeData(formatted);
+            if (targetParentToExpand) {
+                setExpandedKeys(prev => Array.from(new Set([...prev, targetParentToExpand])));
+            }
+        } catch {
+            message.error('刷新目录树失败');
+        }
+    }, [formatTreeData]);
+
+    // 执行节点移动与同级排序持久化
+    const executeMoveNode = useCallback(async (nodeKey, targetParentId, orderedSiblingIds = []) => {
+        try {
+            await moveNoteNode(nodeKey, {
+                targetParentId,
+                notebookId: selectedNotebook,
+                orderedSiblingIds
+            });
+            if (targetParentId) {
+                setExpandedKeys(prev => Array.from(new Set([...prev, targetParentId])));
+            }
+            await refreshNotebookTree(selectedNotebook, targetParentId);
+        } catch (err) {
+            message.error(err?.message || '移动失败');
+            await refreshNotebookTree(selectedNotebook);
+        }
+    }, [selectedNotebook, refreshNotebookTree]);
+
+    // 拖拽开始：记录拖拽节点
+    const handleDragStart = useCallback(({ node }) => {
+        setDraggingKey(node.key);
+        draggingNodeRef.current = node;
+    }, []);
+
+    // 拖拽结束：清理状态与延时器
+    const handleDragEnd = useCallback(() => {
+        setDraggingKey(null);
+        draggingNodeRef.current = null;
+        setIsOverRootDropZone(false);
+        if (dragHoverTimerRef.current) {
+            clearTimeout(dragHoverTimerRef.current);
+            dragHoverTimerRef.current = null;
+        }
+    }, []);
+
+    // 拖拽悬停进入：折叠文件夹悬停 600ms 自动展开
+    const handleDragEnter = useCallback(info => {
+        const { node } = info;
+        if (dragHoverTimerRef.current) {
+            clearTimeout(dragHoverTimerRef.current);
+            dragHoverTimerRef.current = null;
+        }
+
+        if (node.isFolder && !expandedKeys.includes(node.key)) {
+            dragHoverTimerRef.current = setTimeout(() => {
+                setExpandedKeys(prev => {
+                    if (!prev.includes(node.key)) {
+                        return [...prev, node.key];
+                    }
+                    return prev;
+                });
+            }, 600);
+        }
+    }, [expandedKeys]);
+
+    // 拖拽移出节点
+    const handleDragLeave = useCallback(() => {
+        if (dragHoverTimerRef.current) {
+            clearTimeout(dragHoverTimerRef.current);
+            dragHoverTimerRef.current = null;
+        }
+    }, []);
+
+    // 实时放置校验：拦截非法放置位置与防环
+    const handleAllowDrop = useCallback(({ dragNode: dNode, dropNode, dropPosition }) => {
+        const drag = dNode || draggingNodeRef.current;
+        if (!drag || !dropNode) return true;
+
+        if (drag.key === dropNode.key) {
+            return false;
+        }
+
+        // 普通笔记不可作为容器放入子项（dropPosition === 0 代表放入内部）
+        if (!dropNode.isFolder && dropPosition === 0) {
+            return false;
+        }
+
+        // 防环：禁止将目录移入自身或子孙目录
+        if (drag.isFolder && isDescendantNode(treeData, drag.key, dropNode.key)) {
+            return false;
+        }
+
+        return true;
+    }, [treeData]);
+
+    // 节点释放处理：计算插入位置、乐观更新及持久化同级顺序
+    const handleDrop = useCallback(async info => {
+        if (dragHoverTimerRef.current) {
+            clearTimeout(dragHoverTimerRef.current);
+            dragHoverTimerRef.current = null;
+        }
+
+        const { dragNode, node: dropNode, dropPosition: infoDropPosition, dropToGap } = info;
+        if (!dragNode || !dropNode) return;
+
+        const dropKey = dropNode.key;
+        const dragKey = dragNode.key;
+        if (dragKey === dropKey) return;
+
+        // 防环拦截：禁止将目录移入自身或子孙目录
+        if (dragNode.isFolder && isDescendantNode(treeData, dragKey, dropKey)) {
+            message.warning('不能将目录移动到自身的子目录中');
+            return;
+        }
+
+        const dropPos = dropNode.pos.split('-');
+        const dropPosition = infoDropPosition - Number(dropPos[dropPos.length - 1]);
+
+        // 内存拷贝并重排树节点
+        const data = cloneTreeData(treeData);
+
+        // 1. 查找并抽离被拖拽节点
+        let dragObj = null;
+        const loopRemove = nodes => {
+            for (let i = 0; i < nodes.length; i++) {
+                if (nodes[i].key === dragKey) {
+                    dragObj = { ...nodes[i] };
+                    nodes.splice(i, 1);
+                    return true;
+                }
+                if (nodes[i].children && Array.isArray(nodes[i].children)) {
+                    if (loopRemove(nodes[i].children)) return true;
+                }
+            }
+            return false;
+        };
+        loopRemove(data);
+        if (!dragObj) return;
+
+        let targetParentId = null;
+
+        // 2. 根据放置位置计算插入点
+        if (!dropToGap) {
+            // 放置在目录节点本体：插入到目录首项
+            targetParentId = dropKey;
+            dragObj.parentId = dropKey;
+            const loopInsert = nodes => {
+                for (let i = 0; i < nodes.length; i++) {
+                    if (nodes[i].key === dropKey) {
+                        nodes[i].children = nodes[i].children || [];
+                        nodes[i].children.unshift(dragObj);
+                        return true;
+                    }
+                    if (nodes[i].children && Array.isArray(nodes[i].children)) {
+                        if (loopInsert(nodes[i].children)) return true;
+                    }
+                }
+                return false;
+            };
+            loopInsert(data);
+        } else if (
+            (dropNode.children || []).length > 0 &&
+            dropNode.expanded &&
+            dropPosition === 1
+        ) {
+            // 展开的目录底部缝隙：插入为其第一个子项
+            targetParentId = dropKey;
+            dragObj.parentId = dropKey;
+            const loopInsert = nodes => {
+                for (let i = 0; i < nodes.length; i++) {
+                    if (nodes[i].key === dropKey) {
+                        nodes[i].children = nodes[i].children || [];
+                        nodes[i].children.unshift(dragObj);
+                        return true;
+                    }
+                    if (nodes[i].children && Array.isArray(nodes[i].children)) {
+                        if (loopInsert(nodes[i].children)) return true;
+                    }
+                }
+                return false;
+            };
+            loopInsert(data);
+        } else {
+            // 放置在节点之间的水平指示线间隙
+            targetParentId = dropNode.parentId || null;
+            dragObj.parentId = targetParentId;
+            let targetList = null;
+            let targetIndex = -1;
+
+            const loopFindList = nodes => {
+                for (let i = 0; i < nodes.length; i++) {
+                    if (nodes[i].key === dropKey) {
+                        targetList = nodes;
+                        targetIndex = i;
+                        return true;
+                    }
+                    if (nodes[i].children && Array.isArray(nodes[i].children)) {
+                        if (loopFindList(nodes[i].children)) return true;
+                    }
+                }
+                return false;
+            };
+            loopFindList(data);
+
+            if (targetList && targetIndex !== -1) {
+                if (dropPosition === -1) {
+                    targetList.splice(targetIndex, 0, dragObj);
+                } else {
+                    targetList.splice(targetIndex + 1, 0, dragObj);
+                }
+            }
+        }
+
+        // 3. 提取目标父级下更新后的同级节点 ID 序列
+        const getSiblings = (nodes, pId) => {
+            if (!pId) {
+                return nodes.map(n => n.key);
+            }
+            for (let i = 0; i < nodes.length; i++) {
+                if (nodes[i].key === pId) {
+                    return (nodes[i].children || []).map(c => c.key);
+                }
+                if (nodes[i].children && Array.isArray(nodes[i].children)) {
+                    const res = getSiblings(nodes[i].children, pId);
+                    if (res) return res;
+                }
+            }
+            return null;
+        };
+
+        const orderedSiblingIds = getSiblings(data, targetParentId) || [];
+
+        // 4. 乐观渲染最新树节点顺序
+        setTreeData(data);
+        if (targetParentId) {
+            setExpandedKeys(prev => (prev.includes(targetParentId) ? prev : [...prev, targetParentId]));
+        }
+
+        // 5. 同步后端持久化层级与同级顺序
+        await executeMoveNode(dragKey, targetParentId, orderedSiblingIds);
+    }, [treeData, executeMoveNode]);
+
+    // 根目录释放区交互
+    const handleRootDropZoneDragOver = useCallback(e => {
+        if (!draggingNodeRef.current) return;
+        if (!draggingNodeRef.current.parentId) return;
+        e.preventDefault();
+        setIsOverRootDropZone(true);
+    }, []);
+
+    const handleRootDropZoneDragLeave = useCallback(() => {
+        setIsOverRootDropZone(false);
+    }, []);
+
+    const handleRootDropZoneDrop = useCallback(async e => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsOverRootDropZone(false);
+        const node = draggingNodeRef.current;
+        if (!node || !node.parentId) return;
+
+        const data = cloneTreeData(treeData);
+        let dragObj = null;
+        const loopRemove = nodes => {
+            for (let i = 0; i < nodes.length; i++) {
+                if (nodes[i].key === node.key) {
+                    dragObj = { ...nodes[i] };
+                    nodes.splice(i, 1);
+                    return true;
+                }
+                if (nodes[i].children && Array.isArray(nodes[i].children)) {
+                    if (loopRemove(nodes[i].children)) return true;
+                }
+            }
+            return false;
+        };
+        loopRemove(data);
+        if (dragObj) {
+            dragObj.parentId = null;
+            data.push(dragObj);
+            setTreeData(data);
+            const orderedSiblingIds = data.map(n => n.key);
+            await executeMoveNode(node.key, null, orderedSiblingIds);
+        }
+    }, [treeData, executeMoveNode]);
 
     // 加载系统辅助视图（最近/收藏/回收站）
     const loadSystemListView = useCallback(async type => {
@@ -599,9 +950,8 @@ const NavTree = forwardRef(({
                 setTreeData(prev => updateNodeTitleInTree(prev, node.key, finalTitle));
             } else if (type === 'move') {
                 const parentId = targetParentId === 'root' ? null : targetParentId;
-                await moveNoteNode(node.key, { targetParentId: parentId });
+                await executeMoveNode(node.key, parentId);
                 message.success('移动成功');
-                await loadNotebookTree(selectedNotebook);
             }
             setDialogState({ open: false, type: 'createNote', node: null, targetParentId: null, title: '' });
         } catch (err) {
@@ -911,19 +1261,40 @@ const NavTree = forwardRef(({
                     <div className="tree-scroll-container">
                         {viewType === 'all' ? (
                             displayedTreeData.length > 0 ? (
-                                <Tree
-                                    loadData={searchTerm.trim() ? undefined : onLoadData}
-                                    treeData={displayedTreeData}
-                                    showIcon={false}
-                                    blockNode
-                                    expandedKeys={expandedKeys}
-                                    autoExpandParent={autoExpandParent}
-                                    onExpand={handleExpand}
-                                    onSelect={handleSelect}
-                                    selectedKeys={selectedNote ? [selectedNote] : []}
-                                    titleRender={renderTreeNodeTitle}
-                                    className="custom-nav-tree"
-                                />
+                                <>
+                                    <Tree
+                                        draggable={!searchTerm.trim()}
+                                        allowDrop={handleAllowDrop}
+                                        onDragStart={handleDragStart}
+                                        onDragEnd={handleDragEnd}
+                                        onDragEnter={handleDragEnter}
+                                        onDragLeave={handleDragLeave}
+                                        onDrop={handleDrop}
+                                        loadData={searchTerm.trim() ? undefined : onLoadData}
+                                        treeData={displayedTreeData}
+                                        showIcon={false}
+                                        blockNode
+                                        expandedKeys={expandedKeys}
+                                        autoExpandParent={autoExpandParent}
+                                        onExpand={handleExpand}
+                                        onSelect={handleSelect}
+                                        selectedKeys={selectedNote ? [selectedNote] : []}
+                                        titleRender={renderTreeNodeTitle}
+                                        className="custom-nav-tree"
+                                    />
+                                    {draggingKey && draggingNodeRef.current?.parentId && (
+                                        <div
+                                            className={`tree-root-dropzone ${isOverRootDropZone ? 'is-drag-over' : ''}`}
+                                            onDragOver={handleRootDropZoneDragOver}
+                                            onDragLeave={handleRootDropZoneDragLeave}
+                                            onDrop={handleRootDropZoneDrop}
+                                        >
+                                            <span className="dropzone-text">
+                                                {isOverRootDropZone ? '松开移至顶级根目录' : '拖拽到此处移出至根目录'}
+                                            </span>
+                                        </div>
+                                    )}
+                                </>
                             ) : (
                                 <Empty
                                     image={Empty.PRESENTED_IMAGE_SIMPLE}

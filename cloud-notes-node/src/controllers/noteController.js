@@ -146,10 +146,10 @@ exports.getNotebookNotes = asyncHandler(async (req, res) => {
         }
     }
 
-    // 排序优先级：目录优先，其次按修改时间倒序；剔除正文字段 content 极大提升检索与传输性能
+    // 排序优先级：按自定义顺序升序；若未设置自定义顺序则目录优先，其次按修改时间倒序
     const notes = await Note.find(query)
-        .sort({ type: -1, updatedAt: -1 })
-        .select('title type parentId isStarred tags updatedAt createdAt notebookId');
+        .sort({ order: 1, type: -1, updatedAt: -1 })
+        .select('title type parentId order isStarred tags updatedAt createdAt notebookId');
 
     // 如果指定了 parentId 或进行了关键词搜索，返回扁平节点；否则构建整树保持向下兼容
     const tree = (parentId !== undefined || keywordFilter) ? notes : buildNodeTree(notes);
@@ -518,7 +518,7 @@ exports.restoreNote = asyncHandler(async (req, res, next) => {
 exports.moveNote = asyncHandler(async (req, res, next) => {
     const noteId = req.params.id;
     const userId = req.user._id;
-    const { targetParentId = null, notebookId } = req.body;
+    const { targetParentId = null, notebookId, orderedSiblingIds } = req.body;
 
     const note = await Note.findOne({ _id: noteId, userId, isDeleted: false });
     if (!note) {
@@ -548,6 +548,23 @@ exports.moveNote = asyncHandler(async (req, res, next) => {
                 return next(new AppError('不能将目录移动到自身的子目录中', 400));
             }
         }
+    }
+
+    // 批量同步目标层级同级节点的排序权重及被移动节点的父级归属
+    if (Array.isArray(orderedSiblingIds) && orderedSiblingIds.length > 0) {
+        const bulkOps = orderedSiblingIds.map((id, index) => ({
+            updateOne: {
+                filter: { _id: id, userId },
+                update: {
+                    $set: {
+                        order: index,
+                        updatedAt: new Date(),
+                        ...(id.toString() === noteId.toString() ? { parentId: safeParentId } : {})
+                    }
+                }
+            }
+        }));
+        await Note.bulkWrite(bulkOps);
     }
 
     const updateFields = {

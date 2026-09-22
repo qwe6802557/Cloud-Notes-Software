@@ -43,6 +43,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
         if (open) {
             const currentUser = getUser() || {};
             const currentPrefs = getEditorPreferences();
+            form.resetFields();
             form.setFieldsValue({
                 username: currentUser.username || '',
                 password: '',
@@ -59,30 +60,58 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
 
     const handleOk = async () => {
         try {
-            const values = await form.validateFields();
             setSubmitting(true);
 
-            setEditorPreferences({
+            // 仅在当前处于对应面板或字段被编辑时进行针对性校验
+            const fieldsToValidate = [];
+            if (activeTab === 'profile' || form.isFieldTouched('username')) {
+                fieldsToValidate.push('username');
+            }
+
+            const currentPwd = (form.getFieldValue('password') || '').trim();
+            const isPasswordTouched = form.isFieldTouched('password') || form.isFieldTouched('confirmPassword');
+            const shouldValidatePassword = (activeTab === 'security' && currentPwd) || (isPasswordTouched && currentPwd);
+
+            if (shouldValidatePassword) {
+                fieldsToValidate.push('password', 'confirmPassword');
+            }
+
+            if (fieldsToValidate.length > 0) {
+                await form.validateFields(fieldsToValidate);
+            }
+
+            const values = form.getFieldsValue(true);
+
+            // 保存偏好设置并分发事件
+            const nextPrefs = {
                 defaultMode: values.defaultMode,
                 defaultSyncScroll: values.defaultSyncScroll,
                 fontFamily: values.fontFamily,
                 fontSize: values.fontSize
-            });
-            window.dispatchEvent(new CustomEvent('editor-preferences-changed', { detail: values }));
-
-            const payload = {
-                username: values.username.trim(),
-                avatar: avatarUrl || 'default-avatar.png'
             };
+            setEditorPreferences(nextPrefs);
+            window.dispatchEvent(new CustomEvent('editor-preferences-changed', { detail: nextPrefs }));
 
-            const trimmedPwd = (values.password || '').trim();
-            if (trimmedPwd) {
-                payload.password = trimmedPwd;
-            }
+            // 仅在资料或密码发生实质变更时请求后端
+            const trimmedUsername = (values.username || '').trim();
+            const isUsernameModified = trimmedUsername && trimmedUsername !== (user.username || '');
+            const isAvatarModified = avatarUrl && avatarUrl !== (user.avatar || '');
+            const isPasswordModified = Boolean(shouldValidatePassword && currentPwd);
 
-            const result = await updateUserInfo(payload);
-            if (result?.user) {
-                setUser(result.user);
+            if (isUsernameModified || isAvatarModified || isPasswordModified) {
+                const payload = {
+                    username: trimmedUsername || user.username,
+                    avatar: avatarUrl || 'default-avatar.png'
+                };
+
+                if (isPasswordModified) {
+                    payload.password = currentPwd;
+                }
+
+                const result = await updateUserInfo(payload);
+                if (result?.user) {
+                    setUser(result.user);
+                }
             }
 
             message.success('个人设置已成功更新');
@@ -219,6 +248,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                         layout="vertical"
                         requiredMark={false}
                         className="settings-form"
+                        autoComplete="off"
                     >
                         {/* 个人资料面板 */}
                         <div className={`tab-panel ${activeTab === 'profile' ? 'is-visible' : 'is-hidden'}`}>
@@ -271,7 +301,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                     { pattern: /^[a-zA-Z0-9]+$/, message: '昵称仅支持英文字母和数字' }
                                 ]}
                             >
-                                <Input placeholder="输入新的用户名" maxLength={50} />
+                                <Input placeholder="输入新的用户名" maxLength={50} autoComplete="off" />
                             </Form.Item>
 
                             <Form.Item label="绑定邮箱">
@@ -309,6 +339,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                             >
                                 <Input.Password
                                     placeholder="请输入新密码（留空则不修改）"
+                                    autoComplete="new-password"
                                     iconRender={visible => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
                                 />
                             </Form.Item>
@@ -348,6 +379,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                             >
                                 <Input.Password
                                     placeholder="请再次输入新密码"
+                                    autoComplete="new-password"
                                     iconRender={visible => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
                                 />
                             </Form.Item>

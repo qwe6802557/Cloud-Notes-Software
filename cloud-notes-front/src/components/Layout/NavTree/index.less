@@ -277,6 +277,27 @@
             align-items: center;
           }
         }
+
+        // 节点拖拽悬停反馈
+        &.drag-over > .ant-tree-node-content-wrapper,
+        .ant-tree-node-content-wrapper.ant-tree-node-drag-over {
+          .tree-node-row {
+            background-color: #eff6ff !important;
+            outline: 1.5px dashed #2563eb !important;
+            outline-offset: -1.5px;
+          }
+        }
+      }
+
+      // 缝隙落点指示线
+      .ant-tree-drop-indicator {
+        background-color: #2563eb !important;
+        height: 2px !important;
+
+        &::after {
+          border-color: #2563eb !important;
+          background-color: #ffffff !important;
+        }
       }
 
       .tree-node-row {
@@ -466,6 +487,42 @@
         }
       }
     }
+
+    // 拖拽至顶级根目录吸附区
+    .tree-root-dropzone {
+      margin: 10px 12px 18px 12px;
+      padding: 10px 12px;
+      border: 1.5px dashed #93c5fd;
+      border-radius: 8px;
+      background-color: rgba(239, 246, 255, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      cursor: pointer;
+      user-select: none;
+      animation: fadeInDropzone 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+
+      .dropzone-text {
+        font-size: 12px;
+        color: #2563eb;
+        font-weight: 500;
+        letter-spacing: 0.2px;
+      }
+
+      &.is-drag-over {
+        border-color: #2563eb;
+        background-color: #dbeafe;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+        transform: translateY(-1px);
+
+        .dropzone-text {
+          color: #1d4ed8;
+          font-weight: 600;
+        }
+      }
+    }
   }
 
   .nav-footer {
@@ -564,5 +621,16 @@
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes fadeInDropzone {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
