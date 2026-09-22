@@ -21,7 +21,8 @@ import {
     FullscreenOutlined,
     FullscreenExitOutlined,
     FileTextOutlined,
-    FontSizeOutlined
+    FontSizeOutlined,
+    CopyOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -38,6 +39,7 @@ import { uploadNoteImage } from '@/api/upload';
 import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences';
 import TOCDrawer from './TOCDrawer';
 import VersionHistoryModal from './VersionHistoryModal';
+import SelectionCopyBubble from './SelectionCopyBubble';
 
 const locale = {
     ...zhHans
@@ -366,6 +368,7 @@ const NoteEditor = ({
     const imageInputRef = useRef(null);
     const contentRef = useRef('');
     const previousModeRef = useRef(mode);
+    const editorContainerRef = useRef(null);
 
     const contentAnalytics = useMemo(() => calculateContentAnalytics(content), [content]);
 
@@ -1031,6 +1034,91 @@ const NoteEditor = ({
         }
     };
 
+    // 一键复制文档内容（支持 Markdown 源码与预览富文本）
+    const handleCopyAll = useCallback(async (type = 'source') => {
+        if (!content) {
+            message.warning('笔记内容为空');
+            return;
+        }
+
+        if (type === 'source') {
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(content);
+                } else {
+                    const textarea = document.createElement('textarea');
+                    textarea.value = content;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                }
+                message.success('已复制 Markdown 源码');
+            } catch {
+                message.error('复制失败，请重试');
+            }
+            return;
+        }
+
+        try {
+            const previewEl = document.querySelector('.bytemd-preview .markdown-body, .preview-only .markdown-body');
+            if (!previewEl) {
+                await navigator.clipboard.writeText(content);
+                message.success('已复制 Markdown 源码');
+                return;
+            }
+
+            const html = previewEl.innerHTML;
+            const plainText = previewEl.innerText;
+
+            if (navigator.clipboard && window.ClipboardItem) {
+                const blobHtml = new Blob([html], { type: 'text/html' });
+                const blobText = new Blob([plainText], { type: 'text/plain' });
+                await navigator.clipboard.write([
+                    new ClipboardItem({
+                        'text/html': blobHtml,
+                        'text/plain': blobText
+                    })
+                ]);
+            } else if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(plainText);
+            } else {
+                const textarea = document.createElement('textarea');
+                textarea.value = plainText;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+            }
+            message.success('已复制预览排版内容 (富文本)');
+        } catch {
+            try {
+                await navigator.clipboard.writeText(content);
+                message.success('已复制 Markdown 源码');
+            } catch {
+                message.error('复制失败');
+            }
+        }
+    }, [content]);
+
+    const copyMenu = {
+        items: [
+            {
+                key: 'source',
+                icon: <CopyOutlined />,
+                label: '复制 Markdown 源码'
+            },
+            {
+                key: 'preview',
+                icon: <FileTextOutlined />,
+                label: '复制预览排版内容 (富文本)'
+            }
+        ],
+        onClick: ({ key }) => {
+            handleCopyAll(key);
+        }
+    };
+
     const renderToolbar = () => (
         <div className="editor-toolbar">
             <div className="editor-left-actions">
@@ -1183,6 +1271,14 @@ const NoteEditor = ({
 
             <div className="editor-right-actions">
                 <Space>
+                    <Dropdown menu={copyMenu} placement="bottomLeft">
+                        <Button
+                            icon={<CopyOutlined />}
+                            disabled={!selectedNote || !content}
+                        >
+                            一键复制
+                        </Button>
+                    </Dropdown>
                     <Button
                         type="primary"
                         icon={<SaveOutlined />}
@@ -1341,7 +1437,7 @@ const NoteEditor = ({
                 onChange={handleInsertImageChange}
             />
 
-            <div className="editor-content">
+            <div className="editor-content" ref={editorContainerRef}>
                 <Spin spinning={loading} tip="加载中...">
                     <div
                         className={`editor-container editor-container-${mode} font-family-${fontFamily} font-size-${fontSize}`}
@@ -1370,6 +1466,7 @@ const NoteEditor = ({
                         )}
                     </div>
                 </Spin>
+                <SelectionCopyBubble containerRef={editorContainerRef} />
             </div>
 
             {saveStatusText && (

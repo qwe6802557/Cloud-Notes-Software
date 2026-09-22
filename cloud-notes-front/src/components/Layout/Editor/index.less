@@ -1089,3 +1089,88 @@
   }
 }
 
+// 选中文本悬浮复制胶囊 (Linear / Claude 风格)
+.selection-copy-bubble {
+  position: fixed;
+  z-index: 1050;
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 10px;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 15px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28), 0 1px 3px rgba(0, 0, 0, 0.2);
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transform: translate(-50%, 0) scale(1);
+  animation: bubblePopIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+
+  &:hover {
+    background: rgba(30, 41, 59, 0.98);
+    border-color: rgba(255, 255, 255, 0.24);
+  }
+
+  &:active {
+    transform: translate(-50%, 0) scale(0.96);
+  }
+
+  &.is-copied {
+    background: rgba(16, 185, 129, 0.94);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+  }
+
+  .bubble-content {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .bubble-icon {
+    font-size: 12px;
+    color: #cbd5e1;
+
+    &.copied-icon {
+      color: #ffffff;
+    }
+  }
+
+  .bubble-text {
+    letter-spacing: 0.2px;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .bubble-kbd {
+    display: inline-block;
+    padding: 1px 4px;
+    font-size: 10px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #94a3b8;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    line-height: 1.2;
+    margin-left: 2px;
+  }
+}
+
+@keyframes bubblePopIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+
