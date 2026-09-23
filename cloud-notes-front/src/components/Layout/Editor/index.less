@@ -510,23 +510,32 @@
 
 // 全功能图片画廊与长截图预览样式
 .cloud-note-image-preview {
-  // 长截图模式：从头部开始展示，解除视口高度限制，支持鼠标滚轮顺畅向下阅读长图
+  // 长截图模式：从头部开始展示，解除视口高度限制，支持鼠标滚轮与纵向拖拽阅读，严禁横向左右漂移
   &.is-tall-image {
     .ant-image-preview-wrap {
       overflow-y: auto !important;
-      overflow-x: hidden !important;
+      overflow-x: hidden !important; // 严格禁止横向滚动与左右漂移，保证长图永远居中
       scroll-behavior: smooth;
+      cursor: grab;
+
+      &.is-dragging {
+        cursor: grabbing !important;
+        scroll-behavior: auto !important;
+      }
 
       &::-webkit-scrollbar {
         width: 8px;
+        height: 0px;
       }
       &::-webkit-scrollbar-thumb {
         background: rgba(255, 255, 255, 0.25);
         border-radius: 4px;
-
         &:hover {
           background: rgba(255, 255, 255, 0.45);
         }
+      }
+      &::-webkit-scrollbar-track {
+        background: transparent;
       }
     }
 
@@ -543,7 +552,7 @@
       align-items: flex-start !important;
       padding: 0 16px 120px 16px !important;
       min-height: 100vh !important;
-      pointer-events: none !important;
+      pointer-events: auto !important;
     }
 
     .ant-image-preview-img {
@@ -553,11 +562,19 @@
       max-width: min(94vw, 1080px) !important;
       width: auto !important;
       height: auto !important;
-      transform: none !important;
-      cursor: default !important;
+      transform-origin: top center;
+      cursor: grab;
       pointer-events: auto !important;
       box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
       border-radius: 0 0 6px 6px;
+      user-select: none;
+      -webkit-user-drag: none;
+      transition: box-shadow 0.2s ease;
+
+      &:active,
+      &.is-dragging {
+        cursor: grabbing !important;
+      }
     }
   }
 
@@ -568,10 +585,20 @@
       color: rgba(255, 255, 255, 0.85);
       cursor: pointer;
       font-size: 18px;
-      transition: color 0.2s;
+      transition: color 0.2s ease, transform 0.15s ease, opacity 0.2s ease;
 
-      &:hover {
+      &:hover:not(.is-disabled) {
         color: #fff;
+        transform: scale(1.1);
+      }
+
+      &:active:not(.is-disabled) {
+        transform: scale(0.95);
+      }
+
+      &.is-disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
       }
     }
   }

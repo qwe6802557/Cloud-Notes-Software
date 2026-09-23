@@ -22,7 +22,8 @@ import {
     FullscreenExitOutlined,
     FileTextOutlined,
     FontSizeOutlined,
-    CopyOutlined
+    CopyOutlined,
+    OneToOneOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -702,21 +703,84 @@ const NoteEditor = ({
 
     const { visible: isPreviewVisible, current: previewCurrentIndex } = imagePreview;
 
-    // 打开或切换预览图片时，重置长图视口滚动条至头部顶端
+    // 长图预览：重置视口顶端 + 纵向拖拽上下平滑阅读（严格锁定 X 轴，防止横向偏移与图片消失）
     useEffect(() => {
         if (!isPreviewVisible) {
             return undefined;
         }
 
-        const timer = setTimeout(() => {
-            const wrap = document.querySelector('.ant-image-preview-wrap');
-            if (wrap) {
-                wrap.scrollTop = 0;
-            }
-        }, 16);
+        const currentImage = imagePreview.images[previewCurrentIndex];
+        const isTall = Boolean(currentImage?.isTall);
+        if (!isTall) {
+            return undefined;
+        }
 
-        return () => clearTimeout(timer);
-    }, [isPreviewVisible, previewCurrentIndex]);
+        let isDown = false;
+        let startY = 0;
+        let startScrollTop = 0;
+        let activeWrap = null;
+
+        const handleMouseDown = e => {
+            if (e.button !== 0 || !activeWrap) return;
+            if (e.target.closest('.ant-image-preview-operations, .cloud-note-preview-custom-toolbar, .ant-image-preview-switch-left, .ant-image-preview-switch-right, .ant-image-preview-close')) {
+                return;
+            }
+            isDown = true;
+            startY = e.clientY;
+            startScrollTop = activeWrap.scrollTop;
+            activeWrap.classList.add('is-dragging');
+            activeWrap.style.scrollBehavior = 'auto';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+        };
+
+        const handleMouseMove = e => {
+            if (!isDown || !activeWrap) return;
+            const deltaY = e.clientY - startY;
+            activeWrap.scrollTop = startScrollTop - deltaY;
+        };
+
+        const handleMouseUp = () => {
+            if (!isDown) return;
+            isDown = false;
+            if (activeWrap) {
+                activeWrap.classList.remove('is-dragging');
+                activeWrap.style.scrollBehavior = 'smooth';
+            }
+            document.body.style.userSelect = '';
+        };
+
+        // 鼠标在图片区域时，滚轮只触发放大缩小，阻止外层容器滚动；图片外部滚轮正常滚动
+        const handleWrapWheel = e => {
+            if (e.target && e.target.closest('.ant-image-preview-img')) {
+                e.preventDefault();
+            }
+        };
+
+        const timer = setTimeout(() => {
+            activeWrap = document.querySelector('.cloud-note-image-preview.is-tall-image .ant-image-preview-wrap');
+            if (activeWrap) {
+                activeWrap.scrollTo({ top: 0, behavior: 'instant' });
+                activeWrap.addEventListener('mousedown', handleMouseDown);
+                activeWrap.addEventListener('wheel', handleWrapWheel, { passive: false });
+            }
+        }, 30);
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+
+        return () => {
+            clearTimeout(timer);
+            if (activeWrap) {
+                activeWrap.removeEventListener('mousedown', handleMouseDown);
+                activeWrap.removeEventListener('wheel', handleWrapWheel);
+                activeWrap.classList.remove('is-dragging');
+            }
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+            document.body.style.userSelect = '';
+        };
+    }, [isPreviewVisible, previewCurrentIndex, imagePreview.images]);
 
     const handleExportMarkdown = async () => {
         if (!selectedNote) {
@@ -1514,22 +1578,70 @@ const NoteEditor = ({
                             setImagePreview(prev => ({ ...prev, current }));
                         },
                         rootClassName: `cloud-note-image-preview ${imagePreview.images[imagePreview.current]?.isTall ? 'is-tall-image' : ''}`,
-                        toolbarRender: originalNode => (
-                            <Space size={12} className="cloud-note-preview-custom-toolbar">
-                                {originalNode}
-                                <Tooltip title="在新标签页查看原图">
-                                    <ExportOutlined
-                                        className="cloud-note-preview-toolbar-btn"
-                                        onClick={() => {
-                                            const activeImg = imagePreview.images[imagePreview.current]?.src;
-                                            if (activeImg) {
-                                                window.open(activeImg, '_blank');
-                                            }
-                                        }}
-                                    />
-                                </Tooltip>
-                            </Space>
-                        )
+                        minScale: 1,
+                        maxScale: 5,
+                        scaleStep: 0.5,
+                        movable: !Boolean(imagePreview.images[imagePreview.current]?.isTall),
+                        imageRender: (originalNode, info) => {
+                            const scale = info?.transform?.scale || 1;
+                            const isTall = Boolean(imagePreview.images[imagePreview.current]?.isTall);
+                            let nodeStyle = originalNode.props.style || {};
+
+                            if (isTall) {
+                                const currentTransform = nodeStyle.transform || '';
+                                // 严格锁定长图 X 轴为 0px，保证水平居中，纵向位移全权交由滚动容器处理，彻底解决左右跑偏与图片消失
+                                const cleanTransform = currentTransform.replace(/translate3d\([^)]+\)/, 'translate3d(0px, 0px, 0px)');
+                                nodeStyle = {
+                                    ...nodeStyle,
+                                    transform: cleanTransform,
+                                    transformOrigin: 'top center'
+                                };
+                            }
+
+                            return React.cloneElement(originalNode, {
+                                className: `${originalNode.props.className || ''} ${scale > 1 ? 'is-zoomed' : ''}`.trim(),
+                                style: {
+                                    ...nodeStyle,
+                                    cursor: isTall ? 'grab' : scale > 1 ? 'grab' : originalNode.props.style?.cursor
+                                },
+                                draggable: false
+                            });
+                        },
+                        toolbarRender: (originalNode, info) => {
+                            const scale = info?.transform?.scale || 1;
+                            const isTall = Boolean(imagePreview.images[imagePreview.current]?.isTall);
+                            return (
+                                <Space size={12} className="cloud-note-preview-custom-toolbar">
+                                    {originalNode}
+                                    <Tooltip title={scale > 1 ? '复位至初始比例 (1:1)' : '当前已是初始比例'}>
+                                        <OneToOneOutlined
+                                            className={`cloud-note-preview-toolbar-btn ${scale <= 1 ? 'is-disabled' : ''}`}
+                                            onClick={() => {
+                                                if (scale > 1) {
+                                                    info?.actions?.onReset?.();
+                                                    if (isTall) {
+                                                        const wrap = document.querySelector('.cloud-note-image-preview.is-tall-image .ant-image-preview-wrap');
+                                                        if (wrap) wrap.scrollTo({ top: 0, behavior: 'smooth' });
+                                                    }
+                                                }
+                                            }}
+                                            style={scale <= 1 ? { opacity: 0.45, cursor: 'not-allowed' } : {}}
+                                        />
+                                    </Tooltip>
+                                    <Tooltip title="在新标签页查看原图">
+                                        <ExportOutlined
+                                            className="cloud-note-preview-toolbar-btn"
+                                            onClick={() => {
+                                                const activeImg = imagePreview.images[imagePreview.current]?.src;
+                                                if (activeImg) {
+                                                    window.open(activeImg, '_blank');
+                                                }
+                                            }}
+                                        />
+                                    </Tooltip>
+                                </Space>
+                            );
+                        }
                     }}
                 >
                     {imagePreview.images.map((item, index) => (
