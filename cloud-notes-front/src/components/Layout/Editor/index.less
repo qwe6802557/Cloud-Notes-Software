@@ -498,13 +498,152 @@
   }
 }
 
-// Markdown 渲染区域图片交互
-.markdown-body img {
-  cursor: zoom-in;
-  transition: opacity 0.2s ease;
+// Markdown 渲染区域图片交互与懒加载骨架屏
+.note-image-container {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+  margin: 10px 0;
+  border-radius: 6px;
+  overflow: hidden;
 
-  &:hover {
-    opacity: 0.92;
+  &.is-loading {
+    min-height: 180px;
+    width: 100%;
+    max-width: 640px;
+    background: rgba(0, 0, 0, 0.03);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+
+    img {
+      opacity: 0;
+      pointer-events: none;
+    }
+  }
+
+  &.is-loaded {
+    min-height: 0;
+    background: transparent;
+    border: none;
+
+    img {
+      opacity: 1;
+    }
+  }
+
+  &.is-error {
+    min-height: 140px;
+    width: 100%;
+    max-width: 480px;
+
+    img {
+      display: none;
+    }
+  }
+
+  img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    cursor: zoom-in;
+    transition: opacity 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    border-radius: 4px;
+
+    &:hover {
+      opacity: 0.92;
+    }
+  }
+
+  .note-image-skeleton {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.03);
+    z-index: 1;
+    user-select: none;
+
+    .skeleton-shimmer {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0) 0%,
+        rgba(255, 255, 255, 0.5) 50%,
+        rgba(255, 255, 255, 0) 100%
+      );
+      transform: translateX(-100%);
+      animation: note-skeleton-wave 1.6s infinite cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .skeleton-content {
+      position: relative;
+      z-index: 2;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: rgba(0, 0, 0, 0.35);
+      font-size: 13px;
+
+      .skeleton-icon {
+        opacity: 0.7;
+      }
+    }
+  }
+
+  .note-image-error {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 16px;
+    background: rgba(255, 77, 79, 0.03);
+    border: 1px dashed rgba(255, 77, 79, 0.3);
+    border-radius: 6px;
+    z-index: 2;
+    user-select: none;
+
+    .error-icon {
+      color: #ff4d4f;
+    }
+
+    .error-msg {
+      color: rgba(0, 0, 0, 0.65);
+      font-size: 13px;
+    }
+
+    .error-retry-btn {
+      margin-top: 4px;
+      padding: 3px 12px;
+      font-size: 12px;
+      border: 1px solid #1890ff;
+      background: #fff;
+      color: #1890ff;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+
+      &:hover {
+        background: #1890ff;
+        color: #fff;
+      }
+    }
+  }
+}
+
+@keyframes note-skeleton-wave {
+  0% {
+    transform: translateX(-100%);
+  }
+  60% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(100%);
   }
 }
 

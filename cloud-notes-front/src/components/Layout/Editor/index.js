@@ -41,6 +41,7 @@ import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences'
 import TOCDrawer from './TOCDrawer';
 import VersionHistoryModal from './VersionHistoryModal';
 import SelectionCopyBubble from './SelectionCopyBubble';
+import lazyImagePlugin from './plugins/lazyImagePlugin';
 
 const locale = {
     ...zhHans
@@ -58,7 +59,8 @@ const basePlugins = [
     mermaid({
         locale: zhHansMermaid
     }),
-    breaks()
+    breaks(),
+    lazyImagePlugin()
 ];
 
 const calculateContentAnalytics = text => {
@@ -682,19 +684,21 @@ const NoteEditor = ({
         const images = imgElements.map(img => {
             const naturalWidth = img.naturalWidth || 1;
             const naturalHeight = img.naturalHeight || 1;
+            const realSrc = img.dataset.src || img.getAttribute('src') || img.src;
             return {
-                src: img.getAttribute('src') || img.src,
+                src: realSrc,
                 alt: img.getAttribute('alt') || '笔记图片',
                 isTall: naturalHeight / naturalWidth > 1.6
             };
         });
 
         const clickedIndex = imgElements.indexOf(target);
+        const targetSrc = target.dataset?.src || target.getAttribute('src') || target.src;
         setImagePreview({
             visible: true,
             current: clickedIndex >= 0 ? clickedIndex : 0,
             images: images.length > 0 ? images : [{
-                src: target.getAttribute('src') || target.src,
+                src: targetSrc,
                 alt: target.getAttribute('alt') || '笔记图片',
                 isTall: (target.naturalHeight || 1) / (target.naturalWidth || 1) > 1.6
             }]
