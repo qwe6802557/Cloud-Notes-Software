@@ -11,6 +11,9 @@
   - **首屏接口并发合并与依赖项纠偏**：
     - `NavTree` 中隔离 `selectedNotebook` 的依赖重生成，彻底解决组件初始化触发二次重复请求的问题。
     - 为 `getNotebooks` 注入 In-flight Promise 并发共享机制，将首屏 `/api/notebooks` 耗时从 848ms（并发排队）暴降至 42ms，提速 20 倍。
+  - **外部 WebFont 字体异步非阻塞加载（方案3）**：
+    - 从 `typography.css` 彻底剥离阻塞式 `@import`，消除 CSSOM 关键渲染路径阻断，使 `main.css` 自包含直出。
+    - 在 `index.html` 中引入 Preconnect 预连接与 `media="print" onload="this.media='all'"` 异步样式拉取，利用本地系统优质字体实现首屏毫秒级秒开（FCP 瞬间呈现），外部字体就绪后平滑升级。
 
 ## 2026-09-23
 

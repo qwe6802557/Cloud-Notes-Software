@@ -3,11 +3,7 @@
    内置霞鹜文楷 (LXGW WenKai)、思源黑体 (Noto Sans SC)、系统字体及 JetBrains Mono 等宽字体
    ========================================================================== */
 
-/* 引入霞鹜文楷屏幕阅读优化版 WebFont */
-@import url('https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.1.0/style.css');
-
-/* 引入思源黑体与 JetBrains Mono 等宽代码字体 */
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+/* 字体外链已移至 index.html 采用预连接与异步非阻塞模式加载，彻底消除首屏白屏阻断 */
 
 :root {
   /* 字体家族变量 */
