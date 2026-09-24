@@ -1,11 +1,24 @@
 import request from '@/utils/request';
 
-// 获取笔记本列表
+let pendingNotebooksPromise = null;
+
+// 获取笔记本列表（支持并发请求共享，消除多组件并发重复查询引起的后端聚合排队）
 export const getNotebooks = () => {
-    return request({
+    if (pendingNotebooksPromise) {
+        return pendingNotebooksPromise;
+    }
+
+    pendingNotebooksPromise = request({
         url: '/notebooks',
         method: 'get'
+    }).finally(() => {
+        // 请求结束后微任务延迟释放，既能合并瞬间并发，又确保后续刷新获取最新数据
+        setTimeout(() => {
+            pendingNotebooksPromise = null;
+        }, 100);
     });
+
+    return pendingNotebooksPromise;
 };
 
 // 创建笔记本

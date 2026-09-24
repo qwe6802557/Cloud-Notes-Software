@@ -17,6 +17,30 @@ server {
     ssl_certificate /etc/nginx/ssl/notes.example.com.pem;
     ssl_certificate_key /etc/nginx/ssl/notes.example.com.key;
 
+    # Favicon 与站点图标：彻底禁止强缓存，确保客户端更新秒级生效
+    location ~* ^/(favicon.*|logo.*)\.(ico|png|svg)$ {
+        expires -1;
+        add_header Cache-Control 'no-store, no-cache, must-revalidate, max-age=0';
+    }
+
+    # Gzip 压缩配置
+    gzip on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript image/svg+xml;
+
+    # 核心带哈希静态资源：极速强缓存 (365天)，支持 immutable，客户端直接 Disk Cache 秒开，0 请求往返
+    location /static/ {
+        expires 365d;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        access_log off;
+    }
+
+    # HTML 入口文件：协商缓存，确保前端更新后客户端立即获取最新入口
+    location = /index.html {
+        expires -1;
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+    }
+
     location / {
         try_files $uri $uri/ /index.html;
     }

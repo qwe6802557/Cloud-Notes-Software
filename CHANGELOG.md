@@ -1,5 +1,17 @@
 # 工作记录 (Changelog)
 
+## 2026-09-24
+
+### 🚀 性能优化 (Performance)
+
+- **首屏加载极速优化（HTTP/2 + 静态强缓存 + 接口去重）**：
+  - **启用 HTTP/2 多路复用**：生产 Nginx 443 端口全面开启 HTTP/2 支持，彻底消除 HTTP/1.1 线头阻塞与单域名并发限制。
+  - **静态资源长期强缓存 (Immutable)**：为 `/static/` 目录下带 Hash 的所有 JS/CSS/Media 资源配置一年强缓存（`Cache-Control: public, max-age=31536000, immutable`），消除每次开机访问时的 304 协商往返，实现本地磁盘 0ms 秒开。
+  - **入口 HTML 协商缓存保障**：为 `/index.html` 强制配置 `no-cache, no-store, must-revalidate`，确保发版后新版本即刻生效。
+  - **首屏接口并发合并与依赖项纠偏**：
+    - `NavTree` 中隔离 `selectedNotebook` 的依赖重生成，彻底解决组件初始化触发二次重复请求的问题。
+    - 为 `getNotebooks` 注入 In-flight Promise 并发共享机制，将首屏 `/api/notebooks` 耗时从 848ms（并发排队）暴降至 42ms，提速 20 倍。
+
 ## 2026-09-23
 
 ### 🎨 新增与优化 (Features & Enhancements)

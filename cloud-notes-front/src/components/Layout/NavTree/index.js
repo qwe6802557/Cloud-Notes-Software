@@ -248,20 +248,24 @@ const NavTree = forwardRef(({
         };
     }, []);
 
-    // 加载笔记本列表
+    // 保持最新选中的笔记本引用，避免作为 useCallback 依赖引发二次重复调用
+    const selectedNotebookRef = useRef(selectedNotebook);
+    selectedNotebookRef.current = selectedNotebook;
+
+    // 加载笔记本列表（仅在初次挂载与 syncVersion 变更时拉取）
     const loadNotebooks = useCallback(async () => {
         try {
             const result = await getNotebooks();
             const list = result?.notebooks || [];
             setNotebooks(list);
-            if (!selectedNotebook && list.length > 0) {
+            if (!selectedNotebookRef.current && list.length > 0) {
                 const firstId = list[0].id || list[0]._id;
                 setSelectedNotebook(firstId);
             }
         } catch {
             message.error('笔记本加载失败');
         }
-    }, [selectedNotebook, setSelectedNotebook]);
+    }, [setSelectedNotebook]);
 
     // 格式化后端数据为 Ant Design Tree 懒加载结构
     const formatTreeData = useCallback(nodes => {
