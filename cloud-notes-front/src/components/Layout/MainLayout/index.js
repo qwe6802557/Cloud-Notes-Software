@@ -5,6 +5,7 @@ import NoteEditor from '../Editor';
 import { updateNote, createNote } from '@/api/notes';
 import { logout } from '@/api/user';
 import { clearAuth } from '@/utils/auth';
+import { getLoginPath } from '@/utils/request';
 import './index.less';
 
 const MainLayout = () => {
@@ -127,7 +128,7 @@ const MainLayout = () => {
             // 本地清理优先，确保即便网络异常也能正常退出
         } finally {
             clearAuth();
-            window.location.href = '/login';
+            window.location.href = getLoginPath();
         }
     }, [confirmLeaveUnsavedNote]);
 

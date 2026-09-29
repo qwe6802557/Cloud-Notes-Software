@@ -1,5 +1,21 @@
 # 工作记录 (Changelog)
 
+## 2026-09-29
+
+### 🐛 缺陷修复与体验优化 (Bug Fixes & UX Enhancements)
+
+- **令牌过期 401 提示与跳转全流程重构**：
+  - **根除 `//login` 协议相对路径导致页面无法访问的致命缺陷**：
+    - 修复生产构建环境下 `REACT_APP_ROUTER_URL=/` 与 `${routerBasename}/login` 拼接产生 `//login` 的问题。
+    - 统一通过 `getLoginPath` 规范化清洗多余斜杠，杜绝浏览器将 `login` 误当作主机名重定向至 `https://login/` 导致 `ERR_NAME_NOT_RESOLVED` 的问题。
+  - **消除次生冗余错误弹窗（全局单例防抖与静默挂起）**：
+    - 引入全局 `isAuthRedirecting` 状态锁，全站并发请求触发 401 时仅弹出 1 次“登录状态已过期，请重新登录”友好提示。
+    - 拦截器对 401 统一返回静默挂起的 Promise，彻底阻止下游业务组件（如 `NavTree`、`Sidebar` 等）的 `catch` 块向用户层叠弹出“笔记本加载失败”等次生错误。
+  - **平滑倒计时与无缝登录回跳（Return URL）**：
+    - 留出 600ms 平滑延时，确保用户看清提示后安全过渡重定向，避免提示一闪而过。
+    - 跳转登录页时自动注入 `?redirect=${encodeURIComponent(currentPath)}` 参数，并在登录成功后优先解析并安全回跳，无缝还原用户的笔记浏览与编辑现场。
+    - 规范化 `MainLayout` 手动退出登录逻辑，统一使用 `getLoginPath` 进行受控跳转。
+
 ## 2026-09-24
 
 ### 🚀 性能优化 (Performance)

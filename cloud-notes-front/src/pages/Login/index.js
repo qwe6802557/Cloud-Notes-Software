@@ -7,12 +7,35 @@ import { setToken, setUser } from '@/utils/auth';
 import './index.less';
 
 const { Title } = Typography;
-
 const Login = () => {
     const [form] = Form.useForm();
     const navigate = useNavigate();
     const location = useLocation();
-    const from = location.state?.from?.pathname || '/';
+
+    // 优先读取 URL 查询参数中的 redirect 回跳目标，其次读取 routerGuard 的 state.from，保底跳转根路径 '/'
+    const getTargetRedirectPath = useCallback(() => {
+        const rawBasename = (process.env.REACT_APP_ROUTER_URL || '').trim().replace(/^\/+|\/+$/g, '');
+        const params = new URLSearchParams(location.search);
+        let redirectParam = params.get('redirect');
+
+        if (redirectParam && redirectParam.startsWith('/') && !redirectParam.startsWith('//')) {
+            // 如果 redirectParam 包含了子路径 basename，剔除后再由 React Router navigate 导航，防止多层嵌套
+            if (rawBasename) {
+                const basePrefix = `/${rawBasename}`;
+                if (redirectParam.startsWith(basePrefix)) {
+                    redirectParam = redirectParam.slice(basePrefix.length) || '/';
+                    if (!redirectParam.startsWith('/')) {
+                        redirectParam = `/${redirectParam}`;
+                    }
+                }
+            }
+            return redirectParam;
+        }
+
+        return location.state?.from?.pathname || '/';
+    }, [location.search, location.state]);
+
+    const from = getTargetRedirectPath();
 
     const [captchaSvg, setCaptchaSvg] = useState('');
     const [captchaKey, setCaptchaKey] = useState('');
