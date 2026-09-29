@@ -33,7 +33,8 @@ import {
     FolderAddOutlined,
     RollbackOutlined,
     LeftOutlined,
-    RightOutlined
+    RightOutlined,
+    CloudUploadOutlined
 } from '@ant-design/icons';
 import {
     getNotebooks,
@@ -57,6 +58,7 @@ const SYSTEM_VIEWS = [
     { key: 'all', label: '全部笔记', icon: <BookOutlined /> },
     { key: 'recent', label: '最近文档', icon: <ClockCircleOutlined /> },
     { key: 'starred', label: '收藏文档', icon: <StarOutlined /> },
+    { key: 'stash', label: '文件暂存', icon: <CloudUploadOutlined /> },
     { key: 'trash', label: '回收站', icon: <DeleteOutlined /> }
 ];
 
@@ -193,7 +195,9 @@ const NavTree = forwardRef(({
     savedNote,
     syncVersion,
     onSync,
-    onLogout
+    onLogout,
+    activeView,
+    onViewChange
 }, ref) => {
     const [notebooks, setNotebooks] = useState([]);
     const [viewType, setViewType] = useState('all');
@@ -206,6 +210,15 @@ const NavTree = forwardRef(({
     const [searchLoading, setSearchLoading] = useState(false);
     const [loading, setLoading] = useState(false);
     const [syncing, setSyncing] = useState(false);
+
+    // 当父级视图与侧边栏激活标签双向联动
+    useEffect(() => {
+        if (activeView === 'notes' && viewType === 'stash') {
+            setViewType('all');
+        } else if (activeView === 'stash' && viewType !== 'stash') {
+            setViewType('stash');
+        }
+    }, [activeView, viewType]);
 
     // 模态弹窗状态
     const [dialogState, setDialogState] = useState({
@@ -647,7 +660,7 @@ const NavTree = forwardRef(({
     useEffect(() => {
         if (viewType === 'all' && selectedNotebook) {
             loadNotebookTree(selectedNotebook);
-        } else if (viewType !== 'all') {
+        } else if (viewType !== 'all' && viewType !== 'stash') {
             loadSystemListView(viewType);
         }
     }, [viewType, selectedNotebook, loadNotebookTree, loadSystemListView, syncVersion]);
@@ -749,6 +762,9 @@ const NavTree = forwardRef(({
             }
         }
         setSelectedNote(targetKey);
+        if (onViewChange) {
+            onViewChange('notes');
+        }
     };
 
     // 切换系统分类标签
@@ -760,6 +776,9 @@ const NavTree = forwardRef(({
             }
         }
         setViewType(key);
+        if (onViewChange) {
+            onViewChange(key === 'stash' ? 'stash' : 'notes');
+        }
     };
 
     // 触发创建笔记对话框
@@ -1263,7 +1282,30 @@ const NavTree = forwardRef(({
 
                     {/* 树核心滚动区 */}
                     <div className="tree-scroll-container">
-                        {viewType === 'all' ? (
+                        {viewType === 'stash' ? (
+                            <div style={{ padding: '36px 16px', textAlign: 'center' }}>
+                                <div style={{
+                                    width: 48,
+                                    height: 48,
+                                    borderRadius: 12,
+                                    background: '#eff6ff',
+                                    color: '#1890ff',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 24,
+                                    margin: '0 auto 14px'
+                                }}>
+                                    <CloudUploadOutlined />
+                                </div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', marginBottom: 8 }}>
+                                    文件暂存看板已开启
+                                </div>
+                                <div style={{ fontSize: 12, lineHeight: 1.6, color: '#64748b' }}>
+                                    右侧主工作区已进入暂存中转站，支持临时文件（10分钟自动销毁）与永久文件跨端即时互传。
+                                </div>
+                            </div>
+                        ) : viewType === 'all' ? (
                             displayedTreeData.length > 0 ? (
                                 <>
                                     <Tree

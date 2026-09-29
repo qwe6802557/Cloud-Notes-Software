@@ -3,6 +3,7 @@ const authRoutes = require('./auth');
 const notesRoutes = require('./notes');
 const notebooksRoutes = require('./notebooks');
 const uploadsRoutes = require('./uploads');
+const stashRoutes = require('./stash');
 
 const router = express.Router();
 
@@ -11,5 +12,6 @@ router.use('/auth', authRoutes);
 router.use('/notes', notesRoutes);
 router.use('/notebooks', notebooksRoutes);
 router.use('/uploads', uploadsRoutes);
+router.use('/stash', stashRoutes);
 
 module.exports = router;

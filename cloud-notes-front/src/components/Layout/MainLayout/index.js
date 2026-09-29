@@ -2,6 +2,7 @@ import React, { useCallback, useRef, useState } from 'react';
 import { Layout, Modal, message } from 'antd';
 import NavTree from '../NavTree';
 import NoteEditor from '../Editor';
+import FileStashBoard from '@/components/FileStashBoard';
 import { updateNote, createNote } from '@/api/notes';
 import { logout } from '@/api/user';
 import { clearAuth } from '@/utils/auth';
@@ -18,6 +19,7 @@ const MainLayout = () => {
     const [savedNote, setSavedNote] = useState(null);
     const [syncVersion, setSyncVersion] = useState(0);
     const [zenMode, setZenMode] = useState(false);
+    const [activeView, setActiveView] = useState('notes'); // 'notes' | 'stash'
     const [modal, contextHolder] = Modal.useModal();
 
     const handleSaveNote = useCallback(async (noteId, content, meta = {}) => {
@@ -149,17 +151,23 @@ const MainLayout = () => {
                     syncVersion={syncVersion}
                     onSync={handleSync}
                     onLogout={handleLogout}
+                    activeView={activeView}
+                    onViewChange={setActiveView}
                 />
                 <Layout.Content className="main-content">
-                    <NoteEditor
-                        selectedNote={selectedNote}
-                        onSave={handleSaveNote}
-                        onDirtyChange={setEditorDirty}
-                        onSaveStateChange={handleSaveStateChange}
-                        onCreateNote={handleCreateNote}
-                        zenMode={zenMode}
-                        onToggleZenMode={setZenMode}
-                    />
+                    {activeView === 'stash' ? (
+                        <FileStashBoard />
+                    ) : (
+                        <NoteEditor
+                            selectedNote={selectedNote}
+                            onSave={handleSaveNote}
+                            onDirtyChange={setEditorDirty}
+                            onSaveStateChange={handleSaveStateChange}
+                            onCreateNote={handleCreateNote}
+                            zenMode={zenMode}
+                            onToggleZenMode={setZenMode}
+                        />
+                    )}
                 </Layout.Content>
             </Layout>
         </>

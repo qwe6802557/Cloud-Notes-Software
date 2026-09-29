@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const config = require('./config');
@@ -8,6 +8,7 @@ const AppError = require('./utils/AppError');
 const connectDB = require('./config/db');
 const loggerMiddleware = require('./middleware/logger');
 const session = require('express-session');
+const { startCleanupTimer } = require('./services/stashCleanupService');
 
 // 连接数据库
 connectDB();
@@ -72,6 +73,7 @@ const PORT = config.port;
 app.listen(PORT, () => {
     console.log(`服务器已启动 访问地址: http://localhost:${PORT}`);
     console.log(`环境: ${config.environment}`);
+    startCleanupTimer();
 });
 
 // 处理未捕获的异常
