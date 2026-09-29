@@ -14,12 +14,14 @@ import {
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
+import { useAppUpdate } from '../../context/UpdateContext';
 import { Config } from '../../constants/Config';
 import axios from 'axios';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, serverUrl, updateServerUrl, logout, refreshUser } = useAuth();
+  const { currentVersion, currentBuildNumber, isChecking: isCheckingUpdate, hasUpdate, checkForUpdates } = useAppUpdate();
 
   const [showServerModal, setShowServerModal] = useState(false);
   const [customUrl, setCustomUrl] = useState(serverUrl);
@@ -187,10 +189,37 @@ export default function SettingsScreen() {
         <View style={styles.settingItem}>
           <View style={styles.itemLeft}>
             <Ionicons name="git-branch-outline" size={20} color="#64748b" style={styles.itemIcon} />
-            <Text style={styles.itemTitle}>版本号</Text>
+            <Text style={styles.itemTitle}>当前版本</Text>
           </View>
-          <Text style={styles.itemValueMono}>v1.0.0 (MVP)</Text>
+          <Text style={styles.itemValueMono}>v{currentVersion} (Build {currentBuildNumber})</Text>
         </View>
+
+        <TouchableOpacity
+          style={styles.settingItem}
+          onPress={() => checkForUpdates(true)}
+          disabled={isCheckingUpdate}
+          activeOpacity={0.7}
+        >
+          <View style={styles.itemLeft}>
+            <Ionicons name="cloud-download-outline" size={20} color="#1890ff" style={styles.itemIcon} />
+            <Text style={styles.itemTitle}>检查新版本</Text>
+            {hasUpdate && (
+              <View style={styles.newBadge}>
+                <Text style={styles.newBadgeText}>NEW</Text>
+              </View>
+            )}
+          </View>
+          {isCheckingUpdate ? (
+            <ActivityIndicator size="small" color="#1890ff" />
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontSize: 13, color: hasUpdate ? '#1890ff' : '#94a3b8', marginRight: 4 }}>
+                {hasUpdate ? '可更新' : '已是最新'}
+              </Text>
+              <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
       {/* 退出登录 */}
@@ -501,5 +530,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#ffffff',
     fontWeight: '600',
+  },
+  newBadge: {
+    backgroundColor: '#ef4444',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 6,
+  },
+  newBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '700',
   },
 });

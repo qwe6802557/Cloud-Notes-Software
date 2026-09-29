@@ -3,6 +3,8 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../context/AuthContext';
+import { UpdateProvider } from '../context/UpdateContext';
+import { UpdateModal } from '../components/UpdateModal';
 import { Colors } from '../constants/theme';
 
 function RootNavigation() {
@@ -82,7 +84,10 @@ function RootNavigation() {
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <RootNavigation />
+      <UpdateProvider>
+        <RootNavigation />
+        <UpdateModal />
+      </UpdateProvider>
     </AuthProvider>
   );
 }
