@@ -17,6 +17,17 @@ const stashFileSchema = new mongoose.Schema({
         required: [true, '原始文件名不能为空'],
         trim: true
     },
+    relativePath: {
+        type: String,
+        default: '',
+        trim: true
+    },
+    folderName: {
+        type: String,
+        default: '',
+        trim: true,
+        index: true
+    },
     size: {
         type: Number,
         required: [true, '文件大小不能为空']
@@ -54,5 +65,6 @@ stashFileSchema.index(
 
 // 组合索引提高特定用户下的分区查询性能
 stashFileSchema.index({ userId: 1, storageType: 1, createdAt: -1 });
+stashFileSchema.index({ userId: 1, storageType: 1, folderName: 1, createdAt: -1 });
 
 module.exports = mongoose.model('StashFile', stashFileSchema);

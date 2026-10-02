@@ -14,13 +14,14 @@ router.post('/upload', uploadStashFile.single('file'), stashController.uploadFil
 // 获取暂存文件列表
 router.get('/', stashController.listFiles);
 
-// 临时文件转永久
+// 文件夹级批量操作 (必须在 /:id 之前注册)
+router.post('/folder/promote', stashController.promoteFolder);
+router.delete('/folder', stashController.deleteFolder);
+router.get('/folder/download', stashController.downloadFolder);
+
+// 单文件操作
 router.post('/:id/promote', stashController.promoteToPermanent);
-
-// 下载文件
 router.get('/:id/download', stashController.downloadFile);
-
-// 删除暂存文件
 router.delete('/:id', stashController.deleteFile);
 
 module.exports = router;

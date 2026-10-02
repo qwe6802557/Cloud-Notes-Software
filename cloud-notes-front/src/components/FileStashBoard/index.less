@@ -102,48 +102,84 @@
   }
 
   .upload-section {
-    margin-bottom: 24px;
+    margin-bottom: 20px;
 
-    .ant-upload-drag {
+    .custom-dropzone {
       background: #ffffff;
       border: 2px dashed #cbd5e1;
       border-radius: 12px;
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      padding: 24px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 
-      &:hover, &.ant-upload-drag-hover {
+      &:hover, &.is-drag-over {
         border-color: #1890ff;
-        background: #eff6ff;
+        background: #f0f7ff;
+        box-shadow: 0 0 0 3px rgba(24, 144, 255, 0.1);
       }
 
-      .ant-upload-drag-container {
-        padding: 24px 16px;
+      &.is-uploading {
+        pointer-events: none;
+        opacity: 0.7;
       }
 
-      .upload-icon {
-        font-size: 36px;
-        color: #1890ff;
-        margin-bottom: 8px;
-      }
+      .dropzone-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
 
-      .upload-primary-text {
-        font-size: 15px;
-        font-weight: 600;
-        color: #0f172a;
-        margin-bottom: 4px;
-      }
+        .dropzone-icon-wrap {
+          width: 52px;
+          height: 52px;
+          border-radius: 50%;
+          background: #eff6ff;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-bottom: 10px;
 
-      .upload-hint-text {
-        font-size: 12px;
-        color: #64748b;
-
-        .highlight-type {
-          font-weight: 600;
-          color: #1890ff;
+          .drop-icon {
+            font-size: 26px;
+            color: #1890ff;
+          }
         }
 
-        .highlight-temp {
+        .dropzone-title {
+          font-size: 15px;
           font-weight: 600;
-          color: #d97706;
+          color: #0f172a;
+          margin-bottom: 4px;
+        }
+
+        .dropzone-subtitle {
+          font-size: 12px;
+          color: #64748b;
+          margin-bottom: 14px;
+
+          .highlight-type {
+            font-weight: 600;
+            color: #1890ff;
+          }
+
+          .highlight-temp {
+            font-weight: 600;
+            color: #d97706;
+          }
+        }
+
+        .dropzone-actions {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+
+          .action-pick-btn {
+            border-radius: 6px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+          }
         }
       }
     }
@@ -151,24 +187,127 @@
     .upload-progress-card {
       margin-top: 12px;
       background: #ffffff;
-      padding: 12px 16px;
-      border-radius: 8px;
-      border: 1px solid #e2e8f0;
+      padding: 14px 18px;
+      border-radius: 10px;
+      border: 1px solid #bfdbfe;
+      background: linear-gradient(to right, #eff6ff, #ffffff);
+      box-shadow: 0 2px 6px rgba(37, 99, 235, 0.06);
+
+      .progress-info-col {
+        margin-bottom: 8px;
+
+        .progress-status-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 4px;
+
+          .status-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #1e40af;
+          }
+
+          .status-percent {
+            font-size: 13px;
+            font-weight: 700;
+            color: #2563eb;
+            font-family: SFMono-Regular, Consolas, monospace;
+          }
+        }
+
+        .progress-filename {
+          display: block;
+          font-size: 12px;
+          color: #64748b;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+      }
+
+      .progress-bar-wrap {
+        width: 100%;
+      }
+    }
+  }
+
+  /* 虚拟目录导航面包屑与信息栏 */
+  .stash-nav-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px 14px;
+    margin-bottom: 14px;
+
+    .nav-left {
       display: flex;
       align-items: center;
       gap: 12px;
 
-      .progress-filename {
-        flex: 1;
-        font-size: 13px;
-        color: #0f172a;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+      .back-btn {
+        border-radius: 4px;
+        color: #475569;
+        &:hover {
+          color: #1890ff;
+          border-color: #1890ff;
+        }
       }
 
-      .progress-bar-wrap {
-        width: 240px;
+      .breadcrumbs-wrap {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+
+        .bc-separator {
+          font-size: 10px;
+          color: #94a3b8;
+        }
+
+        .breadcrumb-item {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          color: #64748b;
+          cursor: pointer;
+          padding: 2px 6px;
+          border-radius: 4px;
+          transition: background 0.15s;
+
+          &:hover {
+            color: #1890ff;
+            background: #eff6ff;
+          }
+
+          &.is-active {
+            font-weight: 600;
+            color: #0f172a;
+            cursor: default;
+            &:hover {
+              background: transparent;
+              color: #0f172a;
+            }
+          }
+
+          .bc-icon {
+            font-size: 13px;
+            &.folder {
+              color: #eab308;
+            }
+          }
+        }
+      }
+    }
+
+    .nav-right {
+      .item-stats {
+        font-size: 12px;
+        color: #94a3b8;
+        font-family: SFMono-Regular, Consolas, monospace;
       }
     }
   }
@@ -195,6 +334,36 @@
         transform: translateY(-1px);
       }
 
+      /* 专属文件夹卡片样式 */
+      &.folder-card {
+        border-left: 4px solid #f59e0b;
+        cursor: pointer;
+
+        &:hover {
+          border-color: #cbd5e1;
+          border-left-color: #d97706;
+          background: #fffdfa;
+        }
+
+        .folder-name-text {
+          color: #1e293b;
+          font-weight: 600;
+          &:hover {
+            color: #1890ff;
+          }
+        }
+
+        .file-count-tag {
+          display: inline-block;
+          background: #fef3c7;
+          color: #b45309;
+          font-size: 11px;
+          padding: 0 6px;
+          border-radius: 4px;
+          font-weight: 600;
+        }
+      }
+
       .file-type-icon {
         width: 42px;
         height: 42px;
@@ -205,6 +374,7 @@
         font-size: 22px;
         flex-shrink: 0;
 
+        &.type-folder { background: #fef3c7; color: #d97706; }
         &.type-image { background: #eff6ff; color: #2563eb; }
         &.type-doc { background: #fff7ed; color: #ea580c; }
         &.type-archive { background: #faf5ff; color: #9333ea; }
@@ -216,6 +386,7 @@
       .file-meta-content {
         flex: 1;
         min-width: 0;
+        cursor: pointer;
 
         .file-name-row {
           display: flex;
@@ -301,6 +472,10 @@
             color: #1890ff;
             background: #eff6ff;
             border-color: #bfdbfe;
+          }
+
+          &.enter-btn {
+            font-weight: 500;
           }
 
           &.btn-danger:hover {

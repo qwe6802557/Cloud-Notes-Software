@@ -47,3 +47,43 @@ export const deleteStashFile = id => {
         method: 'delete'
     });
 };
+
+/**
+ * 临时文件夹一键转为永久保存
+ * @param {string} folderName 文件夹名称
+ */
+export const promoteStashFolder = folderName => {
+    return request({
+        url: '/stash/folder/promote',
+        method: 'post',
+        data: { folderName }
+    });
+};
+
+/**
+ * 彻底删除整个文件夹
+ * @param {string} folderName 文件夹名称
+ * @param {string} storageType 分区类型 ('temp' | 'permanent')
+ */
+export const deleteStashFolder = (folderName, storageType) => {
+    return request({
+        url: '/stash/folder',
+        method: 'delete',
+        data: { folderName, storageType }
+    });
+};
+
+/**
+ * 打包下载整个文件夹 (流式 ZIP)
+ * @param {string} folderName 文件夹名称
+ * @param {string} storageType 分区类型 ('temp' | 'permanent')
+ */
+export const downloadStashFolder = (folderName, storageType) => {
+    return request({
+        url: '/stash/folder/download',
+        method: 'get',
+        params: { folderName, storageType },
+        responseType: 'blob'
+    });
+};
+
