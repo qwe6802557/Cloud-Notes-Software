@@ -51,11 +51,12 @@ jobs:
       - name: Rename & Prepare APK Artifact
         run: |
           mkdir -p build-output
-          cp cloud-notes-mobile/android/app/build/outputs/apk/release/app-release.apk build-output/cloud-notes-v1.0.2.apk
+          cp cloud-notes-mobile/android/app/build/outputs/apk/release/app-release.apk build-output/cloud-notes-v1.0.3.apk
+          cp cloud-notes-mobile/android/app/build/outputs/apk/release/app-release.apk build-output/cloud-notes-latest.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cloud-notes-v1.0.2-apk
-          path: build-output/cloud-notes-v1.0.2.apk
+          name: cloud-notes-v1.0.3-apk
+          path: build-output/*.apk
           retention-days: 30
