@@ -380,10 +380,9 @@ export default function AIAssistantModal({
             <View style={styles.statusBar}>
               <View style={styles.statusLeft}>
                 {isStreaming ? (
-                  <>
-                    <ActivityIndicator size="small" color="#7c3aed" style={{ marginRight: 6 }} />
-                    <Text style={styles.statusStreamingText}>正在实时流式生成中...</Text>
-                  </>
+                  resultText ? (
+                    <Text style={styles.statusStreamingText}>正在实时推流生成中...</Text>
+                  ) : null
                 ) : resultText ? (
                   <>
                     <Ionicons name="checkmark-circle" size={15} color="#10b981" style={{ marginRight: 4 }} />
@@ -424,7 +423,7 @@ export default function AIAssistantModal({
               ) : isStreaming ? (
                 <View style={styles.emptyCenter}>
                   <ActivityIndicator size="large" color="#7c3aed" />
-                  <Text style={styles.emptyThinkingText}>AI 正在组织思路中...</Text>
+                  <Text style={styles.emptyThinkingText}>正在实时推流生成中...</Text>
                 </View>
               ) : (
                 <View style={styles.emptyCenter}>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Modal, Button, message, Input, Spin, Tag } from 'antd';
+import { Modal, Button, message, Input, Spin } from 'antd';
 import {
-    RobotOutlined,
+    ThunderboltOutlined,
     CopyOutlined,
     DownloadOutlined,
     ReloadOutlined,
@@ -9,13 +9,6 @@ import {
 } from '@ant-design/icons';
 import { streamAICall } from '@/api/ai';
 
-const ACTION_TITLES = {
-    full_summary: '📑 全文核心摘要提炼',
-    extract_todos: '✅ 提取行动清单与待办事项',
-    mindmap_outline: '🧠 生成 Mermaid 思维导图大纲',
-    continue: '✍️ 承接全文智能续写',
-    custom: '💬 针对全篇笔记对话提问'
-};
 
 const AIFullNoteModal = ({
     open,
@@ -145,22 +138,15 @@ const AIFullNoteModal = ({
             }}
             title={(
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <RobotOutlined style={{ color: '#7c3aed', fontSize: 18 }} />
-                    <span style={{ fontWeight: 600 }}>{ACTION_TITLES[currentAction] || 'AI 创作助手'}</span>
-                    <Tag color="purple" style={{ marginLeft: 4 }}>grok-chat-fast</Tag>
+                    <ThunderboltOutlined style={{ color: '#7c3aed', fontSize: 16 }} />
+                    <span style={{ fontWeight: 600 }}>AI 创作</span>
                 </div>
             )}
             width={720}
             destroyOnClose
             footer={(
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                        {streaming && (
-                            <span style={{ fontSize: 12, color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <Spin size="small" /> 正在实时推流生成中...
-                            </span>
-                        )}
-                    </div>
+                    <div />
                     <div style={{ display: 'flex', gap: 8 }}>
                         <Button
                             icon={<CopyOutlined />}
@@ -247,11 +233,14 @@ const AIFullNoteModal = ({
                             )}
                         </>
                     ) : (
-                        <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 220, color: '#94a3b8' }}>
                             {streaming ? (
-                                <Spin tip="正在启动大模型，请稍候..." />
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                                    <Spin size="default" />
+                                    <span style={{ fontSize: 13, color: '#7c3aed', fontWeight: 500 }}>正在实时推流生成中...</span>
+                                </div>
                             ) : (
-                                currentAction === 'custom' ? '请输入指令并点击发送' : '点击重新生成以触发 AI 分析'
+                                <span>{currentAction === 'custom' ? '请输入指令并点击发送' : '点击重新生成以触发 AI 分析'}</span>
                             )}
                         </div>
                     )}

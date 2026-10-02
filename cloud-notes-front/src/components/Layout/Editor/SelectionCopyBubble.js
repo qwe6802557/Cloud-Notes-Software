@@ -594,11 +594,6 @@ const SelectionCopyBubble = ({
                         <div className="card-header-left">
                             <ThunderboltOutlined style={{ color: '#7c3aed', fontSize: 15 }} />
                             <span className="card-title">AI 创作</span>
-                            {aiStreaming ? (
-                                <span className="stream-badge streaming">生成中...</span>
-                            ) : (
-                                <span className="stream-badge done">已完成</span>
-                            )}
                         </div>
                         <div className="card-header-right">
                             <CloseOutlined
@@ -617,7 +612,10 @@ const SelectionCopyBubble = ({
                             </>
                         ) : (
                             <div className="loading-placeholder">
-                                <Spin tip="AI 正在飞速构思并组织语言..." />
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, padding: '24px 0' }}>
+                                    <Spin size="default" />
+                                    <span style={{ fontSize: 13, color: '#7c3aed', fontWeight: 500 }}>正在实时推流生成中...</span>
+                                </div>
                             </div>
                         )}
                     </div>
