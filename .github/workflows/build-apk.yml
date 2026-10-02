@@ -28,11 +28,8 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Verify Android Environment
-        run: |
-          echo "ANDROID_HOME: $ANDROID_HOME"
-          echo "Java version:"
-          java -version
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
 
       - name: Install Dependencies
         working-directory: cloud-notes-mobile
@@ -44,7 +41,12 @@ jobs:
 
       - name: Build Release APK with Gradle
         working-directory: cloud-notes-mobile/android
-        run: ./gradlew assembleRelease --no-daemon
+        run: |
+          ./gradlew assembleRelease \
+            -PreactNativeArchitectures=arm64-v8a \
+            -Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=1024m" \
+            -Dorg.gradle.parallel=false \
+            --no-daemon
 
       - name: Rename & Prepare APK Artifact
         run: |
