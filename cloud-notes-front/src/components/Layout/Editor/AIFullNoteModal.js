@@ -33,9 +33,16 @@ const AIFullNoteModal = ({
 
     const abortControllerRef = useRef(null);
     const resultBoxRef = useRef(null);
+    const noteContentRef = useRef(noteContent);
+    noteContentRef.current = noteContent;
+    const noteTitleRef = useRef(noteTitle);
+    noteTitleRef.current = noteTitle;
 
     const startStream = useCallback(async (act = currentAction, prompt = customPrompt) => {
-        if (!noteContent && !prompt) {
+        const text = noteContentRef.current;
+        const title = noteTitleRef.current;
+
+        if (!text && !prompt) {
             message.warning('当前笔记内容为空，无法进行 AI 分析');
             return;
         }
@@ -54,8 +61,8 @@ const AIFullNoteModal = ({
             await streamAICall(
                 {
                     action: act,
-                    text: noteContent,
-                    noteTitle,
+                    text,
+                    noteTitle: title,
                     customPrompt: prompt
                 },
                 {
@@ -70,22 +77,27 @@ const AIFullNoteModal = ({
                         setStreaming(false);
                     },
                     onError: err => {
+                        if (err.name === 'AbortError') return;
                         setStreaming(false);
                         message.error(err.message || 'AI 生成异常');
                     }
                 }
             );
-        } catch {
+        } catch (err) {
+            if (err.name === 'AbortError') return;
             setStreaming(false);
         }
-    }, [currentAction, customPrompt, noteContent, noteTitle]);
+    }, [currentAction, customPrompt]);
+
+    const startStreamRef = useRef(startStream);
+    startStreamRef.current = startStream;
 
     useEffect(() => {
         if (open) {
             setCurrentAction(action);
             setCustomPrompt('');
             if (action !== 'custom') {
-                startStream(action, '');
+                startStreamRef.current?.(action, '');
             } else {
                 setResultText('');
                 setStreaming(false);
@@ -97,7 +109,7 @@ const AIFullNoteModal = ({
             setStreaming(false);
             setResultText('');
         }
-    }, [open, action, startStream]);
+    }, [open, action]);
 
     const handleCopy = () => {
         if (!resultText) return;

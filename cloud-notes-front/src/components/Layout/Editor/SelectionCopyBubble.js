@@ -48,6 +48,9 @@ const SelectionCopyBubble = ({
     const activeSelectionRef = useRef(null);
     const visibleRef = useRef(false);
     const isAIActiveRef = useRef(false);
+    const aiCardOpenRef = useRef(false);
+    const aiMenuOpenRef = useRef(false);
+    const aiStreamingRef = useRef(false);
     const abortControllerRef = useRef(null);
 
     useEffect(() => {
@@ -55,8 +58,20 @@ const SelectionCopyBubble = ({
     }, [visible]);
 
     useEffect(() => {
+        aiCardOpenRef.current = aiCardOpen;
+        aiMenuOpenRef.current = aiMenuOpen;
+        aiStreamingRef.current = aiStreaming;
         isAIActiveRef.current = aiMenuOpen || aiCardOpen || aiStreaming;
     }, [aiMenuOpen, aiCardOpen, aiStreaming]);
+
+    // 组件真正卸载时终止未完成的流式请求
+    useEffect(() => {
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+        };
+    }, []);
 
     // 触发普通复制成功反馈
     const showCopiedFeedback = useCallback(() => {
@@ -397,9 +412,13 @@ const SelectionCopyBubble = ({
             if (aiCardRef.current && aiCardRef.current.contains(e.target)) {
                 return;
             }
-            // 如果 AI 面板打开，点击外部则关闭
-            if (aiCardOpen || aiMenuOpen) {
-                if (!aiStreaming) {
+            // 忽略对 Antd 快捷弹窗浮层的点击，防止提前销毁或阻断流式请求
+            if (e.target && typeof e.target.closest === 'function' && e.target.closest('.selection-ai-popover-overlay, .ant-popover')) {
+                return;
+            }
+            // 如果 AI 面板打开，点击外部非卡片区域则关闭
+            if (aiCardOpenRef.current || aiMenuOpenRef.current) {
+                if (!aiStreamingRef.current) {
                     setAiCardOpen(false);
                     setAiMenuOpen(false);
                     setVisible(false);
@@ -447,9 +466,8 @@ const SelectionCopyBubble = ({
             window.removeEventListener('scroll', handleScrollOrResize, true);
             window.removeEventListener('resize', handleScrollOrResize);
             if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-            if (abortControllerRef.current) abortControllerRef.current.abort();
         };
-    }, [updateBubblePosition, showCopiedFeedback, aiCardOpen, aiMenuOpen, aiStreaming]);
+    }, [updateBubblePosition, showCopiedFeedback]);
 
     if (!visible) return null;
 
