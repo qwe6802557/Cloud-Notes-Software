@@ -87,11 +87,7 @@ export default function AIAssistantModal({
       setCustomPrompt('');
       setResultText('');
       setCopied(false);
-
-      // 如果不是纯自定义提问，打开时自动开始流式生成
-      if (initAct !== 'custom') {
-        startStream(initAct, initScope, '');
-      }
+      // 不自动发起请求，等待用户点击「生成」按钮
     } else {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -177,20 +173,22 @@ export default function AIAssistantModal({
 
   // 切换操作动作
   const handleSelectAction = (actKey: string) => {
-    setCurrentAction(actKey);
-    if (actKey !== 'custom') {
-      startStream(actKey, targetScope, '');
-    } else {
-      setResultText('');
+    if (isStreaming) {
+      handleStopStream();
     }
+    setCurrentAction(actKey);
+    setResultText('');
   };
 
   // 切换分析范围（全文 vs 选区）
   const handleSwitchScope = (scope: 'doc' | 'selection') => {
+    if (isStreaming) {
+      handleStopStream();
+    }
     setTargetScope(scope);
     const newAct = scope === 'selection' ? 'polish' : 'full_summary';
     setCurrentAction(newAct);
-    startStream(newAct, scope, '');
+    setResultText('');
   };
 
   // 复制内容
@@ -255,9 +253,6 @@ export default function AIAssistantModal({
                   <Ionicons name="sparkles" size={18} color="#7c3aed" />
                 </View>
                 <Text style={styles.headerTitle}>AI 创作</Text>
-                <View style={styles.modelBadge}>
-                  <Text style={styles.modelBadgeText}>grok-chat-fast</Text>
-                </View>
               </View>
 
               <TouchableOpacity
@@ -376,7 +371,7 @@ export default function AIAssistantModal({
               </View>
             )}
 
-            {/* 生成状态指示 */}
+            {/* 生成状态指示与控制操作 */}
             <View style={styles.statusBar}>
               <View style={styles.statusLeft}>
                 {isStreaming ? (
@@ -389,16 +384,27 @@ export default function AIAssistantModal({
                     <Text style={styles.statusDoneText}>生成完成</Text>
                   </>
                 ) : (
-                  <Text style={styles.statusIdleText}>选择上方功能即可一键智能创作</Text>
+                  <Text style={styles.statusIdleText}>
+                    已选：{actionList.find(a => a.key === currentAction)?.label || '智能创作'}
+                  </Text>
                 )}
               </View>
 
-              {isStreaming && (
-                <TouchableOpacity style={styles.stopBtn} onPress={handleStopStream}>
+              {isStreaming ? (
+                <TouchableOpacity style={styles.stopBtn} onPress={handleStopStream} activeOpacity={0.7}>
                   <Ionicons name="stop-circle-outline" size={16} color="#ef4444" style={{ marginRight: 3 }} />
                   <Text style={styles.stopBtnText}>停止</Text>
                 </TouchableOpacity>
-              )}
+              ) : currentAction !== 'custom' ? (
+                <TouchableOpacity
+                  style={styles.generateBtn}
+                  onPress={() => startStream(currentAction, targetScope, '')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="sparkles" size={13} color="#ffffff" style={{ marginRight: 4 }} />
+                  <Text style={styles.generateBtnText}>生成</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             {/* AI 结果呈现区域 */}
@@ -431,8 +437,18 @@ export default function AIAssistantModal({
                   <Text style={styles.emptyPlaceholderText}>
                     {currentAction === 'custom'
                       ? '在上方输入指令后点击发送开始'
-                      : '点击上方选项生成核心摘要、行动清单或进行文笔润色'}
+                      : `已选「${actionList.find(a => a.key === currentAction)?.label || '当前功能'}」，点击按钮开始生成`}
                   </Text>
+                  {currentAction !== 'custom' && (
+                    <TouchableOpacity
+                      style={styles.emptyGenerateBtn}
+                      onPress={() => startStream(currentAction, targetScope, '')}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="sparkles" size={14} color="#ffffff" style={{ marginRight: 6 }} />
+                      <Text style={styles.emptyGenerateBtnText}>立即生成</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               )}
             </ScrollView>
@@ -696,6 +712,19 @@ const styles = StyleSheet.create({
     color: '#ef4444',
     fontWeight: '600',
   },
+  generateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: '#7c3aed',
+  },
+  generateBtnText: {
+    fontSize: 12,
+    color: '#ffffff',
+    fontWeight: '600',
+  },
   resultScroll: {
     backgroundColor: '#f8fafc',
     marginHorizontal: 16,
@@ -725,6 +754,25 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 20,
     lineHeight: 18,
+  },
+  emptyGenerateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#7c3aed',
+    marginTop: 6,
+    shadowColor: '#7c3aed',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  emptyGenerateBtnText: {
+    fontSize: 13,
+    color: '#ffffff',
+    fontWeight: '600',
   },
   footerRow: {
     flexDirection: 'row',
