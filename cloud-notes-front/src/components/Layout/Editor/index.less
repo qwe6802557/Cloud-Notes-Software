@@ -1357,16 +1357,24 @@
 // 选区 AI 功能快捷弹窗
 .selection-ai-popover-overlay {
   .ant-popover-inner {
-    padding: 12px;
+    padding: 12px 14px;
     border-radius: 12px;
     background: #ffffff;
     box-shadow: 0 16px 36px -4px rgba(15, 23, 42, 0.18), 0 6px 14px rgba(15, 23, 42, 0.08);
     border: 1px solid #e2e8f0;
-    width: 320px;
+    width: max-content;
+    min-width: 330px;
+    max-width: min(480px, calc(100vw - 32px));
+    box-sizing: border-box;
+    overflow: hidden;
   }
 }
 
 .selection-ai-menu-popover {
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden !important;
+
   .menu-header {
     display: flex;
     justify-content: space-between;
@@ -1379,6 +1387,7 @@
       font-size: 13px;
       font-weight: 600;
       color: #0f172a;
+      white-space: nowrap;
     }
 
     .menu-model-tag {
@@ -1388,6 +1397,7 @@
       background: #f3e8ff;
       color: #7c3aed;
       font-family: SFMono-Regular, Consolas, monospace;
+      white-space: nowrap;
     }
   }
 
@@ -1397,39 +1407,74 @@
     gap: 4px;
     max-height: 240px;
     overflow-y: auto;
+    overflow-x: hidden !important;
+    padding-right: 6px;
+    box-sizing: border-box;
+
+    // 自定义优雅精美滚动条
+    &::-webkit-scrollbar {
+      width: 5px;
+      height: 0px !important;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+      border-radius: 6px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.35);
+      border-radius: 6px;
+      transition: background 0.2s ease;
+
+      &:hover {
+        background: rgba(100, 116, 139, 0.65);
+      }
+    }
+
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
 
     .menu-item {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 6px 8px;
+      padding: 7px 10px;
       border-radius: 8px;
       cursor: pointer;
-      transition: all 0.15s ease;
+      box-sizing: border-box;
+      transition: background 0.15s ease, color 0.15s ease;
 
       &:hover {
         background: #f8fafc;
-        transform: translateX(2px);
+      }
+
+      &:active {
+        background: #f1f5f9;
       }
 
       .item-icon {
         font-size: 16px;
         line-height: 1;
+        flex-shrink: 0;
       }
 
       .item-info {
         flex: 1;
+        min-width: 0;
 
         .item-label {
           font-size: 12px;
           font-weight: 500;
           color: #1e293b;
+          white-space: nowrap;
         }
 
         .item-desc {
           font-size: 11px;
           color: #64748b;
           margin-top: 1px;
+          white-space: nowrap;
         }
       }
     }
@@ -1439,6 +1484,7 @@
     margin-top: 8px;
     padding-top: 8px;
     border-top: 1px solid #f1f5f9;
+    box-sizing: border-box;
 
     .ant-input {
       font-size: 12px;
@@ -1519,12 +1565,38 @@
     max-height: 260px;
     min-height: 90px;
     overflow-y: auto;
+    overflow-x: hidden !important;
     font-size: 13px;
     line-height: 1.65;
     color: #1e293b;
     background: #ffffff;
     white-space: pre-wrap;
     word-break: break-word;
+    box-sizing: border-box;
+
+    // 自定义优雅滚动条
+    &::-webkit-scrollbar {
+      width: 5px;
+      height: 0px !important;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+      border-radius: 6px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.35);
+      border-radius: 6px;
+      transition: background 0.2s ease;
+
+      &:hover {
+        background: rgba(100, 116, 139, 0.65);
+      }
+    }
+
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
 
     .loading-placeholder {
       display: flex;
@@ -1578,6 +1650,36 @@
   &:active {
     transform: translateY(0);
   }
+}
+
+// AI 弹窗结果区域自定义滚动条
+.ai-modal-result-box {
+  overflow-y: auto;
+  overflow-x: hidden !important;
+  box-sizing: border-box;
+
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 0px !important;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 6px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.35);
+    border-radius: 6px;
+    transition: background 0.2s ease;
+
+    &:hover {
+      background: rgba(100, 116, 139, 0.65);
+    }
+  }
+
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
 }
 
 @keyframes cursorBlink {

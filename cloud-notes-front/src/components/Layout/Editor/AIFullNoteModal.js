@@ -201,6 +201,7 @@ const AIFullNoteModal = ({
 
                 <div
                     ref={resultBoxRef}
+                    className="ai-modal-result-box"
                     style={{
                         flex: 1,
                         background: '#f8fafc',
@@ -208,6 +209,7 @@ const AIFullNoteModal = ({
                         borderRadius: 8,
                         padding: 16,
                         overflowY: 'auto',
+                        overflowX: 'hidden',
                         whiteSpace: 'pre-wrap',
                         fontFamily: 'SFMono-Regular, Consolas, "PingFang SC", sans-serif',
                         fontSize: 13,
