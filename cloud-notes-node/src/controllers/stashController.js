@@ -17,6 +17,23 @@ const getFileUrl = req => {
 };
 
 /**
+ * 修复 Multer / Busboy 将 UTF-8 原始文件名错误按 Latin-1 (ISO-8859-1) 解码产生的乱码
+ * 如果已经是正确 UTF-8 或标准 ASCII 则安全原样返回
+ */
+const fixEncoding = str => {
+    if (!str || typeof str !== 'string') return '';
+    try {
+        const restored = Buffer.from(str, 'latin1').toString('utf8');
+        if (restored && restored !== str && !restored.includes('\uFFFD')) {
+            return restored;
+        }
+    } catch {
+        // fallback
+    }
+    return str;
+};
+
+/**
  * 上传文件到暂存区 (支持 临时文件/永久文件, 单文件/文件夹子文件)
  */
 exports.uploadFile = asyncHandler(async (req, res) => {
@@ -37,8 +54,8 @@ exports.uploadFile = asyncHandler(async (req, res) => {
     }
 
     const rawRelativePath = (req.body.relativePath || '').trim();
-    const relativePath = rawRelativePath.replace(/\\/g, '/').replace(/^\/+/, '');
-    let folderName = (req.body.folderName || '').trim();
+    const relativePath = fixEncoding(rawRelativePath).replace(/\\/g, '/').replace(/^\/+/, '');
+    let folderName = fixEncoding((req.body.folderName || '').trim());
     if (!folderName && relativePath.includes('/')) {
         folderName = relativePath.split('/')[0];
     }
@@ -46,7 +63,14 @@ exports.uploadFile = asyncHandler(async (req, res) => {
     const baseUrl = getFileUrl(req);
     const relativeUrl = `/uploads/stash/${req.file.filename}`;
     const fileUrl = `${baseUrl}${relativeUrl}`;
-    const originalName = req.file.originalname || req.file.filename;
+
+    let originalName = (req.body.originalName || '').trim();
+    if (!originalName && req.file.originalname) {
+        originalName = fixEncoding(req.file.originalname);
+    }
+    if (!originalName) {
+        originalName = req.file.filename;
+    }
 
     const newFile = await StashFile.create({
         userId: req.user._id,
@@ -93,12 +117,37 @@ exports.listFiles = asyncHandler(async (req, res) => {
 
     const now = Date.now();
     const formattedFiles = files.map(file => {
+        const repairedName = fixEncoding(file.originalName);
+        const repairedRelPath = fixEncoding(file.relativePath);
+        const repairedFolder = fixEncoding(file.folderName);
+
+        // 如果检测到原先入库的数据存在 latin1 乱码，平滑更新数据库纠偏
+        if (
+            repairedName !== file.originalName ||
+            repairedRelPath !== file.relativePath ||
+            repairedFolder !== file.folderName
+        ) {
+            StashFile.updateOne(
+                { _id: file._id },
+                {
+                    $set: {
+                        originalName: repairedName,
+                        relativePath: repairedRelPath,
+                        folderName: repairedFolder
+                    }
+                }
+            ).catch(() => {});
+        }
+
         const remainingSeconds = file.storageType === 'temp' && file.expireAt
             ? Math.max(0, Math.floor((new Date(file.expireAt).getTime() - now) / 1000))
             : null;
 
         return {
             ...file,
+            originalName: repairedName,
+            relativePath: repairedRelPath,
+            folderName: repairedFolder,
             remainingSeconds
         };
     });
@@ -202,14 +251,15 @@ exports.downloadFile = asyncHandler(async (req, res) => {
         throw new AppError('服务器物理文件不存在或已被自动清理', 404);
     }
 
-    res.download(filePath, file.originalName);
+    res.download(filePath, fixEncoding(file.originalName));
 });
 
 /**
  * 临时文件夹一键转为永久保存
  */
 exports.promoteFolder = asyncHandler(async (req, res) => {
-    const { folderName } = req.body;
+    const rawFolderName = req.body?.folderName;
+    const folderName = fixEncoding(rawFolderName);
     if (!folderName) {
         throw new AppError('请指定要转永久的文件夹名称', 400);
     }
@@ -217,7 +267,10 @@ exports.promoteFolder = asyncHandler(async (req, res) => {
     const query = {
         userId: req.user._id,
         storageType: 'temp',
-        folderName
+        $or: [
+            { folderName },
+            { folderName: rawFolderName }
+        ]
     };
 
     const count = await StashFile.countDocuments(query);
@@ -228,6 +281,7 @@ exports.promoteFolder = asyncHandler(async (req, res) => {
     await StashFile.updateMany(query, {
         $set: {
             storageType: 'permanent',
+            folderName,
             expireAt: null
         }
     });
@@ -243,7 +297,8 @@ exports.promoteFolder = asyncHandler(async (req, res) => {
  * 彻底删除整个文件夹及其内部所有实体文件
  */
 exports.deleteFolder = asyncHandler(async (req, res) => {
-    const folderName = req.body?.folderName || req.query?.folderName;
+    const rawFolderName = req.body?.folderName || req.query?.folderName;
+    const folderName = fixEncoding(rawFolderName);
     const storageType = req.body?.storageType || req.query?.storageType;
 
     if (!folderName) {
@@ -252,7 +307,10 @@ exports.deleteFolder = asyncHandler(async (req, res) => {
 
     const query = {
         userId: req.user._id,
-        folderName
+        $or: [
+            { folderName },
+            { folderName: rawFolderName }
+        ]
     };
     if (storageType && ['temp', 'permanent'].includes(storageType)) {
         query.storageType = storageType;
@@ -288,14 +346,19 @@ exports.deleteFolder = asyncHandler(async (req, res) => {
  * 整文件夹打包流式下载（ZIP压缩实时推流，不占多余磁盘）
  */
 exports.downloadFolder = asyncHandler(async (req, res) => {
-    const { folderName, storageType } = req.query;
+    const rawFolderName = req.query.folderName;
+    const folderName = fixEncoding(rawFolderName);
+    const { storageType } = req.query;
     if (!folderName) {
         throw new AppError('请指定要下载的文件夹名称', 400);
     }
 
     const query = {
         userId: req.user._id,
-        folderName
+        $or: [
+            { folderName },
+            { folderName: rawFolderName }
+        ]
     };
     if (storageType && ['temp', 'permanent'].includes(storageType)) {
         query.storageType = storageType;
@@ -327,7 +390,9 @@ exports.downloadFolder = asyncHandler(async (req, res) => {
     for (const file of files) {
         const filePath = path.join(stashDir, file.filename);
         if (fs.existsSync(filePath)) {
-            const entryName = file.relativePath || `${folderName}/${file.originalName}`;
+            const safeOriginal = fixEncoding(file.originalName);
+            const safeRelative = fixEncoding(file.relativePath);
+            const entryName = safeRelative || `${folderName}/${safeOriginal}`;
             archive.file(filePath, { name: entryName });
         }
     }

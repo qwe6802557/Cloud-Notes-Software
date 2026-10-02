@@ -308,6 +308,7 @@ const FileStashBoard = () => {
 
                 const formData = new FormData();
                 formData.append('file', item.file);
+                formData.append('originalName', item.file.name);
                 formData.append('storageType', storageType);
                 if (item.relativePath) {
                     formData.append('relativePath', item.relativePath);
