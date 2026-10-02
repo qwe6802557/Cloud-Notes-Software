@@ -1196,22 +1196,22 @@ const NoteEditor = ({
             {
                 key: 'full_summary',
                 icon: <FileTextOutlined style={{ color: '#7c3aed' }} />,
-                label: '📑 全文核心摘要提炼'
+                label: '全文核心摘要提炼'
             },
             {
                 key: 'extract_todos',
                 icon: <CheckOutlined style={{ color: '#059669' }} />,
-                label: '✅ 提取行动清单与待办'
+                label: '提取行动清单与待办'
             },
             {
                 key: 'mindmap_outline',
                 icon: <CompassOutlined style={{ color: '#0284c7' }} />,
-                label: '🧠 生成思维导图大纲 (Mermaid)'
+                label: '生成思维导图大纲 (Mermaid)'
             },
             {
                 key: 'continue',
                 icon: <EditOutlined style={{ color: '#d97706' }} />,
-                label: '✍️ 承接全文智能续写'
+                label: '承接全文智能续写'
             },
             {
                 type: 'divider'
@@ -1219,7 +1219,7 @@ const NoteEditor = ({
             {
                 key: 'custom',
                 icon: <RobotOutlined style={{ color: '#7c3aed' }} />,
-                label: '💬 针对全篇笔记对话提问...'
+                label: '针对全篇笔记对话提问...'
             }
         ],
         onClick: ({ key }) => {

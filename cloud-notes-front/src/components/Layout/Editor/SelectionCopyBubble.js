@@ -7,7 +7,14 @@ import {
     ReloadOutlined,
     SwapOutlined,
     VerticalAlignBottomOutlined,
-    SendOutlined
+    SendOutlined,
+    EditOutlined,
+    FastForwardOutlined,
+    FileAddOutlined,
+    CompressOutlined,
+    CheckCircleOutlined,
+    TranslationOutlined,
+    GlobalOutlined
 } from '@ant-design/icons';
 import { Popover, message, Button, Input, Spin } from 'antd';
 import { streamAICall } from '@/api/ai';
@@ -15,13 +22,13 @@ import { streamAICall } from '@/api/ai';
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
 const AI_ACTIONS = [
-    { key: 'polish', icon: '✍️', label: '智能润色', desc: '改进文笔与修辞，使表达更专业地道' },
-    { key: 'continue', icon: '⏩', label: '承接续写', desc: '根据选中内容向下延伸创作' },
-    { key: 'expand', icon: '📖', label: '丰富扩写', desc: '补充论据与细节，充实内容篇幅' },
-    { key: 'summarize_text', icon: '📉', label: '精简提炼', desc: '保留核心观点，剔除冗余修饰' },
-    { key: 'grammar', icon: '🔍', label: '纠错校对', desc: '修正错别字、标点与语法病句' },
-    { key: 'translate_en', icon: '🌐', label: '翻译为英文', desc: '转换为自然流畅的现代英文' },
-    { key: 'translate_zh', icon: '🇨🇳', label: '翻译为中文', desc: '转换为规范通顺的标准中文' }
+    { key: 'polish', icon: <EditOutlined style={{ color: '#d97706' }} />, label: '智能润色', desc: '改进文笔与修辞，使表达更专业地道' },
+    { key: 'continue', icon: <FastForwardOutlined style={{ color: '#2563eb' }} />, label: '承接续写', desc: '根据选中内容向下延伸创作' },
+    { key: 'expand', icon: <FileAddOutlined style={{ color: '#7c3aed' }} />, label: '丰富扩写', desc: '补充论据与细节，充实内容篇幅' },
+    { key: 'summarize_text', icon: <CompressOutlined style={{ color: '#059669' }} />, label: '精简提炼', desc: '保留核心观点，剔除冗余修饰' },
+    { key: 'grammar', icon: <CheckCircleOutlined style={{ color: '#10b981' }} />, label: '纠错校对', desc: '修正错别字、标点与语法病句' },
+    { key: 'translate_en', icon: <TranslationOutlined style={{ color: '#0284c7' }} />, label: '翻译为英文', desc: '转换为自然流畅的现代英文' },
+    { key: 'translate_zh', icon: <GlobalOutlined style={{ color: '#ea580c' }} />, label: '翻译为中文', desc: '转换为规范通顺的标准中文' }
 ];
 
 const SelectionCopyBubble = ({
@@ -488,7 +495,10 @@ const SelectionCopyBubble = ({
     const aiMenuContent = (
         <div className="selection-ai-menu-popover" onMouseDown={e => e.stopPropagation()}>
             <div className="menu-header">
-                <span className="menu-title">✨ AI 选区快捷创作</span>
+                <span className="menu-title">
+                    <ThunderboltOutlined style={{ color: '#7c3aed', marginRight: 6 }} />
+                    AI 选区快捷创作
+                </span>
                 <span className="menu-model-tag">grok-chat-fast</span>
             </div>
             <div className="menu-grid">
