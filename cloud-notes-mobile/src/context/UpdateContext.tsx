@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { Alert, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as Linking from 'expo-linking';
@@ -33,6 +33,7 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       ? Constants.expoConfig?.android?.versionCode
       : Constants.expoConfig?.ios?.buildNumber) || 1;
 
+  const isCheckingRef = useRef(false);
   const [isChecking, setIsChecking] = useState(false);
   const [hasUpdate, setHasUpdate] = useState(false);
   const [updateData, setUpdateData] = useState<AppUpdateData | null>(null);
@@ -51,8 +52,9 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
    */
   const checkForUpdates = useCallback(
     async (isManual = false) => {
-      if (isChecking) return;
+      if (isCheckingRef.current) return;
       try {
+        isCheckingRef.current = true;
         setIsChecking(true);
         const platformKey = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web';
 
@@ -61,6 +63,8 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           currentVersion,
           buildNumber: Number(currentBuildNumber) || 1,
         });
+
+        console.log('[UpdateCheck] 检查结果:', res);
 
         if (res.code === 200 && res.data && res.data.hasUpdate) {
           setHasUpdate(true);
@@ -82,10 +86,11 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           Alert.alert('检查更新失败', '网络连接超时或服务器暂不可用，请稍后重试。');
         }
       } finally {
+        isCheckingRef.current = false;
         setIsChecking(false);
       }
     },
-    [currentVersion, currentBuildNumber, isChecking]
+    [currentVersion, currentBuildNumber]
   );
 
   /**

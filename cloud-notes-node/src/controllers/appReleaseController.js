@@ -26,10 +26,17 @@ exports.checkUpdate = asyncHandler(async (req, res) => {
     const clientBuild = parseInt(buildNumber, 10) || 0;
 
     // 查找当前平台或全平台适用的最新激活版本
-    const latestRelease = await AppRelease.findOne({
+    let latestRelease = await AppRelease.findOne({
         platform: { $in: [platform, 'all'] },
         isActive: true
     }).sort({ buildNumber: -1 });
+
+    // 兜底：若未配置特定平台，获取全平台最新激活版本
+    if (!latestRelease) {
+        latestRelease = await AppRelease.findOne({
+            isActive: true
+        }).sort({ buildNumber: -1 });
+    }
 
     if (!latestRelease) {
         return res.status(200).json({

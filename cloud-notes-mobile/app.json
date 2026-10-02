@@ -2,7 +2,7 @@
   "expo": {
     "name": "囧人云笔记",
     "slug": "jiong-ren-note",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "jiongrennote",
@@ -11,6 +11,7 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#1890ff",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
