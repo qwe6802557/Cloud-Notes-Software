@@ -23,7 +23,10 @@ import {
     FileTextOutlined,
     FontSizeOutlined,
     CopyOutlined,
-    OneToOneOutlined
+    OneToOneOutlined,
+    ThunderboltOutlined,
+    RobotOutlined,
+    CheckOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -41,6 +44,7 @@ import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences'
 import TOCDrawer from './TOCDrawer';
 import VersionHistoryModal from './VersionHistoryModal';
 import SelectionCopyBubble from './SelectionCopyBubble';
+import AIFullNoteModal from './AIFullNoteModal';
 import lazyImagePlugin from './plugins/lazyImagePlugin';
 
 const locale = {
@@ -359,6 +363,8 @@ const NoteEditor = ({
     const [uploadingImage, setUploadingImage] = useState(false);
     const [tocVisible, setTocVisible] = useState(false);
     const [historyModalVisible, setHistoryModalVisible] = useState(false);
+    const [aiModalVisible, setAiModalVisible] = useState(false);
+    const [aiModalAction, setAiModalAction] = useState('full_summary');
     const [imagePreview, setImagePreview] = useState({
         visible: false,
         current: 0,
@@ -1169,6 +1175,63 @@ const NoteEditor = ({
         }
     }, [content]);
 
+    const handleInsertAIContent = useCallback(insertedText => {
+        const editorInstance = editorContextRef.current?.editor;
+        if (editorInstance?.getValue && editorInstance?.replaceRange && editorInstance?.lineCount) {
+            const lineCount = editorInstance.lineCount();
+            const lastLineLength = editorInstance.getLine(lineCount - 1)?.length || 0;
+            const endPos = { line: lineCount - 1, ch: lastLineLength };
+            editorInstance.replaceRange(insertedText, endPos);
+            syncContentFromEditor(editorInstance);
+            editorInstance.focus();
+            return;
+        }
+
+        const separator = contentRef.current && !contentRef.current.endsWith('\n') ? '\n\n' : '';
+        syncContentState(`${contentRef.current}${separator}${insertedText.trimStart()}`);
+    }, [syncContentFromEditor, syncContentState]);
+
+    const aiMenu = {
+        items: [
+            {
+                key: 'full_summary',
+                icon: <FileTextOutlined style={{ color: '#7c3aed' }} />,
+                label: '📑 全文核心摘要提炼'
+            },
+            {
+                key: 'extract_todos',
+                icon: <CheckOutlined style={{ color: '#059669' }} />,
+                label: '✅ 提取行动清单与待办'
+            },
+            {
+                key: 'mindmap_outline',
+                icon: <CompassOutlined style={{ color: '#0284c7' }} />,
+                label: '🧠 生成思维导图大纲 (Mermaid)'
+            },
+            {
+                key: 'continue',
+                icon: <EditOutlined style={{ color: '#d97706' }} />,
+                label: '✍️ 承接全文智能续写'
+            },
+            {
+                type: 'divider'
+            },
+            {
+                key: 'custom',
+                icon: <RobotOutlined style={{ color: '#7c3aed' }} />,
+                label: '💬 针对全篇笔记对话提问...'
+            }
+        ],
+        onClick: ({ key }) => {
+            if (!content || !content.trim()) {
+                message.warning('笔记内容为空，无法进行 AI 分析');
+                return;
+            }
+            setAiModalAction(key);
+            setAiModalVisible(true);
+        }
+    };
+
     const copyMenu = {
         items: [
             {
@@ -1339,6 +1402,16 @@ const NoteEditor = ({
 
             <div className="editor-right-actions">
                 <Space>
+                    <Dropdown menu={aiMenu} trigger={['click']} placement="bottomRight">
+                        <Button
+                            className="ai-toolbar-btn"
+                            type="primary"
+                            icon={<ThunderboltOutlined />}
+                            disabled={!selectedNote}
+                        >
+                            AI 创作助手
+                        </Button>
+                    </Dropdown>
                     <Dropdown menu={copyMenu} placement="bottomLeft">
                         <Button
                             icon={<CopyOutlined />}
@@ -1534,7 +1607,10 @@ const NoteEditor = ({
                         )}
                     </div>
                 </Spin>
-                <SelectionCopyBubble containerRef={editorContainerRef} />
+                <SelectionCopyBubble
+                    containerRef={editorContainerRef}
+                    editorContextRef={editorContextRef}
+                />
             </div>
 
             {saveStatusText && (
@@ -1568,6 +1644,15 @@ const NoteEditor = ({
                 noteId={selectedNote}
                 currentNoteTitle={noteTitle}
                 onRollbackSuccess={handleRollbackSuccess}
+            />
+
+            <AIFullNoteModal
+                open={aiModalVisible}
+                onClose={() => setAiModalVisible(false)}
+                action={aiModalAction}
+                noteTitle={noteTitle}
+                noteContent={content}
+                onInsertContent={handleInsertAIContent}
             />
 
             <div style={{ display: 'none' }}>

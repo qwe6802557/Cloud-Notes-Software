@@ -45,6 +45,27 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+    aiConfig: {
+        enabled: {
+            type: Boolean,
+            default: false
+        },
+        baseUrl: {
+            type: String,
+            default: '',
+            trim: true
+        },
+        apiKey: {
+            type: String,
+            default: '',
+            trim: true
+        },
+        model: {
+            type: String,
+            default: '',
+            trim: true
+        }
+    },
     createdAt: {
         type: Date,
         default: Date.now

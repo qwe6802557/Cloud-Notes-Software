@@ -167,5 +167,10 @@ module.exports = {
         path: uploadRootPath,
         maxSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 5 * 1024 * 1024,
         allowedTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    },
+    ai: {
+        defaultApiKey: process.env.AI_API_KEY || 'g2a_7825305fb3e4_DceMuKxe9NK1FPGTfF9qi7KSPpoMLCio',
+        defaultBaseUrl: process.env.AI_BASE_URL || 'http://127.0.0.1:8000/v1',
+        defaultModel: process.env.AI_MODEL || 'grok-chat-fast'
     }
 };

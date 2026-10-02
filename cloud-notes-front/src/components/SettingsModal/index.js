@@ -11,9 +11,15 @@ import {
     EyeTwoTone,
     DeleteOutlined,
     AppstoreOutlined,
-    SyncOutlined
+    SyncOutlined,
+    RobotOutlined,
+    ThunderboltOutlined,
+    ApiOutlined,
+    CheckCircleOutlined,
+    CloseCircleOutlined
 } from '@ant-design/icons';
 import { updateUserInfo } from '@/api/user';
+import { getAIConfig, updateAIConfig, testAIConnection } from '@/api/ai';
 import { getUser, setUser } from '@/utils/auth';
 import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences';
 import './index.less';
@@ -33,9 +39,12 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
     const [activeTab, setActiveTab] = useState('profile');
     const [submitting, setSubmitting] = useState(false);
     const [avatarUrl, setAvatarUrl] = useState('');
+    const [testingAI, setTestingAI] = useState(false);
+    const [testResult, setTestResult] = useState(null);
     const user = getUser() || {};
 
     const watchedPassword = Form.useWatch('password', form) || '';
+    const watchedAiEnabled = Form.useWatch('aiEnabled', form) || false;
     const passwordStrength = useMemo(() => computePasswordStrength(watchedPassword), [watchedPassword]);
     const hasCustomAvatar = avatarUrl && avatarUrl !== 'default-avatar.png';
 
@@ -51,10 +60,26 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                 defaultMode: currentPrefs.defaultMode || 'split',
                 defaultSyncScroll: currentPrefs.defaultSyncScroll ?? true,
                 fontFamily: currentPrefs.fontFamily || 'lxgw',
-                fontSize: currentPrefs.fontSize || 'medium'
+                fontSize: currentPrefs.fontSize || 'medium',
+                aiEnabled: false,
+                aiBaseUrl: '',
+                aiApiKey: '',
+                aiModel: ''
             });
             setAvatarUrl(currentUser.avatar || '');
             setActiveTab('profile');
+            setTestResult(null);
+
+            getAIConfig().then(res => {
+                if (res) {
+                    form.setFieldsValue({
+                        aiEnabled: Boolean(res.enabled),
+                        aiBaseUrl: res.baseUrl || '',
+                        aiApiKey: res.apiKey || '',
+                        aiModel: res.model || ''
+                    });
+                }
+            }).catch(() => {});
         }
     }, [open, form]);
 
@@ -114,6 +139,17 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                 }
             }
 
+            // 保存 AI 模型配置
+            const isAiTouched = activeTab === 'ai' || form.isFieldTouched('aiEnabled') || form.isFieldTouched('aiApiKey') || form.isFieldTouched('aiBaseUrl') || form.isFieldTouched('aiModel');
+            if (isAiTouched) {
+                await updateAIConfig({
+                    enabled: Boolean(values.aiEnabled),
+                    baseUrl: (values.aiBaseUrl || '').trim(),
+                    apiKey: (values.aiApiKey || '').trim(),
+                    model: (values.aiModel || '').trim()
+                });
+            }
+
             message.success('个人设置已成功更新');
             handleClose?.();
         } catch (error) {
@@ -133,6 +169,49 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             console.error('Settings submit failed:', error);
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    const applyAiPreset = presetKey => {
+        if (presetKey === 'deepseek') {
+            form.setFieldsValue({
+                aiBaseUrl: 'https://api.deepseek.com/v1',
+                aiModel: 'deepseek-chat'
+            });
+        } else if (presetKey === 'qwen') {
+            form.setFieldsValue({
+                aiBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                aiModel: 'qwen-plus'
+            });
+        } else if (presetKey === 'openai') {
+            form.setFieldsValue({
+                aiBaseUrl: 'https://api.openai.com/v1',
+                aiModel: 'gpt-4o-mini'
+            });
+        } else if (presetKey === 'ollama') {
+            form.setFieldsValue({
+                aiBaseUrl: 'http://localhost:11434/v1',
+                aiModel: 'llama3'
+            });
+        }
+    };
+
+    const handleTestAI = async () => {
+        const baseUrl = form.getFieldValue('aiBaseUrl');
+        const apiKey = form.getFieldValue('aiApiKey');
+        const model = form.getFieldValue('aiModel');
+
+        try {
+            setTestingAI(true);
+            setTestResult(null);
+            const res = await testAIConnection({ baseUrl, apiKey, model });
+            setTestResult({ ok: true, message: `连通成功！延迟 ${res?.latencyMs || 0}ms` });
+            message.success(`模型连通性测试通过！延迟 ${res?.latencyMs || 0}ms`);
+        } catch (err) {
+            setTestResult({ ok: false, message: err.message || '连接失败' });
+            message.error(`模型连接测试失败: ${err.message || '网络异常'}`);
+        } finally {
+            setTestingAI(false);
         }
     };
 
@@ -182,6 +261,12 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             label: '偏好设置',
             icon: <SettingOutlined />,
             desc: '编辑器视图与交互习惯'
+        },
+        {
+            key: 'ai',
+            label: 'AI 创作助手',
+            icon: <RobotOutlined />,
+            desc: '大模型与驱动引擎'
         }
     ];
 
@@ -446,6 +531,97 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                     <Radio.Button value="large">大 (18px)</Radio.Button>
                                 </Radio.Group>
                             </Form.Item>
+                        </div>
+
+                        {/* AI 创作助手面板 */}
+                        <div className={`tab-panel ${activeTab === 'ai' ? 'is-visible' : 'is-hidden'}`}>
+                            <div className="ai-system-card">
+                                <div className="ai-system-header">
+                                    <ThunderboltOutlined className="ai-card-icon" />
+                                    <div className="ai-card-titles">
+                                        <div className="ai-card-main-title">系统内置 AI 创作引擎已就绪</div>
+                                        <div className="ai-card-sub-title">默认使用云笔记内置高速大模型（grok-chat-fast），开箱即用，无需配置即可直接划词调用</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="panel-divider" />
+
+                            <div className="panel-section-title">大模型运行模式</div>
+                            <div className="switch-setting-row">
+                                <div className="switch-setting-info">
+                                    <div className="setting-title">
+                                        <ApiOutlined style={{ color: '#7c3aed', marginRight: 6 }} />
+                                        启用个人专属自定义大模型
+                                    </div>
+                                    <div className="setting-desc">
+                                        开启后将优先使用您自备的 API Key 和端点；若关闭，则自动安全回退至系统内置引擎。
+                                    </div>
+                                </div>
+                                <Form.Item name="aiEnabled" valuePropName="checked" noStyle>
+                                    <Switch />
+                                </Form.Item>
+                            </div>
+
+                            {watchedAiEnabled && (
+                                <div className="custom-ai-config-area" style={{ marginTop: 20 }}>
+                                    <div className="panel-section-title">服务商快捷预设</div>
+                                    <div className="preset-buttons-row" style={{ marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                                        <Button size="small" onClick={() => applyAiPreset('deepseek')}>DeepSeek (推荐)</Button>
+                                        <Button size="small" onClick={() => applyAiPreset('qwen')}>阿里通义千问</Button>
+                                        <Button size="small" onClick={() => applyAiPreset('openai')}>OpenAI</Button>
+                                        <Button size="small" onClick={() => applyAiPreset('ollama')}>本地 Ollama</Button>
+                                    </div>
+
+                                    <Form.Item
+                                        name="aiBaseUrl"
+                                        label="API 接口端点 (Base URL)"
+                                        extra="遵循 OpenAI 格式标准端点，如 https://api.deepseek.com/v1"
+                                        rules={[{ required: watchedAiEnabled, message: '请输入 Base URL' }]}
+                                    >
+                                        <Input placeholder="https://api.deepseek.com/v1" />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="aiApiKey"
+                                        label="个人 API Key"
+                                        extra="您的 API Key 仅保存在个人加密配置中，绝不对外公开"
+                                        rules={[{ required: watchedAiEnabled, message: '请输入 API Key' }]}
+                                    >
+                                        <Input.Password
+                                            placeholder="sk-..."
+                                            iconRender={visible => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
+                                        />
+                                    </Form.Item>
+
+                                    <Form.Item
+                                        name="aiModel"
+                                        label="模型名称 (Model)"
+                                        extra="例如: deepseek-chat, qwen-plus, gpt-4o-mini, llama3"
+                                        rules={[{ required: watchedAiEnabled, message: '请输入模型名称' }]}
+                                    >
+                                        <Input placeholder="deepseek-chat" />
+                                    </Form.Item>
+
+                                    <div className="test-connection-row" style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
+                                        <Button
+                                            icon={<ApiOutlined />}
+                                            loading={testingAI}
+                                            onClick={handleTestAI}
+                                        >
+                                            测试模型连通性
+                                        </Button>
+                                        {testResult && (
+                                            <Tag
+                                                color={testResult.ok ? 'success' : 'error'}
+                                                icon={testResult.ok ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+                                            >
+                                                {testResult.message}
+                                            </Tag>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </Form>
                 </div>

@@ -1,0 +1,250 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Modal, Button, message, Input, Spin, Tag } from 'antd';
+import {
+    RobotOutlined,
+    CopyOutlined,
+    DownloadOutlined,
+    ReloadOutlined,
+    SendOutlined
+} from '@ant-design/icons';
+import { streamAICall } from '@/api/ai';
+
+const ACTION_TITLES = {
+    full_summary: '📑 全文核心摘要提炼',
+    extract_todos: '✅ 提取行动清单与待办事项',
+    mindmap_outline: '🧠 生成 Mermaid 思维导图大纲',
+    continue: '✍️ 承接全文智能续写',
+    custom: '💬 针对全篇笔记对话提问'
+};
+
+const AIFullNoteModal = ({
+    open,
+    onClose,
+    action = 'full_summary',
+    noteTitle = '',
+    noteContent = '',
+    onInsertContent
+}) => {
+    const [streaming, setStreaming] = useState(false);
+    const [resultText, setResultText] = useState('');
+    const [copied, setCopied] = useState(false);
+    const [customPrompt, setCustomPrompt] = useState('');
+    const [currentAction, setCurrentAction] = useState(action);
+
+    const abortControllerRef = useRef(null);
+    const resultBoxRef = useRef(null);
+
+    const startStream = useCallback(async (act = currentAction, prompt = customPrompt) => {
+        if (!noteContent && !prompt) {
+            message.warning('当前笔记内容为空，无法进行 AI 分析');
+            return;
+        }
+
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        const controller = new AbortController();
+        abortControllerRef.current = controller;
+
+        setStreaming(true);
+        setResultText('');
+        setCopied(false);
+
+        try {
+            await streamAICall(
+                {
+                    action: act,
+                    text: noteContent,
+                    noteTitle,
+                    customPrompt: prompt
+                },
+                {
+                    signal: controller.signal,
+                    onDelta: (delta, full) => {
+                        setResultText(full);
+                        if (resultBoxRef.current) {
+                            resultBoxRef.current.scrollTop = resultBoxRef.current.scrollHeight;
+                        }
+                    },
+                    onFinish: () => {
+                        setStreaming(false);
+                    },
+                    onError: err => {
+                        setStreaming(false);
+                        message.error(err.message || 'AI 生成异常');
+                    }
+                }
+            );
+        } catch {
+            setStreaming(false);
+        }
+    }, [currentAction, customPrompt, noteContent, noteTitle]);
+
+    useEffect(() => {
+        if (open) {
+            setCurrentAction(action);
+            setCustomPrompt('');
+            if (action !== 'custom') {
+                startStream(action, '');
+            } else {
+                setResultText('');
+                setStreaming(false);
+            }
+        } else {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+            setStreaming(false);
+            setResultText('');
+        }
+    }, [open, action, startStream]);
+
+    const handleCopy = () => {
+        if (!resultText) return;
+        navigator.clipboard.writeText(resultText).then(() => {
+            setCopied(true);
+            message.success('AI 生成内容已复制到剪贴板');
+            setTimeout(() => setCopied(false), 2000);
+        });
+    };
+
+    const handleInsert = () => {
+        if (!resultText) return;
+        let prefix = '\n\n';
+        if (currentAction === 'full_summary') {
+            prefix += '## 📑 AI 核心摘要\n';
+        } else if (currentAction === 'extract_todos') {
+            prefix += '## ✅ 待办事项清单\n';
+        } else if (currentAction === 'mindmap_outline') {
+            prefix += '## 🧠 思维导图大纲\n';
+        }
+
+        onInsertContent?.(prefix + resultText);
+        message.success('已成功追加至文档末尾');
+        onClose?.();
+    };
+
+    return (
+        <Modal
+            open={open}
+            onCancel={() => {
+                if (abortControllerRef.current) abortControllerRef.current.abort();
+                onClose?.();
+            }}
+            title={(
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <RobotOutlined style={{ color: '#7c3aed', fontSize: 18 }} />
+                    <span style={{ fontWeight: 600 }}>{ACTION_TITLES[currentAction] || 'AI 创作助手'}</span>
+                    <Tag color="purple" style={{ marginLeft: 4 }}>grok-chat-fast</Tag>
+                </div>
+            )}
+            width={720}
+            destroyOnClose
+            footer={(
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                        {streaming && (
+                            <span style={{ fontSize: 12, color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <Spin size="small" /> 正在实时推流生成中...
+                            </span>
+                        )}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <Button
+                            icon={<CopyOutlined />}
+                            disabled={!resultText}
+                            onClick={handleCopy}
+                        >
+                            {copied ? '已复制' : '复制结果'}
+                        </Button>
+                        <Button
+                            icon={<ReloadOutlined />}
+                            disabled={streaming}
+                            onClick={() => startStream(currentAction, customPrompt)}
+                        >
+                            重新生成
+                        </Button>
+                        <Button
+                            type="primary"
+                            icon={<DownloadOutlined />}
+                            disabled={!resultText || streaming}
+                            onClick={handleInsert}
+                            style={{ background: '#7c3aed', borderColor: '#7c3aed' }}
+                        >
+                            插入到文档末尾
+                        </Button>
+                    </div>
+                </div>
+            )}
+        >
+            <div style={{ minHeight: 280, maxHeight: 460, display: 'flex', flexDirection: 'column' }}>
+                {currentAction === 'custom' && (
+                    <div style={{ marginBottom: 12, display: 'flex', gap: 8 }}>
+                        <Input
+                            placeholder="输入对当前笔记的提问或处理要求（例如：提炼3个核心论点、写成新闻通稿风格）..."
+                            value={customPrompt}
+                            onChange={e => setCustomPrompt(e.target.value)}
+                            onPressEnter={() => startStream('custom', customPrompt)}
+                            disabled={streaming}
+                        />
+                        <Button
+                            type="primary"
+                            icon={<SendOutlined />}
+                            onClick={() => startStream('custom', customPrompt)}
+                            loading={streaming}
+                            style={{ background: '#7c3aed', borderColor: '#7c3aed' }}
+                        >
+                            发送
+                        </Button>
+                    </div>
+                )}
+
+                <div
+                    ref={resultBoxRef}
+                    style={{
+                        flex: 1,
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 8,
+                        padding: 16,
+                        overflowY: 'auto',
+                        whiteSpace: 'pre-wrap',
+                        fontFamily: 'SFMono-Regular, Consolas, "PingFang SC", sans-serif',
+                        fontSize: 13,
+                        lineHeight: 1.6,
+                        color: '#0f172a'
+                    }}
+                >
+                    {resultText ? (
+                        <>
+                            {resultText}
+                            {streaming && (
+                                <span
+                                    style={{
+                                        display: 'inline-block',
+                                        width: 8,
+                                        height: 15,
+                                        background: '#7c3aed',
+                                        marginLeft: 4,
+                                        verticalAlign: 'middle',
+                                        animation: 'blink 1s infinite'
+                                    }}
+                                />
+                            )}
+                        </>
+                    ) : (
+                        <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8' }}>
+                            {streaming ? (
+                                <Spin tip="正在启动大模型，请稍候..." />
+                            ) : (
+                                currentAction === 'custom' ? '请输入指令并点击发送' : '点击重新生成以触发 AI 分析'
+                            )}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </Modal>
+    );
+};
+
+export default AIFullNoteModal;
