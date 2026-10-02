@@ -34,9 +34,24 @@ exports.streamAI = asyncHandler(async (req, res) => {
         res.flushHeaders();
     }
 
+    // 启动保活心跳（每 10 秒向客户端发送一次 SSE 注释），重置反向代理（Nginx / CDN）的空闲超时计数器
+    const heartbeatTimer = setInterval(() => {
+        if (!res.writableEnded) {
+            res.write(': keep-alive\n\n');
+            if (typeof res.flush === 'function') {
+                res.flush();
+            }
+        }
+    }, 10000);
+
+    const cleanup = () => {
+        clearInterval(heartbeatTimer);
+    };
+
     // 支持客户端中断时取消上游大模型请求
     const abortController = new AbortController();
     req.on('close', () => {
+        cleanup();
         abortController.abort();
     });
 
@@ -57,6 +72,7 @@ exports.streamAI = asyncHandler(async (req, res) => {
         });
 
         if (!upstreamResponse.ok) {
+            cleanup();
             const errBody = await upstreamResponse.text();
             let errMsg = `上游模型响应异常 (HTTP ${upstreamResponse.status})`;
             try {
@@ -90,6 +106,7 @@ exports.streamAI = asyncHandler(async (req, res) => {
 
                 const payload = trimmed.replace(/^data:\s*/, '');
                 if (payload === '[DONE]') {
+                    cleanup();
                     res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
                     res.end();
                     return;
@@ -100,6 +117,9 @@ exports.streamAI = asyncHandler(async (req, res) => {
                     const delta = parsed.choices?.[0]?.delta?.content || '';
                     if (delta) {
                         res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+                        if (typeof res.flush === 'function') {
+                            res.flush();
+                        }
                     }
                 } catch {
                     // 忽略单个非 JSON 帧
@@ -111,6 +131,7 @@ exports.streamAI = asyncHandler(async (req, res) => {
         if (buffer.trim().startsWith('data:')) {
             const payload = buffer.trim().replace(/^data:\s*/, '');
             if (payload === '[DONE]') {
+                cleanup();
                 res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
             } else {
                 try {
@@ -118,15 +139,21 @@ exports.streamAI = asyncHandler(async (req, res) => {
                     const delta = parsed.choices?.[0]?.delta?.content || '';
                     if (delta) {
                         res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+                        if (typeof res.flush === 'function') {
+                            res.flush();
+                        }
                     }
                 } catch {}
             }
         }
 
+        cleanup();
         res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
         res.end();
     } catch (err) {
-        if (err.name === 'AbortError') {
+        cleanup();
+        const isAbort = err.name === 'AbortError' || err.cause?.name === 'AbortError';
+        if (isAbort) {
             return;
         }
         console.error('[AIStream] 流式推流异常:', err.message);
@@ -136,6 +163,8 @@ exports.streamAI = asyncHandler(async (req, res) => {
             res.write(`data: ${JSON.stringify({ error: err.message, done: true })}\n\n`);
             res.end();
         }
+    } finally {
+        cleanup();
     }
 });
 
