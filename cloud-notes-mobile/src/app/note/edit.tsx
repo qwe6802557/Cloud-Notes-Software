@@ -18,6 +18,7 @@ import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as notesApi from '../../api/notesApi';
 import { Config } from '../../constants/Config';
+import AIAssistantModal from '../../components/AIAssistantModal';
 
 export default function NoteEditScreen() {
   const router = useRouter();
@@ -34,11 +35,12 @@ export default function NoteEditScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  // 记录光标位置以便精准插入 Markdown 符号
   const [cursorPosition, setCursorPosition] = useState<{ start: number; end: number }>({
     start: 0,
     end: 0,
   });
+
+  const [showAIModal, setShowAIModal] = useState(false);
 
   const contentInputRef = useRef<TextInput>(null);
 
@@ -207,17 +209,28 @@ export default function NoteEditScreen() {
         options={{
           headerTitle: id ? '编辑笔记' : '新建笔记',
           headerRight: () => (
-            <TouchableOpacity
-              style={[styles.saveHeaderBtn, isSaving && styles.saveHeaderBtnDisabled]}
-              onPress={handleSave}
-              disabled={isSaving}
-            >
-              {isSaving ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <Text style={styles.saveHeaderBtnText}>保存</Text>
-              )}
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <TouchableOpacity
+                style={styles.aiHeaderBtn}
+                onPress={() => setShowAIModal(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="sparkles" size={16} color="#7c3aed" />
+                <Text style={styles.aiHeaderBtnText}>AI创作</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.saveHeaderBtn, isSaving && styles.saveHeaderBtnDisabled]}
+                onPress={handleSave}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.saveHeaderBtnText}>保存</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           ),
         }}
       />
@@ -264,7 +277,16 @@ export default function NoteEditScreen() {
 
           {/* 键盘上方快捷工具栏 */}
           <View style={styles.toolbar}>
-            {/* 左侧固定功能：相册插图 */}
+            {/* 左侧固定功能：AI创作 & 相册插图 */}
+            <TouchableOpacity
+              style={[styles.toolBtn, styles.aiToolBtn]}
+              onPress={() => setShowAIModal(true)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="sparkles" size={17} color="#7c3aed" />
+              <Text style={styles.aiToolBtnText}>AI</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.toolBtn, styles.imageToolBtn]}
               onPress={handlePickImage}
@@ -317,6 +339,33 @@ export default function NoteEditScreen() {
           </View>
         </KeyboardAvoidingView>
       )}
+
+      {/* AI 创作助手 */}
+      <AIAssistantModal
+        visible={showAIModal}
+        onClose={() => setShowAIModal(false)}
+        noteTitle={title}
+        noteContent={content}
+        selectedText={content.substring(cursorPosition.start, cursorPosition.end)}
+        isEditable={true}
+        onReplaceSelection={replacement => {
+          const { start, end } = cursorPosition;
+          if (start !== end) {
+            const before = content.substring(0, start);
+            const after = content.substring(end);
+            setContent(before + replacement + after);
+          } else {
+            setContent(replacement);
+          }
+        }}
+        onInsertContent={insertion => {
+          const { start, end } = cursorPosition;
+          const insertPos = end || content.length;
+          const before = content.substring(0, insertPos);
+          const after = content.substring(insertPos);
+          setContent(before + insertion + after);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -423,5 +472,34 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  aiHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1,
+    borderColor: '#e9d5ff',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    gap: 4,
+  },
+  aiHeaderBtnText: {
+    color: '#7c3aed',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  aiToolBtn: {
+    backgroundColor: '#f5f3ff',
+    borderWidth: 1,
+    borderColor: '#e9d5ff',
+    flexDirection: 'row',
+    gap: 2,
+    paddingHorizontal: 8,
+  },
+  aiToolBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#7c3aed',
   },
 });

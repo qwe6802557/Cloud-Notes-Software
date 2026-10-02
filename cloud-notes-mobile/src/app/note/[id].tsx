@@ -18,6 +18,7 @@ import Markdown from 'react-native-markdown-display';
 import * as notesApi from '../../api/notesApi';
 import { Note } from '../../api/types';
 import { useAuth } from '../../context/AuthContext';
+import AIAssistantModal from '../../components/AIAssistantModal';
 
 interface TocItem {
   level: number;
@@ -87,6 +88,7 @@ export default function NoteDetailScreen() {
   const [note, setNote] = useState<Note | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showTocModal, setShowTocModal] = useState(false);
+  const [showAIModal, setShowAIModal] = useState(false);
   const [tocList, setTocList] = useState<TocItem[]>([]);
 
   const markdownRules = useMemo(
@@ -245,6 +247,14 @@ export default function NoteDetailScreen() {
                 />
               </TouchableOpacity>
 
+              {/* AI 创作分析 */}
+              <TouchableOpacity
+                style={styles.headerActionBtn}
+                onPress={() => setShowAIModal(true)}
+              >
+                <Ionicons name="sparkles" size={20} color="#7c3aed" />
+              </TouchableOpacity>
+
               {/* 编辑按钮 */}
               <TouchableOpacity
                 style={styles.headerActionBtn}
@@ -324,6 +334,14 @@ export default function NoteDetailScreen() {
           </View>
         </View>
       </Modal>
+      {/* AI 创作助手 */}
+      <AIAssistantModal
+        visible={showAIModal}
+        onClose={() => setShowAIModal(false)}
+        noteTitle={note?.title || ''}
+        noteContent={note?.content || ''}
+        isEditable={false}
+      />
     </View>
   );
 }

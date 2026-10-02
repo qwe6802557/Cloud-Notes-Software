@@ -5,10 +5,12 @@ const asyncHandler = require('../utils/asyncHandler');
 
 // 验证用户是否已登录
 exports.protect = asyncHandler(async (req, res, next) => {
-    // 1) 获取token
+    // 1) 获取token (支持 Header Authorization 与 Query 参数 token)
     let token;
     if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
         token = req.headers.authorization.split(' ')[1];
+    } else if (req.query && req.query.token) {
+        token = req.query.token;
     }
 
     if (!token) {

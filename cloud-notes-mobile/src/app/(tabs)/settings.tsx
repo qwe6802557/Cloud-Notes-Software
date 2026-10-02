@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { useAppUpdate } from '../../context/UpdateContext';
 import { Config } from '../../constants/Config';
+import * as aiApi from '../../api/aiApi';
 import axios from 'axios';
 
 export default function SettingsScreen() {
@@ -27,11 +28,91 @@ export default function SettingsScreen() {
   const [customUrl, setCustomUrl] = useState(serverUrl);
   const [isTestingPing, setIsTestingPing] = useState(false);
 
+  // AI 配置相关状态
+  const [showAIConfigModal, setShowAIConfigModal] = useState(false);
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [aiBaseUrl, setAiBaseUrl] = useState('');
+  const [aiModel, setAiModel] = useState('');
+  const [isTestingAI, setIsTestingAI] = useState(false);
+  const [isSavingAI, setIsSavingAI] = useState(false);
+
+  const loadAIConfig = useCallback(async () => {
+    try {
+      const res = await aiApi.getAIConfig();
+      if (res.code === 200 && res.data) {
+        setAiApiKey(res.data.apiKey || '');
+        setAiBaseUrl(res.data.baseUrl || '');
+        setAiModel(res.data.model || '');
+      }
+    } catch (e: any) {
+      console.warn('Failed to load AI config', e.message);
+    }
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       refreshUser();
-    }, [refreshUser])
+      loadAIConfig();
+    }, [refreshUser, loadAIConfig])
   );
+
+  const handleTestAI = async () => {
+    try {
+      setIsTestingAI(true);
+      const res = await aiApi.testAIConnection({
+        apiKey: aiApiKey.trim(),
+        baseUrl: aiBaseUrl.trim(),
+        model: aiModel.trim(),
+      });
+      if (res.code === 200) {
+        const replyText = res.data?.reply ? `\n回复：${res.data.reply}` : '';
+        Alert.alert('连通性测试成功', `AI 服务响应正常！${replyText}`);
+      } else {
+        Alert.alert('测试异常', res.message || '连接失败');
+      }
+    } catch (e: any) {
+      Alert.alert('测试失败', e.message || '无法连接到 AI 服务');
+    } finally {
+      setIsTestingAI(false);
+    }
+  };
+
+  const handleSaveAI = async () => {
+    try {
+      setIsSavingAI(true);
+      await aiApi.updateAIConfig({
+        apiKey: aiApiKey.trim(),
+        baseUrl: aiBaseUrl.trim(),
+        model: aiModel.trim(),
+      });
+      setShowAIConfigModal(false);
+      Alert.alert('保存成功', 'AI 模型参数已更新生效');
+    } catch (e: any) {
+      Alert.alert('保存失败', e.message || '更新配置失败');
+    } finally {
+      setIsSavingAI(false);
+    }
+  };
+
+  const handleResetAI = async () => {
+    setAiApiKey('');
+    setAiBaseUrl('');
+    setAiModel('');
+    try {
+      setIsSavingAI(true);
+      await aiApi.updateAIConfig({
+        apiKey: '',
+        baseUrl: '',
+        model: '',
+      });
+      setShowAIConfigModal(false);
+      Alert.alert('已恢复默认', '已重置为系统预置的 Grok 智能创作模型');
+    } catch (e: any) {
+      Alert.alert('重置失败', e.message || '网络异常');
+    } finally {
+      setIsSavingAI(false);
+    }
+  };
 
   const handleLogout = () => {
     const doLogout = async () => {
@@ -171,6 +252,42 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* AI 智能创作服务 */}
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>AI 智能创作服务</Text>
+      </View>
+
+      <View style={styles.cardGroup}>
+        <TouchableOpacity
+          style={styles.settingItem}
+          onPress={() => {
+            loadAIConfig();
+            setShowAIConfigModal(true);
+          }}
+          activeOpacity={0.7}
+        >
+          <View style={styles.itemLeft}>
+            <View style={[styles.serverIconWrapper, { backgroundColor: '#f5f3ff' }]}>
+              <Ionicons name="sparkles" size={18} color="#7c3aed" />
+            </View>
+            <View style={styles.serverTextCol}>
+              <View style={styles.serverTitleRow}>
+                <Text style={styles.itemTitle}>AI 大模型配置</Text>
+                <View style={[styles.activePill, { backgroundColor: '#f5f3ff' }]}>
+                  <Text style={[styles.activePillText, { color: '#7c3aed' }]}>
+                    {aiModel || 'grok-chat-fast'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.itemSubMono} numberOfLines={1}>
+                {aiBaseUrl ? aiBaseUrl : '系统内置自建中转站 (开箱即用)'}
+              </Text>
+            </View>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
+        </TouchableOpacity>
+      </View>
+
       {/* 系统与关于 */}
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>应用信息</Text>
@@ -273,6 +390,108 @@ export default function SettingsScreen() {
                 onPress={handleSaveServer}
               >
                 <Text style={styles.modalConfirmText}>保存生效</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* AI 配置弹窗 */}
+      <Modal
+        visible={showAIConfigModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAIConfigModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Ionicons name="sparkles" size={18} color="#7c3aed" />
+                <Text style={styles.modalTitle}>AI 智能服务配置</Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowAIConfigModal(false)}>
+                <Ionicons name="close" size={20} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              系统默认已配置高性能 Grok 智能服务（开箱即用）。若需要接入自定义兼容端点，可在下方填写覆盖：
+            </Text>
+
+            <Text style={styles.inputLabel}>接口地址 (Base URL)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={aiBaseUrl}
+              onChangeText={setAiBaseUrl}
+              placeholder="留空即使用系统默认自建站"
+              placeholderTextColor="#94a3b8"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <Text style={styles.inputLabel}>API 密钥 (API Key)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={aiApiKey}
+              onChangeText={setAiApiKey}
+              placeholder="留空即使用系统默认密钥"
+              placeholderTextColor="#94a3b8"
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+            />
+
+            <Text style={styles.inputLabel}>模型名称 (Model)</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={aiModel}
+              onChangeText={setAiModel}
+              placeholder="默认 grok-chat-fast"
+              placeholderTextColor="#94a3b8"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 4, marginBottom: 12 }}>
+              <TouchableOpacity
+                style={[styles.modalBtn, { flex: 1, backgroundColor: '#f1f5f9', alignItems: 'center' }]}
+                onPress={handleTestAI}
+                disabled={isTestingAI}
+              >
+                {isTestingAI ? (
+                  <ActivityIndicator size="small" color="#7c3aed" />
+                ) : (
+                  <Text style={{ fontSize: 13, color: '#475569', fontWeight: '600' }}>测试连通性</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.modalBtn, { flex: 1, backgroundColor: '#fef2f2', alignItems: 'center' }]}
+                onPress={handleResetAI}
+                disabled={isSavingAI}
+              >
+                <Text style={{ fontSize: 13, color: '#ef4444', fontWeight: '600' }}>恢复默认</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalCancelBtn]}
+                onPress={() => setShowAIConfigModal(false)}
+              >
+                <Text style={styles.modalCancelText}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#7c3aed' }]}
+                onPress={handleSaveAI}
+                disabled={isSavingAI}
+              >
+                {isSavingAI ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Text style={styles.modalConfirmText}>保存配置</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -480,6 +699,12 @@ const styles = StyleSheet.create({
     color: '#64748b',
     lineHeight: 18,
     marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 5,
   },
   modalInput: {
     borderWidth: 1,
