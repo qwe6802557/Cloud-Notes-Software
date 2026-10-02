@@ -103,87 +103,9 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setIsCompleted(false);
 
     try {
-      if (updateData.type === 'ota') {
-        // ========== 分支 1：OTA 热更新 ==========
-        if (Updates.isEnabled) {
-          // 生产独立安装包中，调用 expo-updates 原生热更
-          const update = await Updates.checkForUpdateAsync();
-          if (update.isAvailable) {
-            // 模拟进度条平滑视觉反馈
-            const timer = setInterval(() => {
-              setDownloadProgress(prev => {
-                if (prev >= 90) {
-                  clearInterval(timer);
-                  return 90;
-                }
-                return prev + 15;
-              });
-            }, 200);
-
-            await Updates.fetchUpdateAsync();
-            clearInterval(timer);
-            setDownloadProgress(100);
-            setIsCompleted(true);
-
-            setTimeout(async () => {
-              await Updates.reloadAsync();
-            }, 800);
-            return;
-          }
-        }
-
-        // 开发环境或自托管 Bundle 兜底下载
-        if (updateData.downloadUrl) {
-          const targetFile = `${FileSystem.cacheDirectory}hot-update-${updateData.version}.zip`;
-          const downloadResumable = FileSystem.createDownloadResumable(
-            updateData.downloadUrl,
-            targetFile,
-            {},
-            downloadProgressEvent => {
-              const { totalBytesWritten, totalBytesExpectedToWrite } = downloadProgressEvent;
-              setDownloadedBytes(totalBytesWritten);
-              setTotalBytes(totalBytesExpectedToWrite);
-              if (totalBytesExpectedToWrite > 0) {
-                const percent = Math.min(
-                  100,
-                  Math.round((totalBytesWritten / totalBytesExpectedToWrite) * 100)
-                );
-                setDownloadProgress(percent);
-              }
-            }
-          );
-
-          await downloadResumable.downloadAsync();
-          setDownloadProgress(100);
-          setIsCompleted(true);
-
-          if (Updates.isEnabled) {
-            setTimeout(async () => {
-              await Updates.reloadAsync();
-            }, 800);
-          } else {
-            setIsDownloading(false);
-            Alert.alert(
-              '热更包就绪',
-              `已成功下载热更资源（v${updateData.version}）。在生产 APK 安装包中此时将瞬间重启生效！`
-            );
-          }
-        } else {
-          Alert.alert('更新失败', '热更包资源地址不存在');
-          setIsDownloading(false);
-        }
-      } else {
-        // ========== 分支 2：原生整包 APK 安装更新 ==========
+      const handleApkDownloadAndInstall = async (apkUrl: string, version: string) => {
         if (Platform.OS === 'android') {
-          const apkTarget = `${FileSystem.cacheDirectory}cloud-notes-v${updateData.version}.apk`;
-          const apkUrl = updateData.apkUrl || updateData.downloadUrl;
-
-          if (!apkUrl) {
-            Alert.alert('更新失败', '安装包下载地址为空');
-            setIsDownloading(false);
-            return;
-          }
-
+          const apkTarget = `${FileSystem.cacheDirectory}cloud-notes-v${version}.apk`;
           const downloadResumable = FileSystem.createDownloadResumable(
             apkUrl,
             apkTarget,
@@ -214,18 +136,84 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
                 flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
                 type: 'application/vnd.android.package-archive',
               });
+              setIsModalVisible(false);
             } catch (intentErr: any) {
               console.warn('拉起安装器失败，尝试系统浏览器打开:', intentErr.message);
               await Linking.openURL(apkUrl);
+              setIsModalVisible(false);
             }
           }
         } else {
           // iOS 或其他平台跳转链接
-          const targetUrl = updateData.apkUrl || updateData.downloadUrl;
-          if (targetUrl) {
-            await Linking.openURL(targetUrl);
-          }
+          await Linking.openURL(apkUrl);
+          setIsModalVisible(false);
         }
+      };
+
+      if (updateData.type === 'ota' && Updates.isEnabled) {
+        // ========== 分支 1：原生支持 Expo-Updates 的热更新 ==========
+        const update = await Updates.checkForUpdateAsync();
+        if (update.isAvailable) {
+          const timer = setInterval(() => {
+            setDownloadProgress(prev => {
+              if (prev >= 90) {
+                clearInterval(timer);
+                return 90;
+              }
+              return prev + 15;
+            });
+          }, 200);
+
+          await Updates.fetchUpdateAsync();
+          clearInterval(timer);
+          setDownloadProgress(100);
+          setIsCompleted(true);
+
+          setTimeout(async () => {
+            await Updates.reloadAsync();
+          }, 800);
+          return;
+        }
+      }
+
+      // ========== 分支 2：原生整包 APK 安装更新（或 OTA 不受原生支持时自动降级整包） ==========
+      const targetApkUrl = updateData.apkUrl || (updateData.type === 'native' ? updateData.downloadUrl : '');
+      if (targetApkUrl) {
+        await handleApkDownloadAndInstall(targetApkUrl, updateData.version);
+        setIsDownloading(false);
+      } else if (updateData.downloadUrl) {
+        // 自托管 Bundle 兜底模式（仅在开发/调试环境具备运行时热载能力时有效）
+        const targetFile = `${FileSystem.cacheDirectory}hot-update-${updateData.version}.zip`;
+        const downloadResumable = FileSystem.createDownloadResumable(
+          updateData.downloadUrl,
+          targetFile,
+          {},
+          downloadProgressEvent => {
+            const { totalBytesWritten, totalBytesExpectedToWrite } = downloadProgressEvent;
+            setDownloadedBytes(totalBytesWritten);
+            setTotalBytes(totalBytesExpectedToWrite);
+            if (totalBytesExpectedToWrite > 0) {
+              const percent = Math.min(
+                100,
+                Math.round((totalBytesWritten / totalBytesExpectedToWrite) * 100)
+              );
+              setDownloadProgress(percent);
+            }
+          }
+        );
+
+        await downloadResumable.downloadAsync();
+        setDownloadProgress(100);
+        setIsCompleted(true);
+        setIsDownloading(false);
+        setIsModalVisible(false);
+
+        Alert.alert(
+          '热更包已下载',
+          `版本资源 (v${updateData.version}) 已缓存至本地。如未自动生效，请安装最新版 APK 升级。`
+        );
+      } else {
+        Alert.alert('更新失败', '未获取到有效的升级下载地址');
         setIsDownloading(false);
       }
     } catch (err: any) {
