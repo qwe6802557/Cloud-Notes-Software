@@ -38,7 +38,6 @@ const SelectionCopyBubble = ({
     const [aiStreaming, setAiStreaming] = useState(false);
     const [aiResult, setAiResult] = useState('');
     const [aiAction, setAiAction] = useState('polish');
-    const [aiActionTitle, setAiActionTitle] = useState('智能润色');
     const [customPrompt, setCustomPrompt] = useState('');
     const [resultCopied, setResultCopied] = useState(false);
 
@@ -271,9 +270,6 @@ const SelectionCopyBubble = ({
         setAiStreaming(true);
         setAiResult('');
         setAiAction(actionKey);
-
-        const actionObj = AI_ACTIONS.find(a => a.key === actionKey);
-        setAiActionTitle(actionObj ? actionObj.label : 'AI 创作');
 
         if (abortControllerRef.current) {
             abortControllerRef.current.abort();
@@ -579,7 +575,7 @@ const SelectionCopyBubble = ({
                     <div className="card-header">
                         <div className="card-header-left">
                             <ThunderboltOutlined style={{ color: '#7c3aed', fontSize: 15 }} />
-                            <span className="card-title">AI {aiActionTitle}</span>
+                            <span className="card-title">AI 创作</span>
                             {aiStreaming ? (
                                 <span className="stream-badge streaming">
                                     <Spin size="small" /> 生成中...
