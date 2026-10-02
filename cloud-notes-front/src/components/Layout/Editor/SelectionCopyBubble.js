@@ -577,9 +577,7 @@ const SelectionCopyBubble = ({
                             <ThunderboltOutlined style={{ color: '#7c3aed', fontSize: 15 }} />
                             <span className="card-title">AI 创作</span>
                             {aiStreaming ? (
-                                <span className="stream-badge streaming">
-                                    <Spin size="small" /> 生成中...
-                                </span>
+                                <span className="stream-badge streaming">生成中...</span>
                             ) : (
                                 <span className="stream-badge done">已完成</span>
                             )}
