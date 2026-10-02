@@ -1,0 +1,58 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - 'cloud-notes-mobile/**'
+
+jobs:
+  build-android:
+    name: Build Android Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: cloud-notes-mobile/package-lock.json
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Dependencies
+        working-directory: cloud-notes-mobile
+        run: npm ci
+
+      - name: Run Expo Prebuild
+        working-directory: cloud-notes-mobile
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build Release APK with Gradle
+        working-directory: cloud-notes-mobile/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Rename & Prepare APK Artifact
+        run: |
+          mkdir -p build-output
+          cp cloud-notes-mobile/android/app/build/outputs/apk/release/app-release.apk build-output/cloud-notes-v1.0.2.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-notes-v1.0.2-apk
+          path: build-output/cloud-notes-v1.0.2.apk
+          retention-days: 30
