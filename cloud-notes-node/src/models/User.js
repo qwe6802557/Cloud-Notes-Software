@@ -64,6 +64,11 @@ const userSchema = new mongoose.Schema({
             type: String,
             default: '',
             trim: true
+        },
+        systemModel: {
+            type: String,
+            default: 'grok-chat-fast',
+            trim: true
         }
     },
     createdAt: {

@@ -8,6 +8,8 @@ export interface AIConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+  systemModel?: string;
+  enabled?: boolean;
 }
 
 export interface StreamAIParams {

@@ -190,7 +190,8 @@ exports.getAIConfig = asyncHandler(async (req, res) => {
             apiKey: maskedKey,
             hasCustomKey: Boolean(userConfig.apiKey),
             model: userConfig.model || '',
-            defaultModel: 'grok-chat-fast'
+            defaultModel: 'grok-chat-fast',
+            systemModel: userConfig.systemModel || 'grok-chat-fast'
         }
     });
 });
@@ -199,7 +200,7 @@ exports.getAIConfig = asyncHandler(async (req, res) => {
  * 更新用户个人自定义 AI 模型配置
  */
 exports.updateAIConfig = asyncHandler(async (req, res) => {
-    const { enabled, baseUrl = '', apiKey = '', model = '' } = req.body;
+    const { enabled, baseUrl = '', apiKey = '', model = '', systemModel = '' } = req.body;
     const user = await User.findById(req.user._id).select('+aiConfig');
 
     if (!user) {
@@ -210,9 +211,14 @@ exports.updateAIConfig = asyncHandler(async (req, res) => {
         user.aiConfig = {};
     }
 
-    user.aiConfig.enabled = Boolean(enabled);
+    if (enabled !== undefined) {
+        user.aiConfig.enabled = Boolean(enabled);
+    }
     user.aiConfig.baseUrl = (baseUrl || '').trim();
     user.aiConfig.model = (model || '').trim();
+    if (systemModel) {
+        user.aiConfig.systemModel = systemModel.trim();
+    }
 
     // 只有提供了非掩码的新 Key 时才覆盖原有 Key
     if (apiKey && !apiKey.includes('••••')) {
@@ -235,7 +241,8 @@ exports.updateAIConfig = asyncHandler(async (req, res) => {
             baseUrl: user.aiConfig.baseUrl,
             apiKey: maskedKey,
             hasCustomKey: Boolean(user.aiConfig.apiKey),
-            model: user.aiConfig.model
+            model: user.aiConfig.model,
+            systemModel: user.aiConfig.systemModel || 'grok-chat-fast'
         }
     });
 });

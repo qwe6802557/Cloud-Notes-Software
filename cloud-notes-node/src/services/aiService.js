@@ -14,10 +14,11 @@ const resolveAIConfig = user => {
         };
     }
 
+    const selectedSystemModel = (user?.aiConfig?.systemModel || '').trim();
     return {
         apiKey: config.ai.defaultApiKey,
         baseUrl: config.ai.defaultBaseUrl.replace(/\/+$/, ''),
-        model: config.ai.defaultModel,
+        model: selectedSystemModel || config.ai.defaultModel || 'grok-chat-fast',
         isCustom: false
     };
 };

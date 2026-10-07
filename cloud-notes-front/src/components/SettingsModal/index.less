@@ -68,7 +68,7 @@
 
   .settings-layout {
     display: flex;
-    height: 440px;
+    height: 480px;
     overflow: hidden;
 
     .settings-sidebar {
@@ -153,12 +153,15 @@
     .settings-content {
       flex: 1;
       min-width: 0;
-      padding: 22px 28px;
+      padding: 20px 26px;
       overflow-y: auto;
+      overflow-x: hidden !important;
       background-color: #ffffff;
+      box-sizing: border-box;
 
       &::-webkit-scrollbar {
         width: 5px;
+        height: 0px;
       }
 
       &::-webkit-scrollbar-thumb {
@@ -484,16 +487,17 @@
       }
 
       .ai-system-card {
-        padding: 14px 16px;
+        padding: 16px 18px;
         background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
         border: 1px solid #ddd6fe;
-        border-radius: 10px;
-        margin-bottom: 8px;
+        border-radius: 12px;
+        margin-bottom: 12px;
 
         .ai-system-header {
           display: flex;
           align-items: flex-start;
           gap: 12px;
+          margin-bottom: 14px;
 
           .ai-card-icon {
             font-size: 20px;
@@ -513,6 +517,162 @@
               color: #6d28d9;
               margin-top: 2px;
               line-height: 1.5;
+            }
+          }
+        }
+
+        .ai-models-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 10px;
+          margin-bottom: 12px;
+
+          .model-card-item {
+            position: relative;
+            background: #ffffff;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 10px 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+
+            &:hover {
+              border-color: #a78bfa;
+              transform: translateY(-1px);
+              box-shadow: 0 4px 12px rgba(124, 58, 237, 0.08);
+            }
+
+            &.is-selected {
+              border-color: #7c3aed;
+              background: #faf5ff;
+              box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
+            }
+
+            .model-card-header {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 6px;
+              margin-bottom: 6px;
+
+              .model-title-wrap {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                min-width: 0;
+                flex: 1;
+
+                .model-vector-icon {
+                  display: inline-flex;
+                  align-items: center;
+                  justify-content: center;
+                  font-size: 15px;
+                  flex-shrink: 0;
+                }
+
+                .model-name {
+                  font-size: 12.5px;
+                  font-weight: 600;
+                  color: #1e1b4b;
+                  white-space: nowrap;
+                  overflow: hidden;
+                  text-overflow: ellipsis;
+                }
+              }
+
+              .model-tag {
+                font-size: 11px;
+                padding: 1px 6px;
+                border-radius: 4px;
+                font-weight: 500;
+                white-space: nowrap;
+                flex-shrink: 0;
+
+                &.tag-purple {
+                  background: #ede9fe;
+                  color: #6d28d9;
+                }
+                &.tag-amber {
+                  background: #fef3c7;
+                  color: #b45309;
+                }
+                &.tag-indigo {
+                  background: #e0e7ff;
+                  color: #4338ca;
+                }
+                &.tag-blue {
+                  background: #e0f2fe;
+                  color: #0369a1;
+                }
+              }
+            }
+
+            .model-desc {
+              font-size: 11px;
+              color: #64748b;
+              line-height: 1.45;
+              padding-right: 14px;
+            }
+
+            .model-checked-badge {
+              position: absolute;
+              bottom: 8px;
+              right: 8px;
+              font-size: 14px;
+              color: #7c3aed;
+            }
+          }
+        }
+
+        .more-models-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          background: rgba(255, 255, 255, 0.7);
+          padding: 8px 12px;
+          border-radius: 8px;
+          border: 1px dashed #c4b5fd;
+          box-sizing: border-box;
+          max-width: 100%;
+
+          .more-models-label {
+            font-size: 12px;
+            color: #5b21b6;
+            font-weight: 500;
+            white-space: nowrap;
+            flex-shrink: 0;
+          }
+
+          .ant-select {
+            flex: 1;
+            min-width: 0;
+            max-width: 100%;
+
+            .ant-select-selector {
+              border-radius: 6px;
+              border-color: #ddd6fe;
+              background: #ffffff;
+              overflow: hidden;
+            }
+
+            .selected-model-label {
+              display: inline-flex;
+              align-items: center;
+              gap: 6px;
+              max-width: 100%;
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+
+              .selected-model-name {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                font-size: 13px;
+                color: #1e1b4b;
+                font-weight: 500;
+              }
             }
           }
         }
@@ -559,5 +719,35 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+.select-model-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+  width: 100%;
+
+  .item-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    font-size: 13px;
+    color: #1e293b;
+    font-weight: 500;
+  }
+
+  .item-id {
+    font-size: 11px;
+    color: #94a3b8;
+    font-family: monospace;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
   }
 }

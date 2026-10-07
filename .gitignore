@@ -52,3 +52,7 @@ deploy-*.ps1
 *.tar
 *.zip
 build.tar.gz
+
+# 移动端 APK 安装包归档
+*.apk
+apk-*/

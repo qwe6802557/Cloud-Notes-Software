@@ -19,6 +19,37 @@ import { Config } from '../../constants/Config';
 import * as aiApi from '../../api/aiApi';
 import axios from 'axios';
 
+const SYSTEM_MODELS = [
+  {
+    id: 'grok-chat-fast',
+    name: 'Grok 极速',
+    iconName: 'rocket-outline' as const,
+    iconColor: '#7c3aed',
+    badge: '高速',
+  },
+  {
+    id: 'glm-4-flash',
+    name: 'GLM-4-Flash',
+    iconName: 'flash-outline' as const,
+    iconColor: '#eab308',
+    badge: '轻量',
+  },
+  {
+    id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B',
+    name: 'DeepSeek-R1',
+    iconName: 'bulb-outline' as const,
+    iconColor: '#8b5cf6',
+    badge: '思考',
+  },
+  {
+    id: 'Qwen/Qwen2.5-Coder-7B-Instruct',
+    name: 'Qwen-Coder',
+    iconName: 'code-slash-outline' as const,
+    iconColor: '#0284c7',
+    badge: '代码',
+  },
+];
+
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, serverUrl, updateServerUrl, logout, refreshUser } = useAuth();
@@ -30,6 +61,7 @@ export default function SettingsScreen() {
 
   // AI 配置相关状态
   const [showAIConfigModal, setShowAIConfigModal] = useState(false);
+  const [aiSystemModel, setAiSystemModel] = useState('grok-chat-fast');
   const [aiApiKey, setAiApiKey] = useState('');
   const [aiBaseUrl, setAiBaseUrl] = useState('');
   const [aiModel, setAiModel] = useState('');
@@ -43,6 +75,7 @@ export default function SettingsScreen() {
         setAiApiKey(res.data.apiKey || '');
         setAiBaseUrl(res.data.baseUrl || '');
         setAiModel(res.data.model || '');
+        setAiSystemModel(res.data.systemModel || 'grok-chat-fast');
       }
     } catch (e: any) {
       console.warn('Failed to load AI config', e.message);
@@ -84,6 +117,7 @@ export default function SettingsScreen() {
         apiKey: aiApiKey.trim(),
         baseUrl: aiBaseUrl.trim(),
         model: aiModel.trim(),
+        systemModel: aiSystemModel || 'grok-chat-fast',
       });
       setShowAIConfigModal(false);
       Alert.alert('保存成功', 'AI 模型参数已更新生效');
@@ -98,12 +132,14 @@ export default function SettingsScreen() {
     setAiApiKey('');
     setAiBaseUrl('');
     setAiModel('');
+    setAiSystemModel('grok-chat-fast');
     try {
       setIsSavingAI(true);
       await aiApi.updateAIConfig({
         apiKey: '',
         baseUrl: '',
         model: '',
+        systemModel: 'grok-chat-fast',
       });
       setShowAIConfigModal(false);
       Alert.alert('已恢复默认', '已重置为系统预置的 Grok 智能创作模型');
@@ -275,7 +311,7 @@ export default function SettingsScreen() {
                 <Text style={styles.itemTitle}>AI 大模型配置</Text>
                 <View style={[styles.activePill, { backgroundColor: '#f5f3ff' }]}>
                   <Text style={[styles.activePillText, { color: '#7c3aed' }]}>
-                    {aiModel || 'grok-chat-fast'}
+                    {aiModel || aiSystemModel || 'grok-chat-fast'}
                   </Text>
                 </View>
               </View>
@@ -416,8 +452,42 @@ export default function SettingsScreen() {
             </View>
 
             <Text style={styles.modalDesc}>
-              系统默认已配置高性能 Grok 智能服务（开箱即用）。若需要接入自定义兼容端点，可在下方填写覆盖：
+              系统默认已配置免梯高速大模型（开箱即用）。选择您偏好的内置引擎：
             </Text>
+
+            <Text style={styles.inputLabel}>系统内置引擎模型</Text>
+            <View style={styles.mobileModelGrid}>
+              {SYSTEM_MODELS.map(m => {
+                const isSelected = aiSystemModel === m.id;
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={[styles.mobileModelCard, isSelected && styles.mobileModelCardSelected]}
+                    onPress={() => setAiSystemModel(m.id)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.mobileModelCardHeader}>
+                      <Ionicons name={m.iconName} size={16} color={m.iconColor} />
+                      <Text
+                        style={[styles.mobileModelCardName, isSelected && { color: '#7c3aed', fontWeight: '700' }]}
+                        numberOfLines={1}
+                      >
+                        {m.name}
+                      </Text>
+                    </View>
+                    <View style={styles.mobileModelCardFooter}>
+                      <Text style={styles.mobileModelBadge}>{m.badge}</Text>
+                      {isSelected && (
+                        <Ionicons name="checkmark-circle" size={14} color="#7c3aed" />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            <View style={{ height: 1, backgroundColor: '#f1f5f9', marginVertical: 10 }} />
+            <Text style={styles.sectionSubTitle}>自定义兼容端点 (可选覆盖)</Text>
 
             <Text style={styles.inputLabel}>接口地址 (Base URL)</Text>
             <TextInput
@@ -767,5 +837,55 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 10,
     fontWeight: '700',
+  },
+  sectionSubTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#475569',
+    marginBottom: 8,
+  },
+  mobileModelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 6,
+  },
+  mobileModelCard: {
+    width: '48%',
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    padding: 10,
+  },
+  mobileModelCardSelected: {
+    borderColor: '#7c3aed',
+    backgroundColor: '#faf5ff',
+  },
+  mobileModelCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  mobileModelCardName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1e293b',
+    flex: 1,
+  },
+  mobileModelCardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  mobileModelBadge: {
+    fontSize: 10,
+    color: '#64748b',
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    fontWeight: '500',
   },
 });

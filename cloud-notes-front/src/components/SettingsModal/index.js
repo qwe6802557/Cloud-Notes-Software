@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Modal, Form, Input, Upload, message, Button, Radio, Switch, Tag } from 'antd';
+import { Modal, Form, Input, Upload, message, Button, Radio, Switch, Tag, Select } from 'antd';
 import {
     UserOutlined,
     CameraOutlined,
@@ -16,13 +16,69 @@ import {
     ThunderboltOutlined,
     ApiOutlined,
     CheckCircleOutlined,
-    CloseCircleOutlined
+    CloseCircleOutlined,
+    RocketOutlined,
+    BulbOutlined,
+    CodeOutlined
 } from '@ant-design/icons';
 import { updateUserInfo } from '@/api/user';
 import { getAIConfig, updateAIConfig, testAIConnection } from '@/api/ai';
 import { getUser, setUser } from '@/utils/auth';
 import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences';
 import './index.less';
+
+const FEATURED_SYSTEM_MODELS = [
+    {
+        id: 'grok-chat-fast',
+        name: 'Grok 极速创作',
+        badge: '高速推荐',
+        badgeColor: 'purple',
+        icon: <RocketOutlined style={{ color: '#7c3aed' }} />,
+        desc: '系统内置极速通道，响应飞快，适合扩写、润色与大纲生成'
+    },
+    {
+        id: 'glm-4-flash',
+        name: '智谱 GLM-4-Flash',
+        badge: '免费轻量',
+        badgeColor: 'amber',
+        icon: <ThunderboltOutlined style={{ color: '#eab308' }} />,
+        desc: '智谱开放平台，中文理解力卓越，长文总结与知识归纳强'
+    },
+    {
+        id: 'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B',
+        name: 'DeepSeek-R1 蒸馏',
+        badge: '推理思考',
+        badgeColor: 'indigo',
+        icon: <BulbOutlined style={{ color: '#8b5cf6' }} />,
+        desc: '硅基流动推理模型，逻辑严密，适合论文提炼与深度问答'
+    },
+    {
+        id: 'Qwen/Qwen2.5-Coder-7B-Instruct',
+        name: 'Qwen2.5-Coder',
+        badge: '技术编程',
+        badgeColor: 'blue',
+        icon: <CodeOutlined style={{ color: '#0284c7' }} />,
+        desc: '硅基流动代码特化，精通多种语法、代码解释与技术文档'
+    }
+];
+
+const MORE_SYSTEM_MODELS = [
+    {
+        id: 'Qwen/Qwen2.5-7B-Instruct',
+        name: '通义千问 7B (通用)',
+        icon: <BulbOutlined style={{ color: '#0284c7' }} />
+    },
+    {
+        id: 'THUDM/glm-4-9b-chat',
+        name: 'GLM-4 9B 开源版',
+        icon: <ThunderboltOutlined style={{ color: '#eab308' }} />
+    }
+];
+
+const ALL_SYSTEM_MODELS = [
+    ...FEATURED_SYSTEM_MODELS,
+    ...MORE_SYSTEM_MODELS
+];
 
 const computePasswordStrength = pwd => {
     if (!pwd) return 0;
@@ -41,6 +97,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
     const [avatarUrl, setAvatarUrl] = useState('');
     const [testingAI, setTestingAI] = useState(false);
     const [testResult, setTestResult] = useState(null);
+    const [systemModel, setSystemModel] = useState('grok-chat-fast');
     const user = getUser() || {};
 
     const watchedPassword = Form.useWatch('password', form) || '';
@@ -64,20 +121,25 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                 aiEnabled: false,
                 aiBaseUrl: '',
                 aiApiKey: '',
-                aiModel: ''
+                aiModel: '',
+                aiSystemModel: 'grok-chat-fast'
             });
             setAvatarUrl(currentUser.avatar || '');
             setActiveTab('profile');
             setTestResult(null);
+            setSystemModel('grok-chat-fast');
 
             getAIConfig().then(res => {
                 if (res) {
+                    const loadedSystemModel = res.systemModel || 'grok-chat-fast';
                     form.setFieldsValue({
                         aiEnabled: Boolean(res.enabled),
                         aiBaseUrl: res.baseUrl || '',
                         aiApiKey: res.apiKey || '',
-                        aiModel: res.model || ''
+                        aiModel: res.model || '',
+                        aiSystemModel: loadedSystemModel
                     });
+                    setSystemModel(loadedSystemModel);
                 }
             }).catch(() => {});
         }
@@ -140,13 +202,14 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             }
 
             // 保存 AI 模型配置
-            const isAiTouched = activeTab === 'ai' || form.isFieldTouched('aiEnabled') || form.isFieldTouched('aiApiKey') || form.isFieldTouched('aiBaseUrl') || form.isFieldTouched('aiModel');
+            const isAiTouched = activeTab === 'ai' || form.isFieldTouched('aiEnabled') || form.isFieldTouched('aiApiKey') || form.isFieldTouched('aiBaseUrl') || form.isFieldTouched('aiModel') || form.isFieldTouched('aiSystemModel');
             if (isAiTouched) {
                 await updateAIConfig({
                     enabled: Boolean(values.aiEnabled),
                     baseUrl: (values.aiBaseUrl || '').trim(),
                     apiKey: (values.aiApiKey || '').trim(),
-                    model: (values.aiModel || '').trim()
+                    model: (values.aiModel || '').trim(),
+                    systemModel: values.aiSystemModel || systemModel || 'grok-chat-fast'
                 });
             }
 
@@ -170,6 +233,11 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const handleSelectSystemModel = modelId => {
+        setSystemModel(modelId);
+        form.setFieldsValue({ aiSystemModel: modelId });
     };
 
     const applyAiPreset = presetKey => {
@@ -290,7 +358,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             centered
             className="modern-settings-modal"
             destroyOnClose
-            width={760}
+            width={780}
             footer={(
                 <div className="settings-footer">
                     <span className="footer-tip">修改后将实时同步至当前工作区</span>
@@ -539,9 +607,71 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                 <div className="ai-system-header">
                                     <ThunderboltOutlined className="ai-card-icon" />
                                     <div className="ai-card-titles">
-                                        <div className="ai-card-main-title">系统内置 AI 创作引擎已就绪</div>
-                                        <div className="ai-card-sub-title">默认使用云笔记内置高速大模型（grok-chat-fast），开箱即用，无需配置即可直接划词调用</div>
+                                        <div className="ai-card-main-title">系统内置 AI 创作引擎</div>
+                                        <div className="ai-card-sub-title">默认免配置开箱即用，已集成主流写作与推理大模型。划词创作、续写润色时默认生效所选模型：</div>
                                     </div>
+                                </div>
+
+                                <Form.Item name="aiSystemModel" hidden>
+                                    <Input />
+                                </Form.Item>
+
+                                <div className="ai-models-grid">
+                                    {FEATURED_SYSTEM_MODELS.map(item => {
+                                        const isSelected = (systemModel || 'grok-chat-fast') === item.id;
+                                        return (
+                                            <div
+                                                key={item.id}
+                                                className={`model-card-item ${isSelected ? 'is-selected' : ''}`}
+                                                onClick={() => handleSelectSystemModel(item.id)}
+                                            >
+                                                <div className="model-card-header">
+                                                    <div className="model-title-wrap">
+                                                        <span className="model-vector-icon">{item.icon}</span>
+                                                        <span className="model-name">{item.name}</span>
+                                                    </div>
+                                                    <span className={`model-tag tag-${item.badgeColor}`}>{item.badge}</span>
+                                                </div>
+                                                <div className="model-desc">{item.desc}</div>
+                                                {isSelected && (
+                                                    <CheckCircleFilled className="model-checked-badge" />
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="more-models-row">
+                                    <span className="more-models-label">更多内置模型：</span>
+                                    <Select
+                                        value={systemModel}
+                                        onChange={handleSelectSystemModel}
+                                        style={{ flex: 1, minWidth: 0 }}
+                                        optionLabelProp="label"
+                                        popupMatchSelectWidth={false}
+                                        dropdownStyle={{ minWidth: 320 }}
+                                        options={ALL_SYSTEM_MODELS.map(m => ({
+                                            value: m.id,
+                                            label: (
+                                                <span className="selected-model-label">
+                                                    {m.icon}
+                                                    <span className="selected-model-name">{m.name}</span>
+                                                </span>
+                                            ),
+                                            renderItem: (
+                                                <div className="select-model-dropdown-item">
+                                                    <span className="item-left">
+                                                        {m.icon}
+                                                        <span className="item-name">{m.name}</span>
+                                                    </span>
+                                                    <span className="item-id" title={m.id}>
+                                                        {m.id}
+                                                    </span>
+                                                </div>
+                                            )
+                                        }))}
+                                        optionRender={option => option.data.renderItem}
+                                    />
                                 </div>
                             </div>
 
