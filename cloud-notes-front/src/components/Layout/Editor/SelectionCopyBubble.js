@@ -17,7 +17,8 @@ import {
     GlobalOutlined
 } from '@ant-design/icons';
 import { Popover, message, Button, Input, Spin } from 'antd';
-import { streamAICall } from '@/api/ai';
+import { streamAICall, getAIConfig } from '@/api/ai';
+import { setCachedAIConfig, getAIModelDisplayTag } from '@/utils/preferences';
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
@@ -47,6 +48,7 @@ const SelectionCopyBubble = ({
     const [aiAction, setAiAction] = useState('polish');
     const [customPrompt, setCustomPrompt] = useState('');
     const [resultCopied, setResultCopied] = useState(false);
+    const [modelTag, setModelTag] = useState(() => getAIModelDisplayTag());
 
     const bubbleRef = useRef(null);
     const aiCardRef = useRef(null);
@@ -70,6 +72,31 @@ const SelectionCopyBubble = ({
         aiStreamingRef.current = aiStreaming;
         isAIActiveRef.current = aiMenuOpen || aiCardOpen || aiStreaming;
     }, [aiMenuOpen, aiCardOpen, aiStreaming]);
+
+    // 同步 AI 模型生效状态
+    useEffect(() => {
+        const handleConfigChange = e => {
+            setModelTag(getAIModelDisplayTag(e?.detail));
+        };
+        window.addEventListener('ai-config-changed', handleConfigChange);
+
+        getAIConfig().then(res => {
+            if (res) {
+                setCachedAIConfig(res);
+                setModelTag(getAIModelDisplayTag(res));
+            }
+        }).catch(() => {});
+
+        return () => {
+            window.removeEventListener('ai-config-changed', handleConfigChange);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (aiMenuOpen) {
+            setModelTag(getAIModelDisplayTag());
+        }
+    }, [aiMenuOpen]);
 
     // 组件真正卸载时终止未完成的流式请求
     useEffect(() => {
@@ -499,7 +526,7 @@ const SelectionCopyBubble = ({
                     <ThunderboltOutlined style={{ color: '#7c3aed', marginRight: 6 }} />
                     AI 选区快捷创作
                 </span>
-                <span className="menu-model-tag">grok-chat-fast</span>
+                <span className="menu-model-tag" title={modelTag}>{modelTag}</span>
             </div>
             <div className="menu-grid">
                 {AI_ACTIONS.map(action => (

@@ -8,6 +8,7 @@ import {
     SendOutlined
 } from '@ant-design/icons';
 import { streamAICall } from '@/api/ai';
+import { getAIModelDisplayTag } from '@/utils/preferences';
 
 
 const AIFullNoteModal = ({
@@ -23,6 +24,7 @@ const AIFullNoteModal = ({
     const [copied, setCopied] = useState(false);
     const [customPrompt, setCustomPrompt] = useState('');
     const [currentAction, setCurrentAction] = useState(action);
+    const [modelTag, setModelTag] = useState(() => getAIModelDisplayTag());
 
     const abortControllerRef = useRef(null);
     const resultBoxRef = useRef(null);
@@ -86,7 +88,18 @@ const AIFullNoteModal = ({
     startStreamRef.current = startStream;
 
     useEffect(() => {
+        const handleConfigChange = e => {
+            setModelTag(getAIModelDisplayTag(e?.detail));
+        };
+        window.addEventListener('ai-config-changed', handleConfigChange);
+        return () => {
+            window.removeEventListener('ai-config-changed', handleConfigChange);
+        };
+    }, []);
+
+    useEffect(() => {
         if (open) {
+            setModelTag(getAIModelDisplayTag());
             setCurrentAction(action);
             setCustomPrompt('');
             if (action !== 'custom') {
@@ -140,6 +153,26 @@ const AIFullNoteModal = ({
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <ThunderboltOutlined style={{ color: '#7c3aed', fontSize: 16 }} />
                     <span style={{ fontWeight: 600 }}>AI 创作</span>
+                    {modelTag && (
+                        <span
+                            style={{
+                                fontSize: 11,
+                                padding: '1px 6px',
+                                borderRadius: 4,
+                                background: '#f3e8ff',
+                                color: '#7c3aed',
+                                fontFamily: 'SFMono-Regular, Consolas, monospace',
+                                fontWeight: 500,
+                                maxWidth: 160,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap'
+                            }}
+                            title={modelTag}
+                        >
+                            {modelTag}
+                        </span>
+                    )}
                 </div>
             )}
             width={720}

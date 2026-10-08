@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Modal, Spin, Tag, Button, Empty, Popconfirm, message } from 'antd';
-import { HistoryOutlined, RollbackOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { Modal, Spin, Tag, Button, Empty, Popconfirm, Select, Radio, message } from 'antd';
+import { HistoryOutlined, RollbackOutlined, CopyOutlined, DiffOutlined, EyeOutlined, CodeOutlined } from '@ant-design/icons';
 import { Viewer } from '@bytemd/react';
 import gfm from '@bytemd/plugin-gfm';
 import highlight from '@bytemd/plugin-highlight';
@@ -8,6 +8,7 @@ import math from '@bytemd/plugin-math';
 import mermaid from '@bytemd/plugin-mermaid';
 import breaks from '@bytemd/plugin-breaks';
 import { getNoteHistories, getNoteHistoryDetail, rollbackNoteHistory } from '@/api/notes';
+import DiffViewer from './DiffViewer';
 import './VersionHistoryModal.less';
 
 const viewerPlugins = [
@@ -38,27 +39,43 @@ const renderSaveTypeTag = type => {
     }
 };
 
-const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRollbackSuccess }) => {
+const VersionHistoryModal = ({
+    visible,
+    onClose,
+    noteId,
+    currentNoteTitle,
+    currentContent = '',
+    onRollbackSuccess
+}) => {
     const [loadingList, setLoadingList] = useState(false);
     const [histories, setHistories] = useState([]);
     const [selectedHistoryId, setSelectedHistoryId] = useState(null);
     const [loadingDetail, setLoadingDetail] = useState(false);
     const [selectedDetail, setSelectedDetail] = useState(null);
+    const [prevDetail, setPrevDetail] = useState(null);
+    const [detailCache, setDetailCache] = useState({});
     const [rollingBack, setRollingBack] = useState(false);
-    const [viewMode, setViewMode] = useState('preview'); // 'preview' | 'raw'
+
+    // 视图模式: 'diff' | 'preview' | 'raw'
+    const [viewMode, setViewMode] = useState('diff');
+    // 对比基准: 'current' (与当前工作区对比) | 'previous' (与上一快照对比)
+    const [diffBase, setDiffBase] = useState('current');
+    // Diff 布局: 'split' (并排) | 'unified' (单列)
+    const [diffLayout, setDiffLayout] = useState('split');
 
     const fetchHistories = useCallback(async targetNoteId => {
         if (!targetNoteId) return;
         setLoadingList(true);
         try {
             const res = await getNoteHistories(targetNoteId);
-            const list = res?.data?.histories || [];
+            const list = res?.histories || res?.data?.histories || [];
             setHistories(list);
             if (list.length > 0) {
                 setSelectedHistoryId(list[0]._id);
             } else {
                 setSelectedHistoryId(null);
                 setSelectedDetail(null);
+                setPrevDetail(null);
             }
         } catch {
             message.error('获取历史版本列表失败');
@@ -68,17 +85,26 @@ const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRol
     }, []);
 
     const fetchDetail = useCallback(async (targetNoteId, historyId) => {
-        if (!targetNoteId || !historyId) return;
+        if (!targetNoteId || !historyId) return null;
+        if (detailCache[historyId]) {
+            return detailCache[historyId];
+        }
+
         setLoadingDetail(true);
         try {
             const res = await getNoteHistoryDetail(targetNoteId, historyId);
-            setSelectedDetail(res?.data?.history || null);
+            const detail = res?.history || res?.data?.history || null;
+            if (detail) {
+                setDetailCache(prev => ({ ...prev, [historyId]: detail }));
+            }
+            return detail;
         } catch {
             message.error('获取版本详情失败');
+            return null;
         } finally {
             setLoadingDetail(false);
         }
-    }, []);
+    }, [detailCache]);
 
     useEffect(() => {
         if (visible && noteId) {
@@ -87,23 +113,59 @@ const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRol
             setHistories([]);
             setSelectedHistoryId(null);
             setSelectedDetail(null);
+            setPrevDetail(null);
+            setDetailCache({});
         }
     }, [visible, noteId, fetchHistories]);
 
     useEffect(() => {
         if (visible && noteId && selectedHistoryId) {
-            fetchDetail(noteId, selectedHistoryId);
+            fetchDetail(noteId, selectedHistoryId).then(detail => {
+                setSelectedDetail(detail);
+            });
         }
     }, [visible, noteId, selectedHistoryId, fetchDetail]);
+
+    // 计算上一快照内容
+    useEffect(() => {
+        if (diffBase !== 'previous' || !selectedHistoryId || histories.length === 0) {
+            setPrevDetail(null);
+            return;
+        }
+
+        const currentIndex = histories.findIndex(item => item._id === selectedHistoryId);
+        if (currentIndex >= 0 && currentIndex + 1 < histories.length) {
+            const prevItem = histories[currentIndex + 1];
+            if (detailCache[prevItem._id]) {
+                setPrevDetail(detailCache[prevItem._id]);
+            } else {
+                fetchDetail(noteId, prevItem._id).then(detail => {
+                    setPrevDetail(detail);
+                });
+            }
+        } else {
+            setPrevDetail(null);
+        }
+    }, [diffBase, selectedHistoryId, histories, detailCache, noteId, fetchDetail]);
+
+    const handleCopyContent = () => {
+        if (!selectedDetail?.content) {
+            message.warning('快照内容为空');
+            return;
+        }
+        navigator.clipboard.writeText(selectedDetail.content);
+        message.success('已复制快照内容至剪贴板');
+    };
 
     const handleRollback = async () => {
         if (!noteId || !selectedHistoryId) return;
         setRollingBack(true);
         try {
             const res = await rollbackNoteHistory(noteId, selectedHistoryId);
-            message.success('已成功还原至所选版本');
-            if (onRollbackSuccess && res?.data?.note) {
-                onRollbackSuccess(res.data.note);
+            message.success('已成功还原至所选快照版本');
+            const restoredNote = res?.note || res?.data?.note;
+            if (onRollbackSuccess && restoredNote) {
+                onRollbackSuccess(restoredNote);
             }
             onClose();
         } catch {
@@ -112,6 +174,25 @@ const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRol
             setRollingBack(false);
         }
     };
+
+    const diffBaseInfo = useMemo(() => {
+        if (diffBase === 'current') {
+            return {
+                text: currentContent || '',
+                title: '当前工作区 (最新编辑态)'
+            };
+        }
+        if (prevDetail) {
+            return {
+                text: prevDetail.content || '',
+                title: `上一快照 (${formatDateTime(prevDetail.createdAt)})`
+            };
+        }
+        return {
+            text: '',
+            title: '初始空白基准 (无更早快照)'
+        };
+    }, [diffBase, currentContent, prevDetail]);
 
     return (
         <Modal
@@ -125,7 +206,7 @@ const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRol
             open={visible}
             onCancel={onClose}
             footer={null}
-            width={980}
+            width={1120}
             centered
             className="cloud-notes-version-modal"
             destroyOnClose
@@ -166,7 +247,7 @@ const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRol
                 </div>
 
                 <div className="version-history-content-panel">
-                    {loadingDetail ? (
+                    {loadingDetail && !selectedDetail ? (
                         <div className="version-history-loading">
                             <Spin tip="加载快照内容中..." />
                         </div>
@@ -183,10 +264,20 @@ const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRol
                                     {renderSaveTypeTag(selectedDetail.saveType)}
                                     <span className="version-detail-words">{selectedDetail.wordCount || 0} 字</span>
                                 </div>
+
                                 <div className="version-detail-actions">
                                     <div className="version-mode-toggle">
                                         <Button
                                             size="small"
+                                            icon={<DiffOutlined />}
+                                            type={viewMode === 'diff' ? 'primary' : 'default'}
+                                            onClick={() => setViewMode('diff')}
+                                        >
+                                            差异对比
+                                        </Button>
+                                        <Button
+                                            size="small"
+                                            icon={<EyeOutlined />}
                                             type={viewMode === 'preview' ? 'primary' : 'default'}
                                             onClick={() => setViewMode('preview')}
                                         >
@@ -194,15 +285,48 @@ const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRol
                                         </Button>
                                         <Button
                                             size="small"
+                                            icon={<CodeOutlined />}
                                             type={viewMode === 'raw' ? 'primary' : 'default'}
                                             onClick={() => setViewMode('raw')}
                                         >
-                                            Markdown
+                                            源码
                                         </Button>
                                     </div>
+
+                                    {viewMode === 'diff' && (
+                                        <div className="version-diff-controls">
+                                            <Select
+                                                size="small"
+                                                value={diffBase}
+                                                onChange={setDiffBase}
+                                                style={{ width: 145 }}
+                                                options={[
+                                                    { value: 'current', label: '基准: 当前工作区' },
+                                                    { value: 'previous', label: '基准: 上一快照' }
+                                                ]}
+                                            />
+                                            <Radio.Group
+                                                size="small"
+                                                value={diffLayout}
+                                                onChange={e => setDiffLayout(e.target.value)}
+                                            >
+                                                <Radio.Button value="split">并排</Radio.Button>
+                                                <Radio.Button value="unified">单列</Radio.Button>
+                                            </Radio.Group>
+                                        </div>
+                                    )}
+
+                                    <Button
+                                        size="small"
+                                        icon={<CopyOutlined />}
+                                        onClick={handleCopyContent}
+                                    >
+                                        复制
+                                    </Button>
+
                                     <Popconfirm
                                         title="恢复至此版本？"
-                                        description="恢复后当前笔记内容将被此快照覆盖，并记录一条回滚版本。"
+                                        description="恢复前系统会自动备份当前工作区内容，防止误操作丢失。"
                                         okText="确定恢复"
                                         cancelText="取消"
                                         onConfirm={handleRollback}
@@ -210,6 +334,7 @@ const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRol
                                         <Button
                                             type="primary"
                                             danger
+                                            size="small"
                                             icon={<RollbackOutlined />}
                                             loading={rollingBack}
                                         >
@@ -218,8 +343,17 @@ const VersionHistoryModal = ({ visible, onClose, noteId, currentNoteTitle, onRol
                                     </Popconfirm>
                                 </div>
                             </div>
+
                             <div className="version-detail-body">
-                                {viewMode === 'preview' ? (
+                                {viewMode === 'diff' ? (
+                                    <DiffViewer
+                                        oldValue={diffBaseInfo.text}
+                                        newValue={selectedDetail.content || ''}
+                                        oldTitle={diffBaseInfo.title}
+                                        newTitle={`所选快照 (${formatDateTime(selectedDetail.createdAt)})`}
+                                        layout={diffLayout}
+                                    />
+                                ) : viewMode === 'preview' ? (
                                     <div className="version-preview-container markdown-body">
                                         <Viewer value={selectedDetail.content || ''} plugins={viewerPlugins} />
                                     </div>

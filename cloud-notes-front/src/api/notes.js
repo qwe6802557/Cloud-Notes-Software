@@ -151,3 +151,12 @@ export const rollbackNoteHistory = (noteId, historyId) => {
         method: 'post'
     });
 };
+
+// 全局检索笔记
+export const searchNotes = params => {
+    return request({
+        url: '/notes/search',
+        method: 'get',
+        params
+    });
+};

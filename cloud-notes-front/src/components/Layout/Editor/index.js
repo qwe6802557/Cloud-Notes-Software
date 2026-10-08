@@ -422,6 +422,24 @@ const NoteEditor = ({
 
     const contentAnalytics = useMemo(() => calculateContentAnalytics(content), [content]);
 
+    useEffect(() => {
+        const handleOpenAI = e => {
+            if (!selectedNote) {
+                message.warning('请先选择或新建一篇笔记再使用 AI 创作助手');
+                return;
+            }
+            if (!contentRef.current || !contentRef.current.trim()) {
+                message.warning('笔记内容为空，无法进行 AI 分析');
+                return;
+            }
+            const action = e.detail?.action || 'full_summary';
+            setAiModalAction(action);
+            setAiModalVisible(true);
+        };
+        window.addEventListener('open-ai-modal', handleOpenAI);
+        return () => window.removeEventListener('open-ai-modal', handleOpenAI);
+    }, [selectedNote]);
+
     // 锚定并挂载保存状态至 ByteMD 右侧原生状态栏（同步滚动按钮之前）
     useEffect(() => {
         if (mode === 'preview') {
@@ -1648,6 +1666,7 @@ const NoteEditor = ({
                 onClose={() => setHistoryModalVisible(false)}
                 noteId={selectedNote}
                 currentNoteTitle={noteTitle}
+                currentContent={content}
                 onRollbackSuccess={handleRollbackSuccess}
             />
 

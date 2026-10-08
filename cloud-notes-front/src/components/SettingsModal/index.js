@@ -24,7 +24,7 @@ import {
 import { updateUserInfo } from '@/api/user';
 import { getAIConfig, updateAIConfig, testAIConnection } from '@/api/ai';
 import { getUser, setUser } from '@/utils/auth';
-import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences';
+import { getEditorPreferences, setEditorPreferences, setCachedAIConfig } from '@/utils/preferences';
 import './index.less';
 
 const FEATURED_SYSTEM_MODELS = [
@@ -131,6 +131,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
 
             getAIConfig().then(res => {
                 if (res) {
+                    setCachedAIConfig(res);
                     const loadedSystemModel = res.systemModel || 'grok-chat-fast';
                     form.setFieldsValue({
                         aiEnabled: Boolean(res.enabled),
@@ -204,13 +205,16 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             // 保存 AI 模型配置
             const isAiTouched = activeTab === 'ai' || form.isFieldTouched('aiEnabled') || form.isFieldTouched('aiApiKey') || form.isFieldTouched('aiBaseUrl') || form.isFieldTouched('aiModel') || form.isFieldTouched('aiSystemModel');
             if (isAiTouched) {
-                await updateAIConfig({
+                const aiPayload = {
                     enabled: Boolean(values.aiEnabled),
                     baseUrl: (values.aiBaseUrl || '').trim(),
                     apiKey: (values.aiApiKey || '').trim(),
                     model: (values.aiModel || '').trim(),
                     systemModel: values.aiSystemModel || systemModel || 'grok-chat-fast'
-                });
+                };
+                await updateAIConfig(aiPayload);
+                setCachedAIConfig(aiPayload);
+                window.dispatchEvent(new CustomEvent('ai-config-changed', { detail: aiPayload }));
             }
 
             message.success('个人设置已成功更新');
