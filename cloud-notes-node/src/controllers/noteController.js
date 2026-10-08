@@ -619,14 +619,41 @@ exports.searchNotes = asyncHandler(async (req, res, next) => {
     )
         .sort('-updatedAt')
         .limit(20)
-        .select('title updatedAt createdAt notebookId type parentId');
+        .select('title content updatedAt createdAt notebookId type parentId')
+        .populate('notebookId', 'name');
+
+    const formattedNotes = notes.map(item => {
+        let snippet = '';
+        if (item.content) {
+            const lowerContent = item.content.toLowerCase();
+            const lowerQuery = String(query).toLowerCase();
+            const matchIndex = lowerContent.indexOf(lowerQuery);
+            if (matchIndex >= 0) {
+                const start = Math.max(0, matchIndex - 30);
+                const end = Math.min(item.content.length, matchIndex + query.length + 50);
+                snippet = (start > 0 ? '...' : '') + item.content.slice(start, end).replace(/\s+/g, ' ') + (end < item.content.length ? '...' : '');
+            } else {
+                snippet = item.content.slice(0, 80).replace(/\s+/g, ' ') + (item.content.length > 80 ? '...' : '');
+            }
+        }
+
+        return {
+            _id: item._id,
+            title: item.title,
+            notebook: item.notebookId ? { _id: item.notebookId._id, name: item.notebookId.name } : null,
+            snippet,
+            updatedAt: item.updatedAt,
+            createdAt: item.createdAt,
+            type: item.type
+        };
+    });
 
     res.status(200).json({
         code: 200,
         message: '搜索笔记成功',
         data: {
-            notes,
-            results: notes.length
+            notes: formattedNotes,
+            results: formattedNotes.length
         }
     });
 });
@@ -681,6 +708,23 @@ exports.rollbackNoteHistory = asyncHandler(async (req, res, next) => {
     const history = await NoteHistory.findOne({ _id: historyId, noteId, userId });
     if (!history) {
         return next(new AppError('历史版本不存在', 404));
+    }
+
+    const currentNote = await Note.findOne({ _id: noteId, userId, isDeleted: false });
+    if (!currentNote) {
+        return next(new AppError('笔记不存在', 404));
+    }
+
+    // 回滚前自动为当前内容创建安全快照防误触
+    if (currentNote.content !== history.content || currentNote.title !== history.title) {
+        await NoteHistory.create({
+            noteId: currentNote._id,
+            userId,
+            title: currentNote.title,
+            content: currentNote.content,
+            saveType: 'manual',
+            wordCount: countWords(currentNote.content)
+        });
     }
 
     const note = await Note.findOneAndUpdate(

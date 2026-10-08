@@ -1,8 +1,9 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Layout, Modal, message } from 'antd';
 import NavTree from '../NavTree';
 import NoteEditor from '../Editor';
 import FileStashBoard from '@/components/FileStashBoard';
+import CommandPalette from '@/components/CommandPalette';
 import { updateNote, createNote } from '@/api/notes';
 import { logout } from '@/api/user';
 import { clearAuth } from '@/utils/auth';
@@ -20,6 +21,7 @@ const MainLayout = () => {
     const [syncVersion, setSyncVersion] = useState(0);
     const [zenMode, setZenMode] = useState(false);
     const [activeView, setActiveView] = useState('notes'); // 'notes' | 'stash'
+    const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
     const [modal, contextHolder] = Modal.useModal();
 
     const handleSaveNote = useCallback(async (noteId, content, meta = {}) => {
@@ -134,6 +136,40 @@ const MainLayout = () => {
         }
     }, [confirmLeaveUnsavedNote]);
 
+    useEffect(() => {
+        const handleKeyDown = e => {
+            if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'k' || e.key.toLowerCase() === 'p')) {
+                e.preventDefault();
+                setCommandPaletteOpen(prev => !prev);
+            }
+        };
+
+        const handleCustomToggle = () => setCommandPaletteOpen(prev => !prev);
+
+        window.addEventListener('keydown', handleKeyDown);
+        window.addEventListener('toggle-command-palette', handleCustomToggle);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('toggle-command-palette', handleCustomToggle);
+        };
+    }, []);
+
+    const handleCommandSelectNote = useCallback(noteId => {
+        handleNoteChange(noteId);
+    }, [handleNoteChange]);
+
+    const handleCommandOpenAI = useCallback(() => {
+        window.dispatchEvent(new CustomEvent('open-ai-modal'));
+    }, []);
+
+    const handleCommandOpenSettings = useCallback(() => {
+        navTreeRef.current?.triggerOpenSettings?.();
+    }, []);
+
+    const handleCommandToggleZenMode = useCallback(() => {
+        setZenMode(prev => !prev);
+    }, []);
+
     return (
         <>
             {contextHolder}
@@ -170,6 +206,16 @@ const MainLayout = () => {
                     )}
                 </Layout.Content>
             </Layout>
+
+            <CommandPalette
+                open={commandPaletteOpen}
+                onClose={() => setCommandPaletteOpen(false)}
+                onSelectNote={handleCommandSelectNote}
+                onCreateNote={handleCreateNote}
+                onOpenAI={handleCommandOpenAI}
+                onToggleZenMode={handleCommandToggleZenMode}
+                onOpenSettings={handleCommandOpenSettings}
+            />
         </>
     );
 };

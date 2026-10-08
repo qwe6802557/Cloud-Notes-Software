@@ -794,7 +794,8 @@ const NavTree = forwardRef(({
     }, []);
 
     useImperativeHandle(ref, () => ({
-        triggerCreateNote: () => triggerCreate('createNote', null)
+        triggerCreateNote: () => triggerCreate('createNote', null),
+        triggerOpenSettings: () => setSettingsOpen(true)
     }), [triggerCreate]);
 
     // 触发重命名对话框
@@ -1262,6 +1263,17 @@ const NavTree = forwardRef(({
                                 onChange={e => setSearchTerm(e.target.value)}
                                 allowClear
                                 className="search-input"
+                                suffix={
+                                    !searchTerm && (
+                                        <kbd
+                                            className="search-shortcut-tag"
+                                            onClick={() => window.dispatchEvent(new CustomEvent('toggle-command-palette'))}
+                                            title="全局闪电搜索 (Ctrl+K)"
+                                        >
+                                            Ctrl K
+                                        </kbd>
+                                    )
+                                }
                             />
                         </div>
 
