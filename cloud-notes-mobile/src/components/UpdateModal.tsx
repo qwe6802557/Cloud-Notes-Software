@@ -148,7 +148,7 @@ export const UpdateModal: React.FC = () => {
           </View>
 
           {/* 辅助浏览器直链下载通道（防止系统未知来源权限受阻） */}
-          {!isOta && !isDownloading && (
+          {!isDownloading && Boolean(updateData.apkUrl || updateData.downloadUrl) && (
             <TouchableOpacity
               style={styles.browserLinkRow}
               onPress={() => {

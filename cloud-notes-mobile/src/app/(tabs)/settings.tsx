@@ -48,7 +48,30 @@ const SYSTEM_MODELS = [
     iconColor: '#0284c7',
     badge: '代码',
   },
+  {
+    id: 'Qwen/Qwen2.5-7B-Instruct',
+    name: '通义千问 7B',
+    iconName: 'bulb-outline' as const,
+    iconColor: '#0284c7',
+    badge: '通用',
+  },
+  {
+    id: 'THUDM/glm-4-9b-chat',
+    name: 'GLM-4 9B',
+    iconName: 'flash-outline' as const,
+    iconColor: '#eab308',
+    badge: '开源',
+  },
 ];
+
+const SYSTEM_MODEL_LABELS: Record<string, string> = {
+  'grok-chat-fast': 'Grok 极速',
+  'glm-4-flash': 'GLM-4-Flash',
+  'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B': 'DeepSeek-R1 蒸馏',
+  'Qwen/Qwen2.5-Coder-7B-Instruct': 'Qwen-Coder',
+  'Qwen/Qwen2.5-7B-Instruct': '通义千问 7B',
+  'THUDM/glm-4-9b-chat': 'GLM-4 9B',
+};
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -311,7 +334,7 @@ export default function SettingsScreen() {
                 <Text style={styles.itemTitle}>AI 大模型配置</Text>
                 <View style={[styles.activePill, { backgroundColor: '#f5f3ff' }]}>
                   <Text style={[styles.activePillText, { color: '#7c3aed' }]}>
-                    {aiModel || aiSystemModel || 'grok-chat-fast'}
+                    {aiModel || SYSTEM_MODEL_LABELS[aiSystemModel] || aiSystemModel || 'Grok 极速'}
                   </Text>
                 </View>
               </View>

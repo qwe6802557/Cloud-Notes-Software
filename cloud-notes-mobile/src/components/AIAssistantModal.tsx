@@ -16,7 +16,16 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import Markdown from 'react-native-markdown-display';
-import { streamAICall } from '../api/aiApi';
+import { streamAICall, getAIConfig } from '../api/aiApi';
+
+const SYSTEM_MODEL_LABELS: Record<string, string> = {
+  'grok-chat-fast': 'grok-chat-fast',
+  'glm-4-flash': 'GLM-4-Flash',
+  'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B': 'DeepSeek-R1 蒸馏',
+  'Qwen/Qwen2.5-Coder-7B-Instruct': 'Qwen2.5-Coder',
+  'Qwen/Qwen2.5-7B-Instruct': '通义千问 7B',
+  'THUDM/glm-4-9b-chat': 'GLM-4 9B',
+};
 
 const DOC_ACTIONS = [
   { key: 'full_summary', icon: 'document-text-outline', label: '核心摘要', promptName: '全文核心摘要提炼' },
@@ -73,6 +82,7 @@ export default function AIAssistantModal({
   const [isStreaming, setIsStreaming] = useState(false);
   const [resultText, setResultText] = useState('');
   const [copied, setCopied] = useState(false);
+  const [modelTag, setModelTag] = useState<string>('grok-chat-fast');
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const resultScrollRef = useRef<ScrollView>(null);
@@ -87,7 +97,17 @@ export default function AIAssistantModal({
       setCustomPrompt('');
       setResultText('');
       setCopied(false);
-      // 不自动发起请求，等待用户点击「生成」按钮
+
+      getAIConfig().then(res => {
+        if (res.code === 200 && res.data) {
+          if (res.data.enabled && res.data.model) {
+            setModelTag(res.data.model);
+          } else {
+            const sys = res.data.systemModel || 'grok-chat-fast';
+            setModelTag(SYSTEM_MODEL_LABELS[sys] || sys);
+          }
+        }
+      }).catch(() => {});
     } else {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -253,6 +273,13 @@ export default function AIAssistantModal({
                   <Ionicons name="sparkles" size={18} color="#7c3aed" />
                 </View>
                 <Text style={styles.headerTitle}>AI 创作</Text>
+                {modelTag ? (
+                  <View style={styles.modelBadge}>
+                    <Text style={styles.modelBadgeText} numberOfLines={1}>
+                      {modelTag}
+                    </Text>
+                  </View>
+                ) : null}
               </View>
 
               <TouchableOpacity
