@@ -178,6 +178,17 @@
         .bytemd-toolbar {
           display: flex;
         }
+
+        .bytemd-body {
+          .bytemd-preview {
+            display: none !important;
+          }
+
+          .bytemd-editor {
+            width: 100% !important;
+            flex: 1 1 100% !important;
+          }
+        }
       }
 
       .bytemd {
@@ -267,6 +278,23 @@
       height: 100%;
     }
 
+    &.editor-container-edit {
+      .bytemd-toolbar {
+        display: flex;
+      }
+
+      .bytemd-body {
+        .bytemd-preview {
+          display: none !important;
+        }
+
+        .bytemd-editor {
+          width: 100% !important;
+          flex: 1 1 100% !important;
+        }
+      }
+    }
+
     // ByteMD编辑器样式覆盖
     .bytemd {
       height: 100% !important; // 强制高度100%
@@ -278,6 +306,22 @@
         border-top: none;
         border-bottom: 1px solid #e8e8e8;
         background-color: #f9f9f9;
+
+        .bytemd-toolbar-left {
+          display: flex !important;
+          align-items: center;
+        }
+
+        .bytemd-toolbar-tab {
+          display: none !important;
+        }
+
+        .bytemd-toolbar-right {
+          [bytemd-tippy-path="2"],
+          [bytemd-tippy-path="3"] {
+            display: none !important;
+          }
+        }
 
         .bytemd-toolbar-icon {
           color: #595959;

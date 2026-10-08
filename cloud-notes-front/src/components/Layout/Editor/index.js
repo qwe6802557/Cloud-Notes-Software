@@ -1116,22 +1116,6 @@ const NoteEditor = ({
         message.info('分享功能暂未开放');
     };
 
-    const hideToolByEdit = () => {
-        const tabElements = document.querySelectorAll('.bytemd-toolbar-tab');
-        if (tabElements.length > 0) {
-            tabElements.forEach(element => {
-                if (element.textContent === '编辑' || element.textContent === '预览') {
-                    element.style.display = 'none';
-                }
-            });
-        }
-
-        const toolbarLeft = document.querySelector('.bytemd-toolbar-left');
-        if (toolbarLeft) {
-            toolbarLeft.style.display = 'none';
-        }
-    };
-
     const saveStatusText = useMemo(() => {
         if (saveError) {
             return saveError;
@@ -1500,14 +1484,6 @@ const NoteEditor = ({
     );
 
     useEffect(() => {
-        if (mode === 'edit') {
-            setTimeout(() => {
-                hideToolByEdit();
-            }, 50);
-        }
-    }, [mode]);
-
-    useEffect(() => {
         if (!selectedNote || !isDirty || loading || saving || autoSaving || uploadingImage) {
             return undefined;
         }
@@ -1626,15 +1602,7 @@ const NoteEditor = ({
                         className={`editor-container editor-container-${mode} font-family-${fontFamily} font-size-${fontSize}`}
                         onClick={handlePreviewContainerClick}
                     >
-                        {mode === 'edit' ? (
-                            <Editor
-                                value={content}
-                                plugins={editorPlugins}
-                                onChange={handleChange}
-                                mode="tab"
-                                locale={locale}
-                            />
-                        ) : mode === 'preview' ? (
+                        {mode === 'preview' ? (
                             <div className="preview-only-wrapper">
                                 <div className="preview-only">
                                     <Viewer value={content} plugins={basePlugins} />
