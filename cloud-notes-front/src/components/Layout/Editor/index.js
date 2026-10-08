@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Editor, Viewer } from '@bytemd/react';
 import gfm from '@bytemd/plugin-gfm';
 import highlight from '@bytemd/plugin-highlight';
@@ -6,7 +7,7 @@ import gemoji from '@bytemd/plugin-gemoji';
 import math from '@bytemd/plugin-math';
 import mermaid from '@bytemd/plugin-mermaid';
 import breaks from '@bytemd/plugin-breaks';
-import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image, Popover, Radio } from 'antd';
+import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image, Popover, Radio, Divider } from 'antd';
 import {
     EditOutlined,
     EyeOutlined,
@@ -26,7 +27,11 @@ import {
     OneToOneOutlined,
     ThunderboltOutlined,
     RobotOutlined,
-    CheckOutlined
+    CheckOutlined,
+    MoreOutlined,
+    CheckCircleOutlined,
+    CloseCircleOutlined,
+    SyncOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -340,6 +345,41 @@ const createEditorContextPlugin = (editorContextRef, onHandleImageFiles) => ({
     }
 });
 
+const MODE_OPTIONS = [
+    { label: '编辑', value: 'edit', icon: <EditOutlined /> },
+    { label: '分屏', value: 'split', icon: <ColumnWidthOutlined /> },
+    { label: '预览', value: 'preview', icon: <EyeOutlined /> }
+];
+
+// 模式切换分段器：基于持久 DOM 滑块实现无重置平滑过渡
+const ModeSegmented = ({ value, onChange }) => {
+    const activeIndex = Math.max(0, MODE_OPTIONS.findIndex(item => item.value === value));
+
+    return (
+        <div className="mode-segmented" role="radiogroup" aria-label="视图模式切换">
+            <div
+                className="mode-segmented-thumb"
+                style={{
+                    transform: `translateX(${activeIndex * 100}%)`
+                }}
+            />
+            {MODE_OPTIONS.map(item => (
+                <button
+                    key={item.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={item.value === value}
+                    className={`mode-segmented-item ${item.value === value ? 'is-active' : ''}`}
+                    onClick={() => onChange(item.value)}
+                >
+                    <span className="item-icon">{item.icon}</span>
+                    <span className="item-label">{item.label}</span>
+                </button>
+            ))}
+        </div>
+    );
+};
+
 const NoteEditor = ({
     selectedNote,
     onSave,
@@ -378,8 +418,47 @@ const NoteEditor = ({
     const contentRef = useRef('');
     const previousModeRef = useRef(mode);
     const editorContainerRef = useRef(null);
+    const [statusAnchorEl, setStatusAnchorEl] = useState(null);
 
     const contentAnalytics = useMemo(() => calculateContentAnalytics(content), [content]);
+
+    // 锚定并挂载保存状态至 ByteMD 右侧原生状态栏（同步滚动按钮之前）
+    useEffect(() => {
+        if (mode === 'preview') {
+            setStatusAnchorEl(null);
+            return;
+        }
+
+        const container = editorContainerRef.current;
+        if (!container) return;
+
+        const attachAnchor = () => {
+            const statusRight = container.querySelector('.bytemd-status-right');
+            if (statusRight) {
+                let anchor = statusRight.querySelector('.bytemd-status-save-anchor');
+                if (!anchor) {
+                    anchor = document.createElement('div');
+                    anchor.className = 'bytemd-status-save-anchor';
+                    statusRight.insertBefore(anchor, statusRight.firstChild);
+                }
+                setStatusAnchorEl(anchor);
+            }
+        };
+
+        attachAnchor();
+        const timer = setTimeout(attachAnchor, 80);
+
+        const observer = new MutationObserver(() => {
+            attachAnchor();
+        });
+
+        observer.observe(container, { childList: true, subtree: true });
+
+        return () => {
+            clearTimeout(timer);
+            observer.disconnect();
+        };
+    }, [mode, selectedNote]);
 
     useEffect(() => {
         if (zenMode) {
@@ -1087,24 +1166,35 @@ const NoteEditor = ({
         ];
     }, [handleImageFiles]);
 
-    const exportMenu = {
+    const moreMenu = {
         items: [
             {
+                key: 'share',
+                icon: <ShareAltOutlined />,
+                label: '分享当前笔记'
+            },
+            {
+                type: 'divider'
+            },
+            {
                 key: 'markdown',
+                icon: <DownloadOutlined />,
                 label: '导出 Markdown (.md)'
             },
             {
                 key: 'html',
+                icon: <ExportOutlined />,
                 label: '导出 HTML (.html)'
             }
         ],
         onClick: ({ key }) => {
-            if (key === 'markdown') {
+            if (key === 'share') {
+                handleShareClick();
+            } else if (key === 'markdown') {
                 handleExportMarkdown();
-                return;
+            } else if (key === 'html') {
+                handleExportHtml();
             }
-
-            handleExportHtml();
         }
     };
 
@@ -1253,207 +1343,159 @@ const NoteEditor = ({
     const renderToolbar = () => (
         <div className="editor-toolbar">
             <div className="editor-left-actions">
-                <Space>
+                <ModeSegmented value={mode} onChange={setMode} />
+                <Divider type="vertical" style={{ height: 16, margin: '0 4px' }} />
+                <Tooltip title={tocVisible ? '收起大纲' : '文章大纲 (Ctrl+Shift+O)'}>
                     <Button
-                        type={mode === 'edit' ? 'primary' : 'default'}
-                        icon={<EditOutlined />}
-                        onClick={() => setMode('edit')}
-                    >
-                        编辑
-                    </Button>
+                        className="toolbar-tool-btn"
+                        type={tocVisible ? 'primary' : 'text'}
+                        icon={<CompassOutlined />}
+                        onClick={() => setTocVisible(!tocVisible)}
+                    />
+                </Tooltip>
+                <Tooltip title="历史版本快照">
                     <Button
-                        type={mode === 'split' ? 'primary' : 'default'}
-                        icon={<ColumnWidthOutlined />}
-                        onClick={() => setMode('split')}
-                    >
-                        分屏
-                    </Button>
+                        className="toolbar-tool-btn"
+                        type="text"
+                        icon={<HistoryOutlined />}
+                        disabled={!selectedNote}
+                        onClick={() => setHistoryModalVisible(true)}
+                    />
+                </Tooltip>
+                <Tooltip title={zenMode ? '退出沉浸模式 (Esc)' : '专注沉浸模式 (Ctrl+Shift+F)'}>
                     <Button
-                        type={mode === 'preview' ? 'primary' : 'default'}
-                        icon={<EyeOutlined />}
-                        onClick={() => setMode('preview')}
-                    >
-                        预览
-                    </Button>
-                    <Tooltip title="文章大纲 (Ctrl+Shift+O)">
-                        <Button
-                            type={tocVisible ? 'primary' : 'default'}
-                            icon={<CompassOutlined />}
-                            onClick={() => setTocVisible(!tocVisible)}
-                        >
-                            大纲
-                        </Button>
-                    </Tooltip>
-                    <Tooltip title="历史版本快照">
-                        <Button
-                            icon={<HistoryOutlined />}
-                            disabled={!selectedNote}
-                            onClick={() => setHistoryModalVisible(true)}
-                        >
-                            版本
-                        </Button>
-                    </Tooltip>
-                    <Tooltip title={zenMode ? '退出沉浸模式 (Esc)' : '专注沉浸模式 (Ctrl+Shift+F)'}>
-                        <Button
-                            type={zenMode ? 'primary' : 'default'}
-                            icon={zenMode ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-                            onClick={() => onToggleZenMode?.(!zenMode)}
-                        >
-                            {zenMode ? '还原' : '专注'}
-                        </Button>
-                    </Tooltip>
-                    <Popover
-                        placement="bottomLeft"
-                        title={<span style={{ fontWeight: 600 }}>排版与字体风格</span>}
-                        trigger="click"
-                        content={(
-                            <div className="typography-popover-content">
-                                <div className="typography-popover-section">
-                                    <div className="popover-section-label">阅读字体</div>
-                                    <Radio.Group
-                                        size="small"
-                                        value={fontFamily}
-                                        onChange={e => handleTypographyChange('fontFamily', e.target.value)}
-                                        buttonStyle="solid"
-                                    >
-                                        <Radio.Button value="lxgw">霞鹜文楷</Radio.Button>
-                                        <Radio.Button value="sans">思源黑体</Radio.Button>
-                                        <Radio.Button value="system">系统默认</Radio.Button>
-                                    </Radio.Group>
-                                </div>
-                                <div className="typography-popover-divider" />
-                                <div className="typography-popover-section">
-                                    <div className="popover-section-label">正文字号</div>
-                                    <Radio.Group
-                                        size="small"
-                                        value={fontSize}
-                                        onChange={e => handleTypographyChange('fontSize', e.target.value)}
-                                        buttonStyle="solid"
-                                    >
-                                        <Radio.Button value="small">小 (14px)</Radio.Button>
-                                        <Radio.Button value="medium">标准 (16px)</Radio.Button>
-                                        <Radio.Button value="large">大 (18px)</Radio.Button>
-                                    </Radio.Group>
-                                </div>
+                        className="toolbar-tool-btn"
+                        type={zenMode ? 'primary' : 'text'}
+                        icon={zenMode ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                        onClick={() => onToggleZenMode?.(!zenMode)}
+                    />
+                </Tooltip>
+                <Popover
+                    placement="bottomLeft"
+                    title={<span style={{ fontWeight: 600 }}>排版与字体风格</span>}
+                    trigger="click"
+                    content={(
+                        <div className="typography-popover-content">
+                            <div className="typography-popover-section">
+                                <div className="popover-section-label">阅读字体</div>
+                                <Radio.Group
+                                    size="small"
+                                    value={fontFamily}
+                                    onChange={e => handleTypographyChange('fontFamily', e.target.value)}
+                                    buttonStyle="solid"
+                                >
+                                    <Radio.Button value="lxgw">霞鹜文楷</Radio.Button>
+                                    <Radio.Button value="sans">思源黑体</Radio.Button>
+                                    <Radio.Button value="system">系统默认</Radio.Button>
+                                </Radio.Group>
                             </div>
-                        )}
-                    >
-                        <Tooltip title="排版与字体风格">
-                            <Button icon={<FontSizeOutlined />}>
-                                排版
-                            </Button>
-                        </Tooltip>
-                    </Popover>
-                </Space>
-
-                <div className="word-count">
-                    <Popover
-                        placement="bottomLeft"
-                        title={<span style={{ fontWeight: 600 }}>文档统计与阅读预估</span>}
-                        content={
-                            <div className="word-count-popover-content">
-                                <div className="word-count-stat-row">
-                                    <span>总字数 (中+英)：</span>
-                                    <strong>{contentAnalytics.effectiveWords}</strong>
-                                </div>
-                                <div className="word-count-stat-row">
-                                    <span>中文字数：</span>
-                                    <strong>{contentAnalytics.chineseChars}</strong>
-                                </div>
-                                <div className="word-count-stat-row">
-                                    <span>英文单词数：</span>
-                                    <strong>{contentAnalytics.englishWords}</strong>
-                                </div>
-                                <div className="word-count-stat-row">
-                                    <span>标点字符数：</span>
-                                    <strong>{contentAnalytics.punctuationChars}</strong>
-                                </div>
-                                <div className="word-count-stat-row">
-                                    <span>总字符数：</span>
-                                    <strong>{contentAnalytics.totalChars}</strong>
-                                </div>
-                                <div className="word-count-stat-row">
-                                    <span>总行数：</span>
-                                    <strong>{contentAnalytics.lines}</strong>
-                                </div>
-                                <div className="word-count-stat-divider" />
-                                <div className="word-count-stat-row reading-time-row">
-                                    <span>预计阅读用时：</span>
-                                    <strong>约 {contentAnalytics.readingTimeMinutes} 分钟</strong>
-                                </div>
+                            <div className="typography-popover-divider" />
+                            <div className="typography-popover-section">
+                                <div className="popover-section-label">正文字号</div>
+                                <Radio.Group
+                                    size="small"
+                                    value={fontSize}
+                                    onChange={e => handleTypographyChange('fontSize', e.target.value)}
+                                    buttonStyle="solid"
+                                >
+                                    <Radio.Button value="small">小 (14px)</Radio.Button>
+                                    <Radio.Button value="medium">标准 (16px)</Radio.Button>
+                                    <Radio.Button value="large">大 (18px)</Radio.Button>
+                                </Radio.Group>
                             </div>
-                        }
-                    >
-                        <span className="word-count-interactive-badge">
-                            <FileTextOutlined style={{ marginRight: 4, color: '#2563eb' }} />
-                            <span className="count-label">字数:</span> {contentAnalytics.effectiveWords}
-                            <span className="count-separator">|</span>
-                            <span className="count-label">阅读:</span> 约 {contentAnalytics.readingTimeMinutes} 分钟
-                            {savedTimeText && (
-                                <>
-                                    <span className="count-separator">|</span>
-                                    <span className="save-time">{savedTimeText}</span>
-                                </>
-                            )}
-                        </span>
-                    </Popover>
-                </div>
+                        </div>
+                    )}
+                >
+                    <Tooltip title="排版与字体风格">
+                        <Button className="toolbar-tool-btn" type="text" icon={<FontSizeOutlined />} />
+                    </Tooltip>
+                </Popover>
             </div>
 
             <div className="editor-right-actions">
-                <Space>
-                    <Dropdown menu={aiMenu} trigger={['click']} placement="bottomRight">
+                <Dropdown menu={aiMenu} trigger={['click']} placement="bottomRight">
+                    <Button
+                        className="ai-toolbar-btn"
+                        type="primary"
+                        icon={<ThunderboltOutlined />}
+                        disabled={!selectedNote}
+                    >
+                        AI 创作助手
+                    </Button>
+                </Dropdown>
+                <Button
+                    className="save-btn"
+                    type="primary"
+                    icon={<SaveOutlined />}
+                    onClick={() => handleSave()}
+                    loading={saving}
+                    disabled={!selectedNote || !isDirty || loading || autoSaving || uploadingImage}
+                >
+                    保存
+                </Button>
+                <Dropdown menu={copyMenu} placement="bottomLeft">
+                    <Tooltip title="一键复制 (Markdown / 富文本)">
                         <Button
-                            className="ai-toolbar-btn"
-                            type="primary"
-                            icon={<ThunderboltOutlined />}
-                            disabled={!selectedNote}
-                        >
-                            AI 创作助手
-                        </Button>
-                    </Dropdown>
-                    <Dropdown menu={copyMenu} placement="bottomLeft">
-                        <Button
+                            className="toolbar-tool-btn"
+                            type="text"
                             icon={<CopyOutlined />}
                             disabled={!selectedNote || !content}
-                        >
-                            一键复制
-                        </Button>
-                    </Dropdown>
+                        />
+                    </Tooltip>
+                </Dropdown>
+                <Tooltip title="插入本地图片">
                     <Button
-                        type="primary"
-                        icon={<SaveOutlined />}
-                        onClick={() => handleSave()}
-                        loading={saving}
-                        disabled={!selectedNote || !isDirty || loading || autoSaving || uploadingImage}
-                    >
-                        保存
-                    </Button>
-                    <Button
-                        icon={<ShareAltOutlined />}
-                        disabled={!selectedNote}
-                        onClick={handleShareClick}
-                    >
-                        分享
-                    </Button>
-                    <Button
+                        className="toolbar-tool-btn"
+                        type="text"
                         icon={<FileImageOutlined />}
                         disabled={!selectedNote || uploadingImage}
                         loading={uploadingImage}
                         onClick={handleInsertImageClick}
-                    >
-                        插入图片
-                    </Button>
-                    <Dropdown menu={exportMenu} trigger={['click']}>
+                    />
+                </Tooltip>
+                <Dropdown menu={moreMenu} trigger={['click']} placement="bottomRight">
+                    <Tooltip title="更多操作 (分享 / 导出)">
                         <Button
-                            icon={<DownloadOutlined />}
+                            className="toolbar-tool-btn"
+                            type="text"
+                            icon={<MoreOutlined />}
                             disabled={!selectedNote}
-                        >
-                            导出
-                        </Button>
-                    </Dropdown>
-                </Space>
+                        />
+                    </Tooltip>
+                </Dropdown>
             </div>
+        </div>
+    );
+
+    // 保存状态指示（嵌入 ByteMD 状态栏或预览底栏）
+    const renderSaveStatus = () => (
+        <div className="bytemd-save-status-wrap">
+            {saveStatusText ? (
+                <div className={saveError ? 'sync-info sync-error' : 'sync-info'}>
+                    {saveError ? (
+                        <CloseCircleOutlined style={{ color: '#ff4d4f', marginRight: 4 }} />
+                    ) : (
+                        <SyncOutlined spin style={{ color: '#1890ff', marginRight: 4 }} />
+                    )}
+                    <span>{saveStatusText}</span>
+                    {saveError && selectedNote && (
+                        <Button
+                            type="link"
+                            size="small"
+                            onClick={handleRetrySave}
+                            disabled={saving || autoSaving || uploadingImage}
+                            style={{ padding: '0 4px', height: 'auto', fontSize: 12 }}
+                        >
+                            重试
+                        </Button>
+                    )}
+                </div>
+            ) : (
+                <div className="sync-info sync-idle">
+                    <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+                    <span>{savedTimeText || '已同步到云端'}</span>
+                </div>
+            )}
         </div>
     );
 
@@ -1593,8 +1635,19 @@ const NoteEditor = ({
                                 locale={locale}
                             />
                         ) : mode === 'preview' ? (
-                            <div className="preview-only">
-                                <Viewer value={content} plugins={basePlugins} />
+                            <div className="preview-only-wrapper">
+                                <div className="preview-only">
+                                    <Viewer value={content} plugins={basePlugins} />
+                                </div>
+                                <div className="bytemd-status preview-status-bar">
+                                    <div className="bytemd-status-left">
+                                        <span>字数: <strong>{contentAnalytics.effectiveWords}</strong></span>
+                                        <span>行数: <strong>{contentAnalytics.lines}</strong></span>
+                                    </div>
+                                    <div className="bytemd-status-right">
+                                        {renderSaveStatus()}
+                                    </div>
+                                </div>
                             </div>
                         ) : (
                             <Editor
@@ -1613,23 +1666,7 @@ const NoteEditor = ({
                 />
             </div>
 
-            {saveStatusText && (
-                <div className="editor-footer">
-                    <div className={saveError ? 'sync-info sync-error' : 'sync-info'}>
-                        {saveStatusText}
-                        {saveError && selectedNote && (
-                            <Button
-                                type="link"
-                                size="small"
-                                onClick={handleRetrySave}
-                                disabled={saving || autoSaving || uploadingImage}
-                            >
-                                重试
-                            </Button>
-                        )}
-                    </div>
-                </div>
-            )}
+            {statusAnchorEl && createPortal(renderSaveStatus(), statusAnchorEl)}
 
             <TOCDrawer
                 visible={tocVisible}

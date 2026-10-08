@@ -51,6 +51,7 @@ export interface NoteHistoryItem {
 export interface CaptchaData {
   svg: string;
   captchaKey: string;
+  dataUri?: string;
 }
 
 export interface LoginResponseData {

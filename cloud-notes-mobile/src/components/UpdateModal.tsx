@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Modal,
   ScrollView,
   StyleSheet,
@@ -145,6 +146,21 @@ export const UpdateModal: React.FC = () => {
               </>
             )}
           </View>
+
+          {/* 辅助浏览器直链下载通道（防止系统未知来源权限受阻） */}
+          {!isOta && !isDownloading && (
+            <TouchableOpacity
+              style={styles.browserLinkRow}
+              onPress={() => {
+                const target = updateData.apkUrl || updateData.downloadUrl;
+                if (target) Linking.openURL(target);
+              }}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="globe-outline" size={13} color="#64748b" />
+              <Text style={styles.browserLinkText}>权限受阻？点此在浏览器中直接下载安装</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </Modal>
@@ -304,5 +320,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: '#475569',
+  },
+  browserLinkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    gap: 4,
+  },
+  browserLinkText: {
+    fontSize: 12,
+    color: '#64748b',
+    textDecorationLine: 'underline',
   },
 });

@@ -34,9 +34,13 @@ exports.generateCaptcha = () => {
         expiresAt
     });
 
+    const base64 = Buffer.from(captcha.data, 'utf-8').toString('base64');
+    const dataUri = `data:image/svg+xml;base64,${base64}`;
+
     return {
         captchaKey,
-        svg: captcha.data
+        svg: captcha.data,
+        dataUri
     };
 };
 

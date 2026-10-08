@@ -133,14 +133,26 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               const contentUri = await FileSystem.getContentUriAsync(result.uri);
               await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
                 data: contentUri,
-                flags: 1, // FLAG_GRANT_READ_URI_PERMISSION
+                flags: 268435457, // FLAG_GRANT_READ_URI_PERMISSION (1) | FLAG_ACTIVITY_NEW_TASK (0x10000000)
                 type: 'application/vnd.android.package-archive',
               });
               setIsModalVisible(false);
             } catch (intentErr: any) {
               console.warn('拉起安装器失败，尝试系统浏览器打开:', intentErr.message);
-              await Linking.openURL(apkUrl);
-              setIsModalVisible(false);
+              Alert.alert(
+                '安装权限提示',
+                '系统需要安装未知应用权限。如弹出权限设置请开启「允许安装应用」，或点击确定直接使用浏览器完成安装。',
+                [
+                  { text: '取消', style: 'cancel' },
+                  {
+                    text: '使用浏览器下载安装',
+                    onPress: () => {
+                      setIsModalVisible(false);
+                      Linking.openURL(apkUrl);
+                    },
+                  },
+                ]
+              );
             }
           }
         } else {

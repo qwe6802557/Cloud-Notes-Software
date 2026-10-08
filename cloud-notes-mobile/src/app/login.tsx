@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,6 +22,28 @@ import { CaptchaData } from '../api/types';
 import { Colors } from '../constants/theme';
 import { Config } from '../constants/Config';
 
+// 兼容纯 JS 环境的 safe base64 编码器（支持 UTF-8 SVG）
+const getCaptchaUri = (data: CaptchaData | null) => {
+  if (!data) return undefined;
+  if (data.dataUri) return data.dataUri;
+  if (!data.svg) return undefined;
+
+  try {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+    const str = unescape(encodeURIComponent(data.svg));
+    let output = '';
+    for (let block = 0, charCode, i = 0, map = chars;
+         str.charAt(i | 0) || (map = '=', i % 1);
+         output += map.charAt(63 & block >> 8 - i % 1 * 8)) {
+      charCode = str.charCodeAt(i += 3/4);
+      block = block << 8 | charCode;
+    }
+    return `data:image/svg+xml;base64,${output}`;
+  } catch {
+    return undefined;
+  }
+};
+
 export default function LoginScreen() {
   const router = useRouter();
   const { login, serverUrl, updateServerUrl } = useAuth();
@@ -32,15 +54,19 @@ export default function LoginScreen() {
   const [captchaCode, setCaptchaCode] = useState('');
   const [captchaData, setCaptchaData] = useState<CaptchaData | null>(null);
   const [isLoadingCaptcha, setIsLoadingCaptcha] = useState(false);
+  const [captchaLoadError, setCaptchaLoadError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 服务器配置弹窗
   const [showServerModal, setShowServerModal] = useState(false);
   const [tempServerUrl, setTempServerUrl] = useState(serverUrl);
 
+  const captchaUri = useMemo(() => getCaptchaUri(captchaData), [captchaData]);
+
   const fetchCaptcha = async () => {
     try {
       setIsLoadingCaptcha(true);
+      setCaptchaLoadError(false);
       const res = await authApi.getCaptcha();
       if (res.code === 200 && res.data) {
         setCaptchaData(res.data);
@@ -175,11 +201,15 @@ export default function LoginScreen() {
                 >
                   {isLoadingCaptcha ? (
                     <ActivityIndicator size="small" color="#1890ff" />
-                  ) : captchaData?.svg ? (
+                  ) : captchaUri && !captchaLoadError ? (
                     <Image
-                      source={{ uri: `data:image/svg+xml;utf8,${encodeURIComponent(captchaData.svg)}` }}
+                      source={{ uri: captchaUri }}
                       style={styles.captchaSvg}
                       contentFit="contain"
+                      onError={(err) => {
+                        console.warn('Captcha image load error:', err);
+                        setCaptchaLoadError(true);
+                      }}
                     />
                   ) : (
                     <Text style={styles.captchaTip}>点击重试</Text>
