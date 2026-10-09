@@ -25,7 +25,8 @@ const version = getArg('version', appJson.expo.version || '1.0.1');
 const buildNumber = parseInt(getArg('build', String(appJson.expo.android?.versionCode || 101)), 10);
 const changelog = getArg('changelog', '· 新增「文件暂存」跨端即时互传中转站\n· 优化图片懒加载性能与长图浏览体验\n· 界面细节打磨与系统稳定性提升');
 const forceUpdate = hasFlag('force');
-const apkPath = getArg('apk-path', '');
+const defaultApkCandidate = path.join(mobileRoot, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk');
+const apkPath = getArg('apk-path', fs.existsSync(defaultApkCandidate) ? defaultApkCandidate : '');
 
 const SSH_KEY = 'C:\\Users\\Administrator\\.ssh\\id_ed25519_tencentyun';
 const SERVER_HOST = '1.15.171.111';

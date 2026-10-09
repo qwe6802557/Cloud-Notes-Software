@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { UpdateProvider } from '../context/UpdateContext';
 import { UpdateModal } from '../components/UpdateModal';
@@ -83,12 +84,14 @@ function RootNavigation() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <UpdateProvider>
-        <RootNavigation />
-        <UpdateModal />
-      </UpdateProvider>
-    </AuthProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <UpdateProvider>
+          <RootNavigation />
+          <UpdateModal />
+        </UpdateProvider>
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }
 
