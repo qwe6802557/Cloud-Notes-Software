@@ -40,9 +40,10 @@ export interface NoteHistoryItem {
   _id: string;
   noteId: string;
   title: string;
-  content: string;
-  version: number;
-  trigger: string;
+  content?: string;
+  saveType?: string;
+  version?: number;
+  trigger?: string;
   wordCount?: number;
   charCount?: number;
   createdAt: string;

@@ -191,9 +191,25 @@ export const uploadNoteImage = async (
 };
 
 // 获取笔记历史版本列表
-export const getNoteHistories = (noteId: string): Promise<ApiResponse<NoteHistoryItem[]>> => {
+export const getNoteHistories = (noteId: string): Promise<ApiResponse<{ histories: NoteHistoryItem[] }>> => {
   return request({
     url: `/notes/${noteId}/histories`,
     method: 'get',
+  });
+};
+
+// 获取单个历史版本详情
+export const getNoteHistoryDetail = (noteId: string, historyId: string): Promise<ApiResponse<{ history: NoteHistoryItem }>> => {
+  return request({
+    url: `/notes/${noteId}/histories/${historyId}`,
+    method: 'get',
+  });
+};
+
+// 回滚至指定历史版本
+export const rollbackNoteHistory = (noteId: string, historyId: string): Promise<ApiResponse<{ note: Note }>> => {
+  return request({
+    url: `/notes/${noteId}/histories/${historyId}/rollback`,
+    method: 'post',
   });
 };

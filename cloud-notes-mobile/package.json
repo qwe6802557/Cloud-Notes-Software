@@ -1,12 +1,14 @@
 {
   "name": "cloud-notes-mobile",
   "main": "expo-router/entry",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "dependencies": {
     "@expo/ui": "~57.0.18",
     "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@types/diff": "^7.0.2",
     "axios": "^1.20.0",
+    "diff": "^9.0.0",
     "expo": "~57.0.23",
     "expo-clipboard": "^57.0.2",
     "expo-constants": "~57.0.18",
@@ -40,6 +42,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~57.0.2",
     "typescript": "~6.0.3"
   },
   "scripts": {

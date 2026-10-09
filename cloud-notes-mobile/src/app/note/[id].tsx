@@ -19,6 +19,7 @@ import * as notesApi from '../../api/notesApi';
 import { Note } from '../../api/types';
 import { useAuth } from '../../context/AuthContext';
 import AIAssistantModal from '../../components/AIAssistantModal';
+import VersionHistoryModal from '../../components/VersionHistoryModal';
 
 interface TocItem {
   level: number;
@@ -89,6 +90,7 @@ export default function NoteDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [showTocModal, setShowTocModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [tocList, setTocList] = useState<TocItem[]>([]);
 
   const markdownRules = useMemo(
@@ -238,6 +240,14 @@ export default function NoteDetailScreen() {
                 </TouchableOpacity>
               )}
 
+              {/* 历史版本快照 */}
+              <TouchableOpacity
+                style={styles.headerActionBtn}
+                onPress={() => setShowHistoryModal(true)}
+              >
+                <Ionicons name="time-outline" size={22} color="#0f172a" />
+              </TouchableOpacity>
+
               {/* 收藏按钮 */}
               <TouchableOpacity style={styles.headerActionBtn} onPress={handleToggleStar}>
                 <Ionicons
@@ -342,6 +352,19 @@ export default function NoteDetailScreen() {
         noteContent={note?.content || ''}
         isEditable={false}
       />
+
+      {/* 历史版本快照与 Diff 对比 */}
+      {note && (
+        <VersionHistoryModal
+          visible={showHistoryModal}
+          onClose={() => setShowHistoryModal(false)}
+          noteId={note._id}
+          currentContent={note.content || ''}
+          onRollbackSuccess={updatedNote => {
+            setNote(updatedNote);
+          }}
+        />
+      )}
     </View>
   );
 }

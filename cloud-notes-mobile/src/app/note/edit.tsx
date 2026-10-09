@@ -19,6 +19,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as notesApi from '../../api/notesApi';
 import { Config } from '../../constants/Config';
 import AIAssistantModal from '../../components/AIAssistantModal';
+import VersionHistoryModal from '../../components/VersionHistoryModal';
 
 export default function NoteEditScreen() {
   const router = useRouter();
@@ -41,6 +42,7 @@ export default function NoteEditScreen() {
   });
 
   const [showAIModal, setShowAIModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   const contentInputRef = useRef<TextInput>(null);
 
@@ -210,6 +212,16 @@ export default function NoteEditScreen() {
           headerTitle: id ? '编辑笔记' : '新建笔记',
           headerRight: () => (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {Boolean(id) && (
+                <TouchableOpacity
+                  style={styles.historyHeaderBtn}
+                  onPress={() => setShowHistoryModal(true)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="time-outline" size={18} color="#475569" />
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 style={styles.aiHeaderBtn}
                 onPress={() => setShowAIModal(true)}
@@ -366,6 +378,20 @@ export default function NoteEditScreen() {
           setContent(before + insertion + after);
         }}
       />
+
+      {/* 历史版本快照 */}
+      {Boolean(id) && (
+        <VersionHistoryModal
+          visible={showHistoryModal}
+          onClose={() => setShowHistoryModal(false)}
+          noteId={id!}
+          currentContent={content}
+          onRollbackSuccess={updatedNote => {
+            setTitle(updatedNote.title || '');
+            setContent(updatedNote.content || '');
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -501,5 +527,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#7c3aed',
+  },
+  historyHeaderBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
 });
