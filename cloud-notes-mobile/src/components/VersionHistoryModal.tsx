@@ -6,11 +6,13 @@ import {
   Platform,
   SafeAreaView,
   ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import Markdown from 'react-native-markdown-display';
@@ -42,6 +44,12 @@ export default function VersionHistoryModal({
   currentContent = '',
   onRollbackSuccess,
 }: VersionHistoryModalProps) {
+  const insets = useSafeAreaInsets();
+  const topPadding = Math.max(
+    insets.top,
+    Platform.OS === 'android' ? (StatusBar.currentHeight || 0) : 0
+  );
+
   const [viewStage, setViewStage] = useState<'list' | 'detail'>('list');
   const [histories, setHistories] = useState<NoteHistoryItem[]>([]);
   const [isLoadingList, setIsLoadingList] = useState(false);
@@ -186,7 +194,8 @@ export default function VersionHistoryModal({
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.modalRoot}>
+      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" translucent={false} />
+      <View style={[styles.modalRoot, { paddingTop: topPadding, paddingBottom: insets.bottom }]}>
         {/* 顶部主导航栏 */}
         <View style={styles.navBar}>
           <View style={styles.navLeft}>
@@ -502,7 +511,7 @@ export default function VersionHistoryModal({
             </View>
           </View>
         )}
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }

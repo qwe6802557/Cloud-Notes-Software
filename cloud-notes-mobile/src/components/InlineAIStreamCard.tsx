@@ -65,11 +65,7 @@ export default function InlineAIStreamCard({
       {/* 顶部状态与控制栏 */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          {isStreaming ? (
-            <ActivityIndicator size="small" color="#7c3aed" style={styles.headerSpinner} />
-          ) : (
-            <Ionicons name="sparkles" size={16} color="#7c3aed" />
-          )}
+          <Ionicons name="sparkles" size={16} color="#7c3aed" />
           <Text style={styles.headerTitle}>{actionTitle}</Text>
           {isStreaming ? (
             <Text style={styles.headerBadgeGenerating}>生成中...</Text>
@@ -233,9 +229,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-  },
-  headerSpinner: {
-    marginRight: 2,
   },
   headerTitle: {
     fontSize: 13,
