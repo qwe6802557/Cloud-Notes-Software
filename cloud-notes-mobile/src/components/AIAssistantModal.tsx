@@ -464,18 +464,8 @@ export default function AIAssistantModal({
                   <Text style={styles.emptyPlaceholderText}>
                     {currentAction === 'custom'
                       ? '在上方输入指令后点击发送开始'
-                      : `已选「${actionList.find(a => a.key === currentAction)?.label || '当前功能'}」，点击按钮开始生成`}
+                      : `已选「${actionList.find(a => a.key === currentAction)?.label || '当前功能'}」，点击上方「生成」按钮开始`}
                   </Text>
-                  {currentAction !== 'custom' && (
-                    <TouchableOpacity
-                      style={styles.emptyGenerateBtn}
-                      onPress={() => startStream(currentAction, targetScope, '')}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="sparkles" size={14} color="#ffffff" style={{ marginRight: 6 }} />
-                      <Text style={styles.emptyGenerateBtnText}>立即生成</Text>
-                    </TouchableOpacity>
-                  )}
                 </View>
               )}
             </ScrollView>
@@ -781,25 +771,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 20,
     lineHeight: 18,
-  },
-  emptyGenerateBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#7c3aed',
-    marginTop: 6,
-    shadowColor: '#7c3aed',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  emptyGenerateBtnText: {
-    fontSize: 13,
-    color: '#ffffff',
-    fontWeight: '600',
   },
   footerRow: {
     flexDirection: 'row',
