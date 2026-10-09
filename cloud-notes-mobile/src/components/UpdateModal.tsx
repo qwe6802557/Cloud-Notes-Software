@@ -39,7 +39,6 @@ export const UpdateModal: React.FC = () => {
   }
 
   const isOta = updateData.type === 'ota';
-  const sizeText = updateData.size ? ` (${formatBytes(updateData.size)})` : '';
 
   return (
     <Modal
@@ -76,9 +75,16 @@ export const UpdateModal: React.FC = () => {
           {/* 版本与标题 */}
           <View style={styles.titleSection}>
             <Text style={styles.title}>{updateData.title || `新版本 v${updateData.version}`}</Text>
-            <Text style={styles.versionSub}>
-              最新版本: v{updateData.version} (Build {updateData.buildNumber})
-            </Text>
+            <View style={styles.versionSubRow}>
+              <Text style={styles.versionSub}>
+                最新版本: v{updateData.version} (Build {updateData.buildNumber})
+              </Text>
+              {updateData.size ? (
+                <View style={styles.sizePill}>
+                  <Text style={styles.sizePillText}>{formatBytes(updateData.size)}</Text>
+                </View>
+              ) : null}
+            </View>
           </View>
 
           {/* 更新日志 */}
@@ -137,12 +143,16 @@ export const UpdateModal: React.FC = () => {
                 )}
 
                 <TouchableOpacity
-                  style={[styles.btn, styles.btnPrimary, updateData.forceUpdate && { flex: 1 }]}
+                  style={[
+                    styles.btn,
+                    styles.btnPrimary,
+                    !updateData.forceUpdate && styles.btnPrimaryFlex,
+                  ]}
                   onPress={startUpdate}
                   activeOpacity={0.8}
                 >
-                  <Ionicons name="arrow-down-circle-outline" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-                  <Text style={styles.btnText}>立即更新{sizeText}</Text>
+                  <Ionicons name="arrow-down-circle" size={17} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.btnText} numberOfLines={1}>立即更新</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -240,10 +250,29 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     letterSpacing: -0.3,
   },
+  versionSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
   versionSub: {
     fontSize: 13,
     color: '#64748b',
-    marginTop: 4,
+  },
+  sizePill: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  sizePillText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#64748b',
+    fontVariant: ['tabular-nums'],
   },
   changelogBox: {
     backgroundColor: '#f8fafc',
@@ -311,9 +340,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  btnPrimaryFlex: {
+    flex: 1.35,
   },
   btnPrimary: {
     backgroundColor: '#1890ff',
+    shadowColor: '#1890ff',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    elevation: 3,
   },
   btnSecondary: {
     backgroundColor: '#f1f5f9',
@@ -326,6 +364,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#ffffff',
+    letterSpacing: 0.3,
   },
   btnSecondaryText: {
     fontSize: 14,
