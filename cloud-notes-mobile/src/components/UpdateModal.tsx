@@ -31,6 +31,7 @@ export const UpdateModal: React.FC = () => {
     isCompleted,
     startUpdate,
     dismissModal,
+    openInstallPermissionSettings,
   } = useAppUpdate();
 
   if (!isModalVisible || !updateData) {
@@ -147,19 +148,29 @@ export const UpdateModal: React.FC = () => {
             )}
           </View>
 
-          {/* 辅助浏览器直链下载通道（防止系统未知来源权限受阻） */}
+          {/* 辅助通道（未知来源权限开启与浏览器直链下载） */}
           {!isDownloading && Boolean(updateData.apkUrl || updateData.downloadUrl) && (
-            <TouchableOpacity
-              style={styles.browserLinkRow}
-              onPress={() => {
-                const target = updateData.apkUrl || updateData.downloadUrl;
-                if (target) Linking.openURL(target);
-              }}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="globe-outline" size={13} color="#64748b" />
-              <Text style={styles.browserLinkText}>权限受阻？点此在浏览器中直接下载安装</Text>
-            </TouchableOpacity>
+            <View style={styles.troubleShootContainer}>
+              <TouchableOpacity
+                style={styles.troubleShootRow}
+                onPress={openInstallPermissionSettings}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="shield-checkmark-outline" size={13} color="#64748b" />
+                <Text style={styles.troubleShootText}>提示未授权？点此开启应用安装权限</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.troubleShootRow}
+                onPress={() => {
+                  const target = updateData.apkUrl || updateData.downloadUrl;
+                  if (target) Linking.openURL(target);
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="globe-outline" size={13} color="#64748b" />
+                <Text style={styles.troubleShootText}>权限受阻？点此在浏览器中直接下载安装</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
       </View>
@@ -321,14 +332,18 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: '#475569',
   },
-  browserLinkRow: {
+  troubleShootContainer: {
+    marginTop: 14,
+    gap: 8,
+  },
+  troubleShootRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 12,
-    gap: 4,
+    gap: 6,
+    paddingVertical: 2,
   },
-  browserLinkText: {
+  troubleShootText: {
     fontSize: 12,
     color: '#64748b',
     textDecorationLine: 'underline',

@@ -22,6 +22,7 @@ interface UpdateContextType {
   checkForUpdates: (isManual?: boolean) => Promise<void>;
   startUpdate: () => Promise<void>;
   dismissModal: () => void;
+  openInstallPermissionSettings: () => Promise<void>;
 }
 
 const UpdateContext = createContext<UpdateContextType | null>(null);
@@ -94,6 +95,28 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   );
 
   /**
+   * 跳转系统设置开启未知应用安装权限
+   */
+  const openInstallPermissionSettings = useCallback(async () => {
+    if (Platform.OS !== 'android') return;
+    try {
+      await IntentLauncher.startActivityAsync(
+        'android.settings.MANAGE_UNKNOWN_APP_SOURCES',
+        { data: 'package:com.jiongren.cloudnotes' }
+      );
+    } catch {
+      try {
+        await IntentLauncher.startActivityAsync(
+          'android.settings.APPLICATION_DETAILS_SETTINGS',
+          { data: 'package:com.jiongren.cloudnotes' }
+        );
+      } catch {
+        Linking.openSettings();
+      }
+    }
+  }, []);
+
+  /**
    * 执行更新
    */
   const startUpdate = useCallback(async () => {
@@ -106,31 +129,50 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       const handleApkDownloadAndInstall = async (apkUrl: string, version: string) => {
         if (Platform.OS === 'android') {
           const apkTarget = `${FileSystem.cacheDirectory}cloud-notes-v${version}.apk`;
-          const downloadResumable = FileSystem.createDownloadResumable(
-            apkUrl,
-            apkTarget,
-            {},
-            progressEvent => {
-              const { totalBytesWritten, totalBytesExpectedToWrite } = progressEvent;
-              setDownloadedBytes(totalBytesWritten);
-              setTotalBytes(totalBytesExpectedToWrite);
-              if (totalBytesExpectedToWrite > 0) {
-                const percent = Math.min(
-                  100,
-                  Math.round((totalBytesWritten / totalBytesExpectedToWrite) * 100)
-                );
-                setDownloadProgress(percent);
+          let apkFileUri = apkTarget;
+
+          // 校验本地缓存，若已完整下载则直接复用，避免重复耗时下载
+          const cachedInfo = await FileSystem.getInfoAsync(apkTarget);
+          const isCacheValid =
+            cachedInfo.exists &&
+            cachedInfo.size &&
+            (updateData.size
+              ? Math.abs(cachedInfo.size - updateData.size) < 1024
+              : cachedInfo.size > 10 * 1024 * 1024);
+
+          if (isCacheValid) {
+            setDownloadProgress(100);
+            setIsCompleted(true);
+          } else {
+            const downloadResumable = FileSystem.createDownloadResumable(
+              apkUrl,
+              apkTarget,
+              {},
+              progressEvent => {
+                const { totalBytesWritten, totalBytesExpectedToWrite } = progressEvent;
+                setDownloadedBytes(totalBytesWritten);
+                setTotalBytes(totalBytesExpectedToWrite);
+                if (totalBytesExpectedToWrite > 0) {
+                  const percent = Math.min(
+                    100,
+                    Math.round((totalBytesWritten / totalBytesExpectedToWrite) * 100)
+                  );
+                  setDownloadProgress(percent);
+                }
               }
+            );
+
+            const result = await downloadResumable.downloadAsync();
+            setDownloadProgress(100);
+            setIsCompleted(true);
+            if (result?.uri) {
+              apkFileUri = result.uri;
             }
-          );
+          }
 
-          const result = await downloadResumable.downloadAsync();
-          setDownloadProgress(100);
-          setIsCompleted(true);
-
-          if (result?.uri) {
+          if (apkFileUri) {
             try {
-              const contentUri = await FileSystem.getContentUriAsync(result.uri);
+              const contentUri = await FileSystem.getContentUriAsync(apkFileUri);
               await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
                 data: contentUri,
                 flags: 268435457, // FLAG_GRANT_READ_URI_PERMISSION (1) | FLAG_ACTIVITY_NEW_TASK (0x10000000)
@@ -138,14 +180,18 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
               });
               setIsModalVisible(false);
             } catch (intentErr: any) {
-              console.warn('拉起安装器失败，尝试系统浏览器打开:', intentErr.message);
+              console.warn('拉起安装器失败，尝试引导开启权限:', intentErr.message);
               Alert.alert(
-                '安装权限提示',
-                '系统需要安装未知应用权限。如弹出权限设置请开启「允许安装应用」，或点击确定直接使用浏览器完成安装。',
+                '安装权限受阻',
+                '系统需要安装未知应用权限才能完成自动升级。请开启权限，或直接在浏览器中下载安装。',
                 [
                   { text: '取消', style: 'cancel' },
                   {
-                    text: '使用浏览器下载安装',
+                    text: '去开启权限',
+                    onPress: () => openInstallPermissionSettings(),
+                  },
+                  {
+                    text: '浏览器下载',
                     onPress: () => {
                       setIsModalVisible(false);
                       Linking.openURL(apkUrl);
@@ -268,6 +314,7 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         checkForUpdates,
         startUpdate,
         dismissModal,
+        openInstallPermissionSettings,
       }}
     >
       {children}
