@@ -17,9 +17,12 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as notesApi from '../../api/notesApi';
+import { streamAICall } from '../../api/aiApi';
 import { Config } from '../../constants/Config';
 import AIAssistantModal from '../../components/AIAssistantModal';
 import VersionHistoryModal from '../../components/VersionHistoryModal';
+import InlineAIToolbar from '../../components/InlineAIToolbar';
+import InlineAIStreamCard from '../../components/InlineAIStreamCard';
 
 export default function NoteEditScreen() {
   const router = useRouter();
@@ -44,7 +47,26 @@ export default function NoteEditScreen() {
   const [showAIModal, setShowAIModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
+  // 行内 AI 状态
+  const [inlineCardVisible, setInlineCardVisible] = useState(false);
+  const [inlineActionName, setInlineActionName] = useState('');
+  const [inlineIsStreaming, setInlineIsStreaming] = useState(false);
+  const [inlineStreamingText, setInlineStreamingText] = useState('');
+  const [inlineErrorMessage, setInlineErrorMessage] = useState('');
+  const [inlineSelectionSnapshot, setInlineSelectionSnapshot] = useState<{ start: number; end: number } | null>(null);
+  const [lastInlineParams, setLastInlineParams] = useState<{ action: string; text?: string; noteTitle?: string; customPrompt?: string } | null>(null);
+
+  const inlineAbortControllerRef = useRef<AbortController | null>(null);
   const contentInputRef = useRef<TextInput>(null);
+
+  // 组件卸载时中止请求
+  useEffect(() => {
+    return () => {
+      if (inlineAbortControllerRef.current) {
+        inlineAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // 加载既有笔记数据（若为编辑模式）
   useEffect(() => {
@@ -149,6 +171,137 @@ export default function NoteEditScreen() {
     } finally {
       setIsUploadingImage(false);
     }
+  };
+
+  // 启动行内 AI 流式生成
+  const startInlineStream = (params: {
+    action: string;
+    text?: string;
+    noteTitle?: string;
+    customPrompt?: string;
+  }) => {
+    if (inlineAbortControllerRef.current) {
+      inlineAbortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    inlineAbortControllerRef.current = controller;
+
+    setInlineCardVisible(true);
+    setInlineIsStreaming(true);
+    setInlineStreamingText('');
+    setInlineErrorMessage('');
+
+    streamAICall(params, {
+      signal: controller.signal,
+      onDelta: (_, fullText) => {
+        setInlineStreamingText(fullText);
+      },
+      onFinish: fullText => {
+        setInlineStreamingText(fullText);
+        setInlineIsStreaming(false);
+      },
+      onError: err => {
+        if (err.name === 'AbortError') {
+          setInlineIsStreaming(false);
+          return;
+        }
+        setInlineErrorMessage(err.message || '生成失败，请检查网络服务');
+        setInlineIsStreaming(false);
+      },
+    }).catch(err => {
+      if (err.name !== 'AbortError') {
+        setInlineErrorMessage(err.message || '网络连接异常');
+      }
+      setInlineIsStreaming(false);
+    });
+  };
+
+  // 触发某项行内 AI 动作
+  const handleTriggerInlineAI = (actionKey: string, customPrompt?: string) => {
+    // 捕获当前的选区快照
+    const range = { ...cursorPosition };
+    const hasSelection = range.start !== range.end;
+    setInlineSelectionSnapshot(range);
+
+    const ACTION_NAMES: Record<string, string> = {
+      polish: '✨ 智能润色',
+      expand: '📖 丰富扩写',
+      summarize_text: '✂️ 精简提炼',
+      grammar: '🩺 纠错校对',
+      continue: '⏩ 承接续写',
+      full_summary: '📑 全文摘要',
+      extract_todos: '✅ 提取待办',
+      custom: customPrompt ? `💬 ${customPrompt.slice(0, 8)}...` : '💬 自定义指令',
+    };
+    setInlineActionName(ACTION_NAMES[actionKey] || '✨ AI 创作');
+
+    let targetText = '';
+    if (hasSelection) {
+      targetText = content.substring(range.start, range.end);
+    } else {
+      if (actionKey === 'continue') {
+        targetText = range.end > 0 ? content.substring(0, range.end) : content;
+      } else {
+        targetText = content;
+      }
+    }
+
+    if (!targetText.trim() && actionKey !== 'custom') {
+      Alert.alert('提示', '当前选区或正文内容为空，无法执行该操作');
+      return;
+    }
+
+    const params = {
+      action: actionKey,
+      text: targetText,
+      noteTitle: title,
+      customPrompt,
+    };
+
+    setLastInlineParams(params);
+    startInlineStream(params);
+  };
+
+  // 中止当前行内生成
+  const handleStopInlineStream = () => {
+    if (inlineAbortControllerRef.current) {
+      inlineAbortControllerRef.current.abort();
+      inlineAbortControllerRef.current = null;
+    }
+    setInlineIsStreaming(false);
+  };
+
+  // 替换选区内容
+  const handleApplyInlineReplace = (replacementText: string) => {
+    handleStopInlineStream();
+    const range = inlineSelectionSnapshot || cursorPosition;
+    if (range.start !== range.end) {
+      const before = content.substring(0, range.start);
+      const after = content.substring(range.end);
+      setContent(before + replacementText + after);
+      const newPos = range.start + replacementText.length;
+      setCursorPosition({ start: newPos, end: newPos });
+    } else {
+      setContent(replacementText);
+    }
+    setInlineCardVisible(false);
+    setInlineSelectionSnapshot(null);
+  };
+
+  // 追加或插入到正文
+  const handleApplyInlineInsert = (insertionText: string) => {
+    handleStopInlineStream();
+    const range = inlineSelectionSnapshot || cursorPosition;
+    const insertPos = range.end || content.length;
+    const before = content.substring(0, insertPos);
+    const after = content.substring(insertPos);
+    const prefix = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+    setContent(before + prefix + insertionText + after);
+    const newPos = insertPos + prefix.length + insertionText.length;
+    setCursorPosition({ start: newPos, end: newPos });
+
+    setInlineCardVisible(false);
+    setInlineSelectionSnapshot(null);
   };
 
   // 保存笔记
@@ -287,68 +440,39 @@ export default function NoteEditScreen() {
             />
           </ScrollView>
 
-          {/* 键盘上方快捷工具栏 */}
-          <View style={styles.toolbar}>
-            {/* 左侧固定功能：AI创作 & 相册插图 */}
-            <TouchableOpacity
-              style={[styles.toolBtn, styles.aiToolBtn]}
-              onPress={() => setShowAIModal(true)}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="sparkles" size={17} color="#7c3aed" />
-              <Text style={styles.aiToolBtnText}>AI</Text>
-            </TouchableOpacity>
+          {/* 行内 AI 悬浮流式预览卡片 */}
+          <InlineAIStreamCard
+            visible={inlineCardVisible}
+            actionTitle={inlineActionName}
+            isStreaming={inlineIsStreaming}
+            streamingText={inlineStreamingText}
+            errorMessage={inlineErrorMessage}
+            hasSelection={Boolean(
+              inlineSelectionSnapshot &&
+                inlineSelectionSnapshot.start !== inlineSelectionSnapshot.end
+            )}
+            onStop={handleStopInlineStream}
+            onApplyReplace={handleApplyInlineReplace}
+            onApplyInsert={handleApplyInlineInsert}
+            onClose={() => {
+              handleStopInlineStream();
+              setInlineCardVisible(false);
+              setInlineSelectionSnapshot(null);
+            }}
+            onRetry={lastInlineParams ? () => startInlineStream(lastInlineParams) : undefined}
+          />
 
-            <TouchableOpacity
-              style={[styles.toolBtn, styles.imageToolBtn]}
-              onPress={handlePickImage}
-              disabled={isUploadingImage}
-              activeOpacity={0.7}
-            >
-              {isUploadingImage ? (
-                <ActivityIndicator size="small" color="#1890ff" />
-              ) : (
-                <Ionicons name="image-outline" size={20} color="#1890ff" />
-              )}
-            </TouchableOpacity>
-
-            {/* 功能分区指示隔断 */}
-            <View style={styles.toolbarDivider} />
-
-            {/* 右侧横向滚动的快捷格式标记工具 */}
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={styles.toolbarScroll}
-              contentContainerStyle={styles.toolbarContent}
-              keyboardShouldPersistTaps="handled"
-            >
-              <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('## ')}>
-                <Text style={styles.toolText}>H2</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('### ')}>
-                <Text style={styles.toolText}>H3</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('**', '**')}>
-                <Ionicons name="text" size={18} color="#0f172a" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('- ')}>
-                <Ionicons name="list" size={18} color="#0f172a" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('- [ ] ')}>
-                <Ionicons name="checkbox-outline" size={18} color="#0f172a" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('> ')}>
-                <Ionicons name="chatbox-ellipses-outline" size={18} color="#0f172a" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('`', '`')}>
-                <Ionicons name="code-slash" size={18} color="#0f172a" />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.toolBtn} onPress={() => insertText('```\n', '\n```')}>
-                <Ionicons name="terminal-outline" size={18} color="#0f172a" />
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
+          {/* 智能感知联动工具栏 */}
+          <InlineAIToolbar
+            hasSelection={cursorPosition.start !== cursorPosition.end}
+            selectedTextLength={Math.abs(cursorPosition.end - cursorPosition.start)}
+            isGenerating={inlineIsStreaming}
+            isUploadingImage={isUploadingImage}
+            onInsertMarkdown={insertText}
+            onPickImage={handlePickImage}
+            onOpenFullAIModal={() => setShowAIModal(true)}
+            onTriggerAIAction={handleTriggerInlineAI}
+          />
         </KeyboardAvoidingView>
       )}
 
@@ -451,53 +575,20 @@ const styles = StyleSheet.create({
         } as any)
       : {}),
   },
-  toolbar: {
-    backgroundColor: '#ffffff',
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  toolbarDivider: {
-    width: 1,
-    height: 22,
-    backgroundColor: '#e2e8f0',
-    marginHorizontal: 8,
-  },
-  toolbarScroll: {
-    flex: 1,
-  },
-  toolbarContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingRight: 16,
-  },
-  toolBtn: {
-    minWidth: 38,
-    height: 38,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    backgroundColor: '#f1f5f9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  imageToolBtn: {
-    backgroundColor: '#e6f7ff',
-    borderWidth: 1,
-    borderColor: '#bae0ff',
-  },
-  toolText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
   centerContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  historyHeaderBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   aiHeaderBtn: {
     flexDirection: 'row',
@@ -514,28 +605,5 @@ const styles = StyleSheet.create({
     color: '#7c3aed',
     fontSize: 13,
     fontWeight: '600',
-  },
-  aiToolBtn: {
-    backgroundColor: '#f5f3ff',
-    borderWidth: 1,
-    borderColor: '#e9d5ff',
-    flexDirection: 'row',
-    gap: 2,
-    paddingHorizontal: 8,
-  },
-  aiToolBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#7c3aed',
-  },
-  historyHeaderBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
   },
 });
