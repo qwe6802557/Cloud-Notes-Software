@@ -18,8 +18,10 @@ import Markdown from 'react-native-markdown-display';
 import * as notesApi from '../../api/notesApi';
 import { Note } from '../../api/types';
 import { useAuth } from '../../context/AuthContext';
+import * as Clipboard from 'expo-clipboard';
 import AIAssistantModal from '../../components/AIAssistantModal';
 import VersionHistoryModal from '../../components/VersionHistoryModal';
+import ImageViewerModal from '../../components/ImageViewerModal';
 
 interface TocItem {
   level: number;
@@ -30,10 +32,12 @@ function MarkdownImage({
   sourceUri,
   alt,
   style,
+  onPress,
 }: {
   sourceUri: string;
   alt?: string;
   style?: any;
+  onPress?: () => void;
 }) {
   const [aspectRatio, setAspectRatio] = useState<number | undefined>(undefined);
 
@@ -51,7 +55,11 @@ function MarkdownImage({
   }, [sourceUri]);
 
   return (
-    <View style={imageComponentStyles.container}>
+    <TouchableOpacity
+      style={imageComponentStyles.container}
+      onPress={onPress}
+      activeOpacity={0.88}
+    >
       <Image
         source={{ uri: sourceUri }}
         accessibilityLabel={alt}
@@ -63,9 +71,105 @@ function MarkdownImage({
           style,
         ]}
       />
+    </TouchableOpacity>
+  );
+}
+
+function CodeBlockItem({
+  language,
+  code,
+  style,
+}: {
+  language?: string;
+  code: string;
+  style?: any;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyCode = async () => {
+    if (!code) return;
+    await Clipboard.setStringAsync(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <View style={[codeBlockStyles.container, style]}>
+      <View style={codeBlockStyles.header}>
+        <Text style={codeBlockStyles.langText}>
+          {language ? language.toUpperCase() : 'CODE'}
+        </Text>
+        <TouchableOpacity
+          style={codeBlockStyles.copyBtn}
+          onPress={handleCopyCode}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={copied ? 'checkmark' : 'copy-outline'}
+            size={13}
+            color={copied ? '#10b981' : '#94a3b8'}
+          />
+          <Text style={[codeBlockStyles.copyText, copied && { color: '#10b981' }]}>
+            {copied ? '已复制' : '复制代码'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={codeBlockStyles.codeScroll}>
+        <Text style={codeBlockStyles.codeText} selectable={true}>
+          {code}
+        </Text>
+      </ScrollView>
     </View>
   );
 }
+
+const codeBlockStyles = StyleSheet.create({
+  container: {
+    backgroundColor: '#0f172a',
+    borderRadius: 10,
+    marginVertical: 10,
+    overflow: 'hidden',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#1e293b',
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155',
+  },
+  langText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#94a3b8',
+    letterSpacing: 0.5,
+  },
+  copyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  copyText: {
+    fontSize: 11,
+    color: '#94a3b8',
+    fontWeight: '500',
+  },
+  codeScroll: {
+    padding: 12,
+  },
+  codeText: {
+    color: '#f8fafc',
+    fontSize: 13,
+    lineHeight: 20,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+  },
+});
 
 const imageComponentStyles = StyleSheet.create({
   container: {
@@ -91,7 +195,33 @@ export default function NoteDetailScreen() {
   const [showTocModal, setShowTocModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showImageViewer, setShowImageViewer] = useState(false);
+  const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
   const [tocList, setTocList] = useState<TocItem[]>([]);
+
+  // 提取正文所有图片，组成连续画廊数组
+  const docImages = useMemo(() => {
+    if (!note?.content) return [];
+    const regex = /!\[.*?\]\((.*?)\)/g;
+    const images: string[] = [];
+    let match;
+    while ((match = regex.exec(note.content)) !== null) {
+      let url = match[1]?.trim();
+      if (url) {
+        if (url.startsWith('/') && serverUrl) {
+          url = `${serverUrl.replace(/\/+$/, '')}${url}`;
+        }
+        images.push(url);
+      }
+    }
+    return images;
+  }, [note?.content, serverUrl]);
+
+  const handleOpenImage = (imageUrl: string) => {
+    const index = docImages.findIndex(img => img === imageUrl);
+    setViewerInitialIndex(index >= 0 ? index : 0);
+    setShowImageViewer(true);
+  };
 
   const markdownRules = useMemo(
     () => ({
@@ -126,11 +256,115 @@ export default function NoteDetailScreen() {
             sourceUri={resolvedUri}
             alt={alt}
             style={styles._VIEW_SAFE_image || styles.image}
+            onPress={() => handleOpenImage(resolvedUri)}
+          />
+        );
+      },
+      paragraph: (node: any, children: any, parent: any, styles: any) => {
+        const hasBlockChild = node.children?.some(
+          (c: any) => c.type === 'image' || c.type === 'fence' || c.type === 'code_block'
+        );
+        if (hasBlockChild) {
+          return (
+            <View key={node.key} style={styles._VIEW_SAFE_paragraph}>
+              {children}
+            </View>
+          );
+        }
+        return (
+          <Text key={node.key} style={styles.paragraph} selectable={true}>
+            {children}
+          </Text>
+        );
+      },
+      text: (node: any, children: any, parent: any, styles: any, inheritedStyles: any = {}) => (
+        <Text key={node.key} style={[inheritedStyles, styles.text]} selectable={true}>
+          {node.content}
+        </Text>
+      ),
+      textgroup: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.textgroup} selectable={true}>
+          {children}
+        </Text>
+      ),
+      heading1: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.heading1} selectable={true}>
+          {children}
+        </Text>
+      ),
+      heading2: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.heading2} selectable={true}>
+          {children}
+        </Text>
+      ),
+      heading3: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.heading3} selectable={true}>
+          {children}
+        </Text>
+      ),
+      heading4: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.heading4} selectable={true}>
+          {children}
+        </Text>
+      ),
+      heading5: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.heading5} selectable={true}>
+          {children}
+        </Text>
+      ),
+      heading6: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.heading6} selectable={true}>
+          {children}
+        </Text>
+      ),
+      strong: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.strong} selectable={true}>
+          {children}
+        </Text>
+      ),
+      em: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.em} selectable={true}>
+          {children}
+        </Text>
+      ),
+      s: (node: any, children: any, parent: any, styles: any) => (
+        <Text key={node.key} style={styles.s} selectable={true}>
+          {children}
+        </Text>
+      ),
+      code_inline: (node: any, children: any, parent: any, styles: any, inheritedStyles: any = {}) => (
+        <Text key={node.key} style={[inheritedStyles, styles.code_inline]} selectable={true}>
+          {node.content}
+        </Text>
+      ),
+      fence: (node: any, children: any, parent: any, styles: any) => {
+        let content = node.content;
+        if (typeof content === 'string' && content.endsWith('\n')) {
+          content = content.slice(0, -1);
+        }
+        return (
+          <CodeBlockItem
+            key={node.key}
+            language={node.sourceInfo}
+            code={content}
+          />
+        );
+      },
+      code_block: (node: any, children: any, parent: any, styles: any) => {
+        let content = node.content;
+        if (typeof content === 'string' && content.endsWith('\n')) {
+          content = content.slice(0, -1);
+        }
+        return (
+          <CodeBlockItem
+            key={node.key}
+            language=""
+            code={content}
           />
         );
       },
     }),
-    [serverUrl]
+    [serverUrl, docImages]
   );
 
   const fetchNote = async () => {
@@ -294,7 +528,9 @@ export default function NoteDetailScreen() {
       ) : note ? (
         <ScrollView contentContainerStyle={styles.scrollContent}>
           {/* 笔记标题与元信息 */}
-          <Text style={styles.noteTitle}>{note.title || '无标题笔记'}</Text>
+          <Text style={styles.noteTitle} selectable={true}>
+            {note.title || '无标题笔记'}
+          </Text>
           <View style={styles.metaRow}>
             <Ionicons name="time-outline" size={13} color="#94a3b8" />
             <Text style={styles.metaText}>更新于 {formatDate(note.updatedAt || note.createdAt)}</Text>
@@ -312,6 +548,14 @@ export default function NoteDetailScreen() {
           <Text style={styles.errorText}>笔记不存在或已被删除</Text>
         </View>
       )}
+
+      {/* 全屏手势图片查看器与画廊 */}
+      <ImageViewerModal
+        visible={showImageViewer}
+        images={docImages}
+        initialIndex={viewerInitialIndex}
+        onClose={() => setShowImageViewer(false)}
+      />
 
       {/* 目录大纲弹窗 */}
       <Modal visible={showTocModal} transparent animationType="slide">
@@ -371,6 +615,13 @@ export default function NoteDetailScreen() {
 
 const markdownStyles = {
   body: {
+    fontSize: 16,
+    lineHeight: 28,
+    color: '#1e293b',
+  },
+  paragraph: {
+    marginTop: 0,
+    marginBottom: 12,
     fontSize: 16,
     lineHeight: 28,
     color: '#1e293b',
