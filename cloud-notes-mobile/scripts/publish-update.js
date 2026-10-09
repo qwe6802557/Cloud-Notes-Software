@@ -93,7 +93,7 @@ async function run() {
             const fileBuffer = fs.readFileSync(apkPath);
             bundleSize = fileBuffer.length;
             bundleHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-            const apkFileName = `cloud-notes-v${version}.apk`;
+            const apkFileName = `cloud-notes-v${version}-b${buildNumber}.apk`;
             console.log(`⏳ 上传原生 APK (${path.basename(apkPath)}, ${(bundleSize / 1024 / 1024).toFixed(2)} MB) 至服务器...`);
             execSync(`scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${apkPath}" ${SERVER_USER}@${SERVER_HOST}:/var/lib/cloud-notes/updates/${apkFileName}`, { stdio: 'inherit' });
             execSync(`ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} "cp -f /var/lib/cloud-notes/updates/${apkFileName} /var/lib/cloud-notes/updates/cloud-notes-latest.apk"`, { stdio: 'inherit' });

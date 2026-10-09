@@ -128,24 +128,36 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     try {
       const handleApkDownloadAndInstall = async (apkUrl: string, version: string) => {
         if (Platform.OS === 'android') {
-          const apkTarget = `${FileSystem.cacheDirectory}cloud-notes-v${version}.apk`;
+          const buildCode = updateData.buildNumber || 1;
+          const hashTag = (updateData.hash || '').substring(0, 8);
+          const apkTarget = `${FileSystem.cacheDirectory}cloud-notes-v${version}-b${buildCode}-${hashTag}.apk`;
           let apkFileUri = apkTarget;
 
-          // 校验本地缓存，若已完整下载则直接复用，避免重复耗时下载
+          // 严格校验本地缓存：文件必须存在且体积完全等于服务器声明的字节数（误差为 0）
           const cachedInfo = await FileSystem.getInfoAsync(apkTarget);
           const isCacheValid =
             cachedInfo.exists &&
             cachedInfo.size &&
-            (updateData.size
-              ? Math.abs(cachedInfo.size - updateData.size) < 1024
-              : cachedInfo.size > 10 * 1024 * 1024);
+            updateData.size &&
+            cachedInfo.size === updateData.size;
 
           if (isCacheValid) {
+            console.log('[Update] 命中精确匹配的本地安装包:', apkTarget);
             setDownloadProgress(100);
             setIsCompleted(true);
           } else {
+            // 清理旧缓存或损坏的文件
+            if (cachedInfo.exists) {
+              await FileSystem.deleteAsync(apkTarget, { idempotent: true });
+            }
+
+            // 防网络 CDN 缓存时间戳
+            const downloadUrl = apkUrl.includes('?')
+              ? `${apkUrl}&_t=${Date.now()}`
+              : `${apkUrl}?_t=${Date.now()}`;
+
             const downloadResumable = FileSystem.createDownloadResumable(
-              apkUrl,
+              downloadUrl,
               apkTarget,
               {},
               progressEvent => {
