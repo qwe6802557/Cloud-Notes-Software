@@ -7,7 +7,6 @@ import {
   Image,
   Modal,
   Platform,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -28,7 +27,6 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withSpring,
-  withTiming,
 } from 'react-native-reanimated';
 
 export interface ImageViewerModalProps {
@@ -41,7 +39,7 @@ export interface ImageViewerModalProps {
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 /**
- * 单张可手势缩放、长图自动适配与双击放大的幻灯片组件
+ * 单张手势缩放幻灯片：全尺寸高清渲染，彻底解决黑屏、模糊与长图截断问题
  */
 function ZoomableImageSlide({
   uri,
@@ -54,8 +52,7 @@ function ZoomableImageSlide({
   onToggleControls: () => void;
   onZoomChange: (zoomed: boolean) => void;
 }) {
-  const [imgSize, setImgSize] = useState<{ width: number; height: number } | null>(null);
-  const [isLongImage, setIsLongImage] = useState(false);
+  const [imgRatio, setImgRatio] = useState<number>(1);
 
   // 共享手势动画值
   const scale = useSharedValue(1);
@@ -65,25 +62,21 @@ function ZoomableImageSlide({
   const translateY = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
 
-  // 获取真实图片尺寸以识别长图
+  // 获取真实图片尺寸比
   useEffect(() => {
     if (!uri) return;
     Image.getSize(
       uri,
       (w, h) => {
         if (w > 0 && h > 0) {
-          setImgSize({ width: w, height: h });
-          const ratio = h / w;
-          setIsLongImage(ratio > 1.6);
+          setImgRatio(h / w);
         }
       },
-      () => {
-        setImgSize({ width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.7 });
-      }
+      () => {}
     );
   }, [uri]);
 
-  // 当滑动到其他图片时，重置当前图片的缩放状态
+  // 当滑动切走时，平滑重置缩放和偏移
   useEffect(() => {
     if (!isActive) {
       scale.value = 1;
@@ -95,7 +88,11 @@ function ZoomableImageSlide({
     }
   }, [isActive]);
 
-  // 双击手势：1x 与 2.5x 之间平滑切换
+  const isLong = imgRatio > 1.6;
+  const maxZoom = isLong ? Math.max(3.8, Math.min(imgRatio * 1.6, 6.0)) : 4.0;
+  const doubleTapTargetScale = isLong ? 3.0 : 2.5;
+
+  // 双击手势：1x 与放大之间平滑切换
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
     .maxDuration(250)
@@ -109,8 +106,14 @@ function ZoomableImageSlide({
         savedTranslateY.value = 0;
         runOnJS(onZoomChange)(false);
       } else {
-        scale.value = withSpring(2.5);
-        savedScale.value = 2.5;
+        scale.value = withSpring(doubleTapTargetScale);
+        savedScale.value = doubleTapTargetScale;
+        // 若为长图，双击放大时平滑偏向顶部，方便从头自如阅读
+        if (isLong) {
+          const topOffset = ((doubleTapTargetScale - 1) * SCREEN_HEIGHT) / 3.5;
+          translateY.value = withSpring(topOffset);
+          savedTranslateY.value = topOffset;
+        }
         runOnJS(onZoomChange)(true);
       }
     });
@@ -122,11 +125,11 @@ function ZoomableImageSlide({
       runOnJS(onToggleControls)();
     });
 
-  // 双指捏合无级缩放手势 (1x ~ 4x)
+  // 双指捏合无级缩放手势 (1x ~ maxZoom)
   const pinchGesture = Gesture.Pinch()
     .onUpdate(e => {
       const nextScale = savedScale.value * e.scale;
-      scale.value = Math.max(0.8, Math.min(nextScale, 4.5));
+      scale.value = Math.max(0.85, Math.min(nextScale, maxZoom + 0.5));
       if (scale.value > 1.05) {
         runOnJS(onZoomChange)(true);
       }
@@ -140,15 +143,15 @@ function ZoomableImageSlide({
         translateY.value = withSpring(0);
         savedTranslateY.value = 0;
         runOnJS(onZoomChange)(false);
-      } else if (scale.value > 4) {
-        scale.value = withSpring(4);
-        savedScale.value = 4;
+      } else if (scale.value > maxZoom) {
+        scale.value = withSpring(maxZoom);
+        savedScale.value = maxZoom;
       } else {
         savedScale.value = scale.value;
       }
     });
 
-  // 拖拽平移手势：仅在放大时响应任意拖动并支持回弹
+  // 拖拽平移手势：放大状态下全方位拖拽并支持安全边界回弹
   const panGesture = Gesture.Pan()
     .averageTouches(true)
     .onUpdate(e => {
@@ -159,14 +162,15 @@ function ZoomableImageSlide({
     })
     .onEnd(() => {
       if (scale.value > 1.05) {
-        // 限制拖拽边界，防止图片飞出可视区域
         const maxTx = ((scale.value - 1) * SCREEN_WIDTH) / 2;
-        const maxTy = ((scale.value - 1) * SCREEN_HEIGHT) / 2;
+        const maxTy = isLong
+          ? Math.max(((scale.value - 1) * SCREEN_HEIGHT) / 2, ((scale.value * (imgRatio / 2) - 1) * SCREEN_HEIGHT) / 2)
+          : ((scale.value - 1) * SCREEN_HEIGHT) / 2;
 
         if (Math.abs(translateX.value) > maxTx + 30) {
           translateX.value = withSpring(Math.sign(translateX.value) * maxTx);
         }
-        if (Math.abs(translateY.value) > maxTy + 30) {
+        if (Math.abs(translateY.value) > maxTy + 40) {
           translateY.value = withSpring(Math.sign(translateY.value) * maxTy);
         }
 
@@ -175,7 +179,6 @@ function ZoomableImageSlide({
       }
     });
 
-  // 组合手势：双击互斥单击，同时允许缩放与拖拽
   const taps = Gesture.Exclusive(doubleTapGesture, singleTapGesture);
   const pinchAndPan = Gesture.Simultaneous(pinchGesture, panGesture);
   const composedGesture = Gesture.Simultaneous(taps, pinchAndPan);
@@ -188,54 +191,15 @@ function ZoomableImageSlide({
     ],
   }));
 
-  // 计算展示尺寸
-  const displayWidth = SCREEN_WIDTH;
-  const displayHeight = imgSize
-    ? isLongImage
-      ? Math.round(SCREEN_WIDTH * (imgSize.height / imgSize.width))
-      : Math.min(SCREEN_HEIGHT * 0.8, Math.round(SCREEN_WIDTH * (imgSize.height / imgSize.width)))
-    : SCREEN_HEIGHT * 0.6;
-
-  // 长图模式：外层包裹垂直 ScrollView，未放大时可流畅上下滚动阅读
-  if (isLongImage) {
-    return (
-      <View style={styles.slideContainer}>
-        <ScrollView
-          style={styles.longImageScroll}
-          contentContainerStyle={styles.longImageScrollContent}
-          showsVerticalScrollIndicator={false}
-          bounces={true}
-          scrollEnabled={true}
-        >
-          <GestureDetector gesture={composedGesture}>
-            <Animated.View style={animatedStyle}>
-              <Image
-                source={{ uri }}
-                style={{
-                  width: displayWidth,
-                  height: displayHeight,
-                }}
-                resizeMode="cover"
-              />
-            </Animated.View>
-          </GestureDetector>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  // 常规尺寸图片模式：居中自适应
   return (
     <View style={styles.slideContainer}>
       <GestureDetector gesture={composedGesture}>
-        <Animated.View style={[styles.normalImageWrapper, animatedStyle]}>
+        <Animated.View style={[styles.imageWrapper, animatedStyle]}>
           <Image
             source={{ uri }}
-            style={{
-              width: displayWidth,
-              height: displayHeight,
-            }}
+            style={styles.fullImage}
             resizeMode="contain"
+            resizeMethod="scale" // 核心：强制高保真渲染，禁止 Android Fresco 降采样模糊
           />
         </Animated.View>
       </GestureDetector>
@@ -341,21 +305,6 @@ export default function ImageViewerModal({
     <Modal visible={visible} transparent={false} animationType="fade" onRequestClose={onClose}>
       <StatusBar barStyle="light-content" backgroundColor="#000000" translucent />
       <GestureHandlerRootView style={styles.container}>
-        {/* 顶部控制栏 */}
-        {showControls && (
-          <View style={[styles.topBar, { top: topPadding + 10 }]}>
-            <View style={styles.counterPill}>
-              <Text style={styles.counterText}>
-                {currentIndex + 1} / {images.length}
-              </Text>
-            </View>
-
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
-              <Ionicons name="close" size={24} color="#ffffff" />
-            </TouchableOpacity>
-          </View>
-        )}
-
         {/* 核心横向多图轮播区 */}
         <FlatList
           ref={flatListRef}
@@ -363,7 +312,7 @@ export default function ImageViewerModal({
           keyExtractor={(item, idx) => `${item}_${idx}`}
           horizontal
           pagingEnabled
-          scrollEnabled={!isAnyZoomed} // 放大状态锁住轮播翻页，专注看局部
+          scrollEnabled={!isAnyZoomed} // 放大状态下锁定左右翻页，专注看细节
           showsHorizontalScrollIndicator={false}
           renderItem={renderItem}
           initialScrollIndex={initialIndex}
@@ -380,39 +329,57 @@ export default function ImageViewerModal({
           }}
         />
 
-        {/* 底部操作胶囊栏 */}
-        {showControls && (
-          <View style={[styles.bottomBar, { bottom: Math.max(insets.bottom, 16) + 10 }]}>
-            <TouchableOpacity
-              style={styles.actionBtn}
-              onPress={handleCopyLink}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={copied ? 'checkmark' : 'copy-outline'}
-                size={18}
-                color={copied ? '#10b981' : '#ffffff'}
-              />
-              <Text style={[styles.actionBtnText, copied && { color: '#10b981' }]}>
-                {copied ? '已复制链接' : '复制链接'}
-              </Text>
-            </TouchableOpacity>
+        {/* 顶底浮动控制层：后置渲染 + elevation 保证在 Android 原生视图树中拥有最高层级，绝对不会被图片覆盖 */}
+        <View style={styles.overlayControls} pointerEvents="box-none">
+          {showControls && (
+            <>
+              {/* 顶部控制栏 */}
+              <View style={[styles.topBar, { top: topPadding + 10 }]} pointerEvents="box-none">
+                <View style={styles.counterPill}>
+                  <Text style={styles.counterText}>
+                    {currentIndex + 1} / {images.length}
+                  </Text>
+                </View>
 
-            <TouchableOpacity
-              style={styles.actionBtn}
-              onPress={handleSaveImage}
-              disabled={isSaving}
-              activeOpacity={0.7}
-            >
-              {isSaving ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <Ionicons name="download-outline" size={18} color="#ffffff" />
-              )}
-              <Text style={styles.actionBtnText}>{isSaving ? '正在保存...' : '保存图片'}</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+                <TouchableOpacity style={styles.closeBtn} onPress={onClose} activeOpacity={0.7}>
+                  <Ionicons name="close" size={24} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
+
+              {/* 底部操作胶囊栏 */}
+              <View style={[styles.bottomBar, { bottom: Math.max(insets.bottom, 16) + 10 }]}>
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={handleCopyLink}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={copied ? 'checkmark' : 'copy-outline'}
+                    size={18}
+                    color={copied ? '#10b981' : '#ffffff'}
+                  />
+                  <Text style={[styles.actionBtnText, copied && { color: '#10b981' }]}>
+                    {copied ? '已复制链接' : '复制链接'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={handleSaveImage}
+                  disabled={isSaving}
+                  activeOpacity={0.7}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Ionicons name="download-outline" size={18} color="#ffffff" />
+                  )}
+                  <Text style={styles.actionBtnText}>{isSaving ? '正在保存...' : '保存图片'}</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
       </GestureHandlerRootView>
     </Modal>
   );
@@ -423,72 +390,96 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
-  topBar: {
-    position: 'absolute',
-    left: 20,
-    right: 20,
-    zIndex: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  counterPill: {
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
-  },
-  counterText: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  closeBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   slideContainer: {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  normalImageWrapper: {
+  imageWrapper: {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  longImageScroll: {
+  fullImage: {
     width: SCREEN_WIDTH,
     height: SCREEN_HEIGHT,
   },
-  longImageScrollContent: {
+  overlayControls: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 9999,
+    elevation: 99,
+  },
+  topBar: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 60,
+    justifyContent: 'space-between',
+    zIndex: 9999,
+    elevation: 99,
+  },
+  counterPill: {
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  counterText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  closeBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
   bottomBar: {
     position: 'absolute',
     left: 0,
     right: 0,
-    zIndex: 20,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 16,
+    zIndex: 9999,
+    elevation: 99,
   },
   actionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 22,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
   actionBtnText: {
     color: '#ffffff',
