@@ -215,7 +215,7 @@ export const rollbackNoteHistory = (noteId: string, historyId: string): Promise<
 };
 
 // 获取单篇笔记的反向链接 (Backlinks)
-export const getNoteBacklinks = (noteId: string): Promise<ApiResponse<{ backlinks: any[]; unresolvedMentions: any[]; totalCount: number }>> => {
+export const getNoteBacklinks = (noteId: string): Promise<ApiResponse<{ backlinks: any[]; unresolvedBacklinks?: any[]; unresolvedMentions?: any[]; totalCount?: number }>> => {
   return request({
     url: `/notes/${noteId}/backlinks`,
     method: 'get',
@@ -228,6 +228,39 @@ export const suggestNoteLinks = (keyword: string): Promise<ApiResponse<{ suggest
     url: '/notes/suggest-links',
     method: 'get',
     params: { keyword },
+  });
+};
+
+// 获取用户全量或局部知识网络图谱
+export const getKnowledgeGraph = (params?: {
+  focusNoteId?: string;
+  notebookId?: string;
+  depth?: number;
+}): Promise<ApiResponse<{
+  nodes: Array<{
+    id: string;
+    title: string;
+    notebookId: string;
+    notebookName: string;
+    notebookColor: string;
+    totalDegree?: number;
+  }>;
+  links: Array<{
+    source: string;
+    target: string;
+  }>;
+  notebooks: Array<{
+    id: string;
+    name: string;
+    color: string;
+  }>;
+  isLocal?: boolean;
+  focusId?: string;
+}>> => {
+  return request({
+    url: '/notes/graph',
+    method: 'get',
+    params,
   });
 };
 

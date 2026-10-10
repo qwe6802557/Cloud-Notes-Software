@@ -23,6 +23,7 @@ import * as Clipboard from 'expo-clipboard';
 import AIAssistantModal from '../../components/AIAssistantModal';
 import VersionHistoryModal from '../../components/VersionHistoryModal';
 import ImageViewerModal from '../../components/ImageViewerModal';
+import LocalRadarModal from '../../components/LocalRadarModal';
 
 interface TocItem {
   level: number;
@@ -197,6 +198,7 @@ export default function NoteDetailScreen() {
   const [showAIModal, setShowAIModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showImageViewer, setShowImageViewer] = useState(false);
+  const [showRadarModal, setShowRadarModal] = useState(false);
   const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
   const [tocList, setTocList] = useState<TocItem[]>([]);
   const [backlinksData, setBacklinksData] = useState<{ backlinks: any[]; unresolvedMentions: any[]; totalCount: number }>({
@@ -452,8 +454,15 @@ export default function NoteDetailScreen() {
     if (!id) return;
     try {
       const res = await notesApi.getNoteBacklinks(id);
-      if (res?.data) {
-        setBacklinksData(res.data);
+      const data = res?.data;
+      if (data) {
+        const backlinks = data.backlinks || [];
+        const unresolved = data.unresolvedBacklinks || data.unresolvedMentions || [];
+        setBacklinksData({
+          backlinks,
+          unresolvedMentions: unresolved,
+          totalCount: backlinks.length + unresolved.length,
+        });
       }
     } catch {
       // 忽略
@@ -568,6 +577,14 @@ export default function NoteDetailScreen() {
                 </TouchableOpacity>
               )}
 
+              {/* 局部关系雷达 */}
+              <TouchableOpacity
+                style={styles.headerActionBtn}
+                onPress={() => setShowRadarModal(true)}
+              >
+                <Ionicons name="git-network-outline" size={22} color="#2563eb" />
+              </TouchableOpacity>
+
               {/* 历史版本快照 */}
               <TouchableOpacity
                 style={styles.headerActionBtn}
@@ -648,29 +665,68 @@ export default function NoteDetailScreen() {
                 </View>
               </View>
 
-              {backlinksData.backlinks.map((item: any) => (
-                <TouchableOpacity
-                  key={item._id}
-                  style={styles.backlinkCard}
-                  onPress={() => router.push({ pathname: '/note/[id]', params: { id: item._id } })}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.backlinkTopRow}>
-                    <Ionicons name="document-text-outline" size={14} color="#3b82f6" />
-                    <Text style={styles.backlinkNoteTitle} numberOfLines={1}>{item.title}</Text>
-                    {item.notebookId?.name && (
-                      <View style={styles.backlinkNotebookTag}>
-                        <Text style={styles.backlinkNotebookText}>{item.notebookId.name}</Text>
-                      </View>
+              {backlinksData.backlinks.map((item: any) => {
+                const nbName = item.notebook?.name || item.notebookId?.name;
+                const nbColor = item.notebook?.color || '#3b82f6';
+                const snippet = item.snippet || item.contextSnippet;
+
+                return (
+                  <TouchableOpacity
+                    key={item._id}
+                    style={styles.backlinkCard}
+                    onPress={() => router.push({ pathname: '/note/[id]', params: { id: item._id } })}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.backlinkTopRow}>
+                      <Ionicons name="document-text-outline" size={14} color="#3b82f6" />
+                      <Text style={styles.backlinkNoteTitle} numberOfLines={1}>{item.title}</Text>
+                      {nbName && (
+                        <View style={[styles.backlinkNotebookTag, { borderColor: nbColor + '30', borderWidth: 1 }]}>
+                          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: nbColor, marginRight: 4 }} />
+                          <Text style={styles.backlinkNotebookText}>{nbName}</Text>
+                        </View>
+                      )}
+                    </View>
+                    {snippet && (
+                      <Text style={styles.backlinkSnippet} numberOfLines={2}>
+                        “{snippet.replace(/==/g, '')}”
+                      </Text>
                     )}
-                  </View>
-                  {item.contextSnippet && (
-                    <Text style={styles.backlinkSnippet} numberOfLines={2}>
-                      “{item.contextSnippet.replace(/==/g, '')}”
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              ))}
+                  </TouchableOpacity>
+                );
+              })}
+
+              {backlinksData.unresolvedMentions?.map((item: any) => {
+                const nbName = item.notebook?.name || item.notebookId?.name;
+                const snippet = item.snippet || item.contextSnippet;
+
+                return (
+                  <TouchableOpacity
+                    key={`unresolved-${item._id}`}
+                    style={[styles.backlinkCard, { borderColor: '#fed7aa', backgroundColor: '#fffaf5' }]}
+                    onPress={() => router.push({ pathname: '/note/[id]', params: { id: item._id } })}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.backlinkTopRow}>
+                      <Ionicons name="at-circle-outline" size={14} color="#ea580c" />
+                      <Text style={styles.backlinkNoteTitle} numberOfLines={1}>{item.title}</Text>
+                      <View style={[styles.backlinkNotebookTag, { backgroundColor: '#ffedd5' }]}>
+                        <Text style={[styles.backlinkNotebookText, { color: '#c2410c' }]}>文本提及</Text>
+                      </View>
+                      {nbName && (
+                        <View style={styles.backlinkNotebookTag}>
+                          <Text style={styles.backlinkNotebookText}>{nbName}</Text>
+                        </View>
+                      )}
+                    </View>
+                    {snippet && (
+                      <Text style={styles.backlinkSnippet} numberOfLines={2}>
+                        “{snippet.replace(/==/g, '')}”
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
         </ScrollView>
@@ -737,6 +793,22 @@ export default function NoteDetailScreen() {
           currentContent={note.content || ''}
           onRollbackSuccess={updatedNote => {
             setNote(updatedNote);
+          }}
+        />
+      )}
+
+      {/* 局部关系雷达半屏抽屉 */}
+      {note && (
+        <LocalRadarModal
+          visible={showRadarModal}
+          onClose={() => setShowRadarModal(false)}
+          focusNoteId={note._id}
+          focusNoteTitle={note.title}
+          onSelectNote={targetId => {
+            router.push({
+              pathname: '/note/[id]',
+              params: { id: targetId },
+            });
           }}
         />
       )}

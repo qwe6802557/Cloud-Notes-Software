@@ -266,7 +266,7 @@ const getBacklinksWithContext = async (userId, noteId) => {
 /**
  * 生成全量或局部的力导向知识网络图谱数据 (Nodes & Edges)
  */
-const getKnowledgeGraphData = async (userId, focusNoteId = null, notebookId = null) => {
+const getKnowledgeGraphData = async (userId, focusNoteId = null, notebookId = null, depth = 1) => {
     // 1. 获取用户所有有效笔记本 (确保下拉框选项完整)
     const userNotebooks = await Notebook.find({
         userId,
@@ -358,6 +358,15 @@ const getKnowledgeGraphData = async (userId, focusNoteId = null, notebookId = nu
             if (l.source === targetFocus) neighborSet.add(l.target);
             if (l.target === targetFocus) neighborSet.add(l.source);
         });
+
+        // 若 depth 为 2，扩展 2 级邻居
+        if (Number(depth) === 2) {
+            const firstDegree = new Set(neighborSet);
+            links.forEach(l => {
+                if (firstDegree.has(l.source)) neighborSet.add(l.target);
+                if (firstDegree.has(l.target)) neighborSet.add(l.source);
+            });
+        }
 
         const localNodes = nodes.filter(n => neighborSet.has(n.id));
         const localLinks = links.filter(l => neighborSet.has(l.source) && neighborSet.has(l.target));
