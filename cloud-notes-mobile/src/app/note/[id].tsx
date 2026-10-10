@@ -206,8 +206,10 @@ export default function NoteDetailScreen() {
     const images: string[] = [];
     let match;
     while ((match = regex.exec(note.content)) !== null) {
-      let url = match[1]?.trim();
-      if (url) {
+      const rawTarget = match[1]?.trim();
+      if (rawTarget) {
+        const urlMatch = rawTarget.match(/^(?:<([^>]+)>|([^\s\)\"']+))/);
+        let url = urlMatch ? (urlMatch[1] || urlMatch[2]) : rawTarget;
         if (url.startsWith('/') && serverUrl) {
           url = `${serverUrl.replace(/\/+$/, '')}${url}`;
         }

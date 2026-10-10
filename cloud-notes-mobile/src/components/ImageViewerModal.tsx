@@ -53,6 +53,8 @@ function ZoomableImageSlide({
   onZoomChange: (zoomed: boolean) => void;
 }) {
   const [imgRatio, setImgRatio] = useState<number>(1);
+  const [loading, setLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
 
   // 共享手势动画值
   const scale = useSharedValue(1);
@@ -65,6 +67,8 @@ function ZoomableImageSlide({
   // 获取真实图片尺寸比
   useEffect(() => {
     if (!uri) return;
+    setLoading(true);
+    setHasError(false);
     Image.getSize(
       uri,
       (w, h) => {
@@ -72,7 +76,10 @@ function ZoomableImageSlide({
           setImgRatio(h / w);
         }
       },
-      () => {}
+      () => {
+        setHasError(true);
+        setLoading(false);
+      }
     );
   }, [uri]);
 
@@ -200,9 +207,29 @@ function ZoomableImageSlide({
             style={styles.fullImage}
             resizeMode="contain"
             resizeMethod="scale" // 核心：强制高保真渲染，禁止 Android Fresco 降采样模糊
+            onLoadStart={() => {
+              setLoading(true);
+              setHasError(false);
+            }}
+            onLoadEnd={() => setLoading(false)}
+            onError={() => {
+              setLoading(false);
+              setHasError(true);
+            }}
           />
         </Animated.View>
       </GestureDetector>
+      {loading && !hasError && (
+        <View style={styles.stateOverlay} pointerEvents="none">
+          <ActivityIndicator size="large" color="#1890ff" />
+        </View>
+      )}
+      {hasError && (
+        <View style={styles.stateOverlay} pointerEvents="none">
+          <Ionicons name="image-outline" size={44} color="#64748b" />
+          <Text style={styles.errorText}>图片加载失败</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -485,5 +512,15 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 13,
     fontWeight: '600',
+  },
+  stateOverlay: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  errorText: {
+    color: '#94a3b8',
+    fontSize: 13,
   },
 });
