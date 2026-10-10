@@ -254,7 +254,7 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         try {
           const update = await Updates.checkForUpdateAsync();
           if (update.isAvailable) {
-            setDownloadProgress(60);
+            setDownloadProgress(50);
             await Updates.fetchUpdateAsync();
             setDownloadProgress(100);
             setIsCompleted(true);
@@ -264,12 +264,7 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
             }, 600);
             return;
           } else {
-            setDownloadProgress(100);
-            setIsCompleted(true);
-            setTimeout(async () => {
-              await Updates.reloadAsync();
-            }, 600);
-            return;
+            console.warn('[Update] 未检测到可用的热更补丁，转入原生整包安装流程');
           }
         } catch (otaErr: any) {
           console.warn('[Update] Expo Updates 触发异常，降级执行 APK 流程:', otaErr.message);

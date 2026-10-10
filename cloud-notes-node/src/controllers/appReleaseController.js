@@ -249,7 +249,9 @@ exports.getManifest = asyncHandler(async (req, res) => {
         return res.status(204).end();
     }
 
-    if (runtimeVersion && latestOta.version !== runtimeVersion) {
+    // 校验原生底包是否满足最低兼容版本要求
+    const minCompatible = latestOta.minCompatibleVersion || '1.0.0';
+    if (runtimeVersion && isVersionOlder(runtimeVersion, minCompatible)) {
         res.setHeader('expo-protocol-version', '1');
         res.setHeader('expo-sfv-version', '0');
         return res.status(204).end();
@@ -336,11 +338,12 @@ exports.getManifest = asyncHandler(async (req, res) => {
     });
 
     const commitDate = latestOta.updatedAt || latestOta.createdAt || new Date();
+    const effectiveRuntimeVersion = runtimeVersion || '1.0.7';
 
     const manifest = {
         id: manifestId,
         createdAt: new Date(commitDate).toISOString(),
-        runtimeVersion: latestOta.version,
+        runtimeVersion: effectiveRuntimeVersion,
         launchAsset,
         assets,
         metadata: {
@@ -354,7 +357,7 @@ exports.getManifest = asyncHandler(async (req, res) => {
                 slug: 'jiong-ren-note',
                 scheme: 'jiongrennote',
                 version: latestOta.version,
-                runtimeVersion: latestOta.version,
+                runtimeVersion: effectiveRuntimeVersion,
                 android: {
                     package: 'com.jiongren.cloudnotes',
                     versionCode: latestOta.buildNumber
