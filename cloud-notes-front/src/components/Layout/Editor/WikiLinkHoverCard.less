@@ -170,7 +170,18 @@
             display: inline-flex;
             align-items: center;
             font-weight: 500;
-            box-shadow: 0 2px 4px rgba(37, 99, 235, 0.2);
+            &.split-btn {
+                background: #ffffff;
+                border-color: #cbd5e1;
+                color: #334155;
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+
+                &:hover {
+                    border-color: #3b82f6;
+                    color: #2563eb;
+                    background: #eff6ff;
+                }
+            }
 
             &.create-btn {
                 background: #ea580c;

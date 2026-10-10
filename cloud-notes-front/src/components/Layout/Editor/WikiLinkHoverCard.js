@@ -1,23 +1,24 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Spin, Button, Tag } from 'antd';
+import { Spin, Button, Tag, Space } from 'antd';
 import {
     FileTextOutlined,
     ClockCircleOutlined,
     ApartmentOutlined,
     PlusOutlined,
     RightOutlined,
-    CloseOutlined
+    CloseOutlined,
+    SplitCellsOutlined
 } from '@ant-design/icons';
 import { suggestNoteLinks } from '@/api/notes';
 import './WikiLinkHoverCard.less';
 
-const CARD_WIDTH = 320;
+const CARD_WIDTH = 340;
 const CARD_ESTIMATED_HEIGHT = 180;
 const OPEN_DELAY = 220;
 const CLOSE_DELAY = 260;
 
-const WikiLinkHoverCard = ({ onSelectNote, onCreateNote }) => {
+const WikiLinkHoverCard = ({ onSelectNote, onCreateNote, onOpenSplitNote }) => {
     const [visible, setVisible] = useState(false);
     const [loading, setLoading] = useState(false);
     const [targetTitle, setTargetTitle] = useState('');
@@ -159,6 +160,21 @@ const WikiLinkHoverCard = ({ onSelectNote, onCreateNote }) => {
         }
     };
 
+    const handleOpenSplitNote = () => {
+        if (noteInfo?._id) {
+            setVisible(false);
+            if (typeof onOpenSplitNote === 'function') {
+                onOpenSplitNote(noteInfo._id, targetTitle);
+            } else {
+                window.dispatchEvent(
+                    new CustomEvent('open-wiki-link-split', {
+                        detail: { noteId: noteInfo._id, title: targetTitle }
+                    })
+                );
+            }
+        }
+    };
+
     const handleCreateNew = () => {
         setVisible(false);
         onCreateNote?.(targetTitle);
@@ -254,15 +270,25 @@ const WikiLinkHoverCard = ({ onSelectNote, onCreateNote }) => {
 
             <div className="card-footer">
                 {noteInfo?._id ? (
-                    <Button
-                        type="primary"
-                        size="small"
-                        icon={<RightOutlined />}
-                        className="action-btn"
-                        onClick={handleOpenNote}
-                    >
-                        打开阅读笔记
-                    </Button>
+                    <Space size={8}>
+                        <Button
+                            size="small"
+                            icon={<SplitCellsOutlined />}
+                            className="action-btn split-btn"
+                            onClick={handleOpenSplitNote}
+                        >
+                            在副屏参考
+                        </Button>
+                        <Button
+                            type="primary"
+                            size="small"
+                            icon={<RightOutlined />}
+                            className="action-btn"
+                            onClick={handleOpenNote}
+                        >
+                            主栏打开
+                        </Button>
+                    </Space>
                 ) : isNotFound ? (
                     <Button
                         type="primary"

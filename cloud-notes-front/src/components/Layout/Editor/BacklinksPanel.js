@@ -8,7 +8,8 @@ import {
     BookOutlined,
     ClockCircleOutlined,
     FileTextOutlined,
-    CompassOutlined
+    CompassOutlined,
+    SplitCellsOutlined
 } from '@ant-design/icons';
 import { Spin, Tooltip, Tag } from 'antd';
 import './BacklinksPanel.less';
@@ -160,7 +161,17 @@ const BacklinksPanel = ({ noteId, noteTitle, onNavigateNote, onOpenLocalGraph })
                                                 <div
                                                     key={item._id}
                                                     className="backlink-card"
-                                                    onClick={() => onNavigateNote?.(item._id)}
+                                                    onClick={e => {
+                                                        if (e.altKey || e.shiftKey) {
+                                                            window.dispatchEvent(
+                                                                new CustomEvent('open-wiki-link-split', {
+                                                                    detail: { noteId: item._id, title: item.title }
+                                                                })
+                                                            );
+                                                            return;
+                                                        }
+                                                        onNavigateNote?.(item._id);
+                                                    }}
                                                 >
                                                     <div className="card-top">
                                                         <div className="note-name">
@@ -177,6 +188,23 @@ const BacklinksPanel = ({ noteId, noteTitle, onNavigateNote, onOpenLocalGraph })
                                                                     {item.notebookId.name}
                                                                 </Tag>
                                                             )}
+                                                            <Tooltip title="在副屏分屏参考 (Shift/Alt+点击)">
+                                                                <button
+                                                                    type="button"
+                                                                    className="card-split-btn"
+                                                                    onClick={e => {
+                                                                        e.stopPropagation();
+                                                                        window.dispatchEvent(
+                                                                            new CustomEvent('open-wiki-link-split', {
+                                                                                detail: { noteId: item._id, title: item.title }
+                                                                            })
+                                                                        );
+                                                                    }}
+                                                                    aria-label="在副屏分屏参考"
+                                                                >
+                                                                    <SplitCellsOutlined />
+                                                                </button>
+                                                            </Tooltip>
                                                             <span className="update-time">
                                                                 <ClockCircleOutlined style={{ marginRight: 3 }} />
                                                                 {formatTime(item.updatedAt)}

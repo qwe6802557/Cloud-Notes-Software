@@ -32,7 +32,8 @@ import {
     CheckCircleOutlined,
     CloseCircleOutlined,
     SyncOutlined,
-    ApartmentOutlined
+    ApartmentOutlined,
+    SplitCellsOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -57,6 +58,7 @@ import LinkSuggestPopup from './LinkSuggestPopup';
 import BacklinksPanel from './BacklinksPanel';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import WikiLinkHoverCard from './WikiLinkHoverCard';
+import SecondaryNotePane from './SecondaryNotePane';
 
 const locale = {
     ...zhHans
@@ -431,6 +433,24 @@ const NoteEditor = ({
     const [statusAnchorEl, setStatusAnchorEl] = useState(null);
     const [backlinksAnchorEl, setBacklinksAnchorEl] = useState(null);
 
+    // PC 端双栏分屏联动写作状态
+    const [splitActive, setSplitActive] = useState(false);
+    const [secondaryNoteId, setSecondaryNoteId] = useState(null);
+    const [secondaryPinned, setSecondaryPinned] = useState(false);
+    const [splitPaneRatio, setSplitPaneRatio] = useState(() => {
+        try {
+            const saved = localStorage.getItem('cloud_notes_split_ratio');
+            if (saved) {
+                const num = parseFloat(saved);
+                if (!isNaN(num) && num >= 25 && num <= 75) return num;
+            }
+        } catch {}
+        return 50;
+    });
+    const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
+    const splitWrapperRef = useRef(null);
+    const isDraggingSplitterRef = useRef(false);
+
     const contentAnalytics = useMemo(() => calculateContentAnalytics(content), [content]);
 
     useEffect(() => {
@@ -527,6 +547,145 @@ const NoteEditor = ({
         },
         [selectedNotebook, onSelectNote]
     );
+
+    // 监听副屏联动打开事件 (Shift/Alt 点击双链或悬停卡片/反链卡片点击)
+    useEffect(() => {
+        const handleOpenWikiLinkSplit = async e => {
+            const { noteId: targetId, title: targetTitle } = e.detail || {};
+            if (!targetId && !targetTitle) return;
+
+            // 若副栏已被用户钉住锁定，提示并拦截，防止冲掉当前参考上下文
+            if (secondaryPinned) {
+                message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                return;
+            }
+
+            if (targetId) {
+                setSecondaryNoteId(targetId);
+                setSplitActive(true);
+                return;
+            }
+
+            if (targetTitle) {
+                try {
+                    const res = await suggestNoteLinks(targetTitle);
+                    const list = res?.data?.suggestions || res?.suggestions || [];
+                    const exactMatch = list.find(
+                        n => n.title.trim().toLowerCase() === targetTitle.trim().toLowerCase()
+                    );
+
+                    if (exactMatch) {
+                        setSecondaryNoteId(exactMatch._id);
+                        setSplitActive(true);
+                    } else {
+                        Modal.confirm({
+                            title: '创建关联双链并在副屏打开',
+                            content: `笔记《${targetTitle}》尚未创建。是否立即以此标题创建新笔记并在副屏参考？`,
+                            okText: '立即创建',
+                            cancelText: '取消',
+                            centered: true,
+                            onOk: async () => {
+                                try {
+                                    const newNoteRes = await createNote({
+                                        title: targetTitle,
+                                        content: '',
+                                        notebookId: selectedNotebook || undefined,
+                                        type: 'note'
+                                    });
+                                    const newId =
+                                        newNoteRes?.note?._id ||
+                                        newNoteRes?.data?.note?._id ||
+                                        newNoteRes?._id;
+                                    if (newId) {
+                                        message.success(`已创建笔记《${targetTitle}》并在副屏打开`);
+                                        setSecondaryNoteId(newId);
+                                        setSplitActive(true);
+                                    }
+                                } catch {
+                                    message.error('创建关联笔记失败');
+                                }
+                            }
+                        });
+                    }
+                } catch {
+                    message.error('检索关联笔记失败');
+                }
+            }
+        };
+
+        window.addEventListener('open-wiki-link-split', handleOpenWikiLinkSplit);
+        return () => window.removeEventListener('open-wiki-link-split', handleOpenWikiLinkSplit);
+    }, [secondaryPinned, selectedNotebook]);
+
+    // 分割线拖拽调整宽度逻辑
+    const handleSplitterMouseDown = useCallback(e => {
+        e.preventDefault();
+        setIsDraggingSplitter(true);
+        isDraggingSplitterRef.current = true;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+
+        const handleMouseMove = moveEvent => {
+            if (!isDraggingSplitterRef.current || !splitWrapperRef.current) return;
+            const rect = splitWrapperRef.current.getBoundingClientRect();
+            if (!rect.width) return;
+            const offset = moveEvent.clientX - rect.left;
+            const newRatio = (offset / rect.width) * 100;
+            const clamped = Math.max(25, Math.min(75, newRatio));
+            setSplitPaneRatio(clamped);
+        };
+
+        const handleMouseUp = upEvent => {
+            isDraggingSplitterRef.current = false;
+            setIsDraggingSplitter(false);
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            window.removeEventListener('mousemove', handleMouseMove);
+            window.removeEventListener('mouseup', handleMouseUp);
+
+            if (splitWrapperRef.current) {
+                const rect = splitWrapperRef.current.getBoundingClientRect();
+                if (rect.width) {
+                    const offset = upEvent.clientX - rect.left;
+                    const newRatio = (offset / rect.width) * 100;
+                    const clamped = Math.max(25, Math.min(75, newRatio));
+                    try {
+                        localStorage.setItem('cloud_notes_split_ratio', clamped.toFixed(1));
+                    } catch {}
+                }
+            }
+        };
+
+        window.addEventListener('mousemove', handleMouseMove);
+        window.addEventListener('mouseup', handleMouseUp);
+    }, []);
+
+    // 双击分割线复位至 50:50
+    const handleSplitterDoubleClick = useCallback(() => {
+        setSplitPaneRatio(50);
+        try {
+            localStorage.setItem('cloud_notes_split_ratio', '50.0');
+        } catch {}
+        message.info('分屏比例已复位至 50:50');
+    }, []);
+
+    // 左右栏内容对调 (Swap Panes)
+    const handleSwapPanes = useCallback(() => {
+        if (!secondaryNoteId) {
+            message.warning('副屏尚未选择参考笔记，无法对调');
+            return;
+        }
+        const currentMain = selectedNote;
+        const currentSec = secondaryNoteId;
+        onSelectNote?.(currentSec);
+        setSecondaryNoteId(currentMain);
+        message.success('已对调主副栏笔记');
+    }, [secondaryNoteId, selectedNote, onSelectNote]);
+
+    // 关闭副屏
+    const handleCloseSecondaryPane = useCallback(() => {
+        setSplitActive(false);
+    }, []);
 
     // 锚定并挂载保存状态至 ByteMD 右侧原生状态栏与预览区反向链接
     useEffect(() => {
@@ -1447,6 +1606,14 @@ const NoteEditor = ({
             <div className="editor-left-actions">
                 <ModeSegmented value={mode} onChange={setMode} />
                 <Divider type="vertical" style={{ height: 16, margin: '0 4px' }} />
+                <Tooltip title={splitActive ? '关闭双栏分屏' : '开启双栏分屏联动写作 (Shift/Alt+点击双链在副屏参考)'}>
+                    <Button
+                        className={`toolbar-tool-btn split-toggle-btn ${splitActive ? 'is-active' : ''}`}
+                        type={splitActive ? 'primary' : 'text'}
+                        icon={<SplitCellsOutlined />}
+                        onClick={() => setSplitActive(prev => !prev)}
+                    />
+                </Tooltip>
                 <Tooltip title={tocVisible ? '收起大纲' : '文章大纲 (Ctrl+Shift+O)'}>
                     <Button
                         className="toolbar-tool-btn"
@@ -1723,44 +1890,89 @@ const NoteEditor = ({
                 onChange={handleInsertImageChange}
             />
 
-            <div className="editor-content" ref={editorContainerRef}>
-                <Spin spinning={loading} tip="加载中...">
+            <div
+                className={`editor-content ${splitActive ? 'is-split-active' : ''} ${isDraggingSplitter ? 'is-resizing' : ''}`}
+                ref={editorContainerRef}
+            >
+                <div className="split-workspace-wrapper" ref={splitWrapperRef}>
                     <div
-                        className={`editor-container editor-container-${mode} font-family-${fontFamily} font-size-${fontSize}`}
-                        onClick={handlePreviewContainerClick}
+                        className="split-pane primary-split-pane"
+                        style={{ width: splitActive ? `${splitPaneRatio}%` : '100%' }}
                     >
-                        {mode === 'preview' ? (
-                            <div className="preview-only-wrapper">
-                                <div className="preview-only">
-                                    <Viewer value={content} plugins={basePlugins} />
-                                    <BacklinksPanel
-                                        noteId={selectedNote}
-                                        noteTitle={noteTitle}
-                                        onNavigateNote={onSelectNote}
-                                        onOpenLocalGraph={() => setLocalGraphVisible(true)}
+                        <Spin spinning={loading} tip="加载中...">
+                            <div
+                                className={`editor-container editor-container-${mode} font-family-${fontFamily} font-size-${fontSize}`}
+                                onClick={handlePreviewContainerClick}
+                            >
+                                {mode === 'preview' ? (
+                                    <div className="preview-only-wrapper">
+                                        <div className="preview-only">
+                                            <Viewer value={content} plugins={basePlugins} />
+                                            <BacklinksPanel
+                                                noteId={selectedNote}
+                                                noteTitle={noteTitle}
+                                                onNavigateNote={onSelectNote}
+                                                onOpenLocalGraph={() => setLocalGraphVisible(true)}
+                                            />
+                                        </div>
+                                        <div className="bytemd-status preview-status-bar">
+                                            <div className="bytemd-status-left">
+                                                <span>字数: <strong>{contentAnalytics.effectiveWords}</strong></span>
+                                                <span>行数: <strong>{contentAnalytics.lines}</strong></span>
+                                            </div>
+                                            <div className="bytemd-status-right">
+                                                {renderSaveStatus()}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <Editor
+                                        value={content}
+                                        plugins={editorPlugins}
+                                        onChange={handleChange}
+                                        mode="split"
+                                        locale={locale}
                                     />
-                                </div>
-                                <div className="bytemd-status preview-status-bar">
-                                    <div className="bytemd-status-left">
-                                        <span>字数: <strong>{contentAnalytics.effectiveWords}</strong></span>
-                                        <span>行数: <strong>{contentAnalytics.lines}</strong></span>
-                                    </div>
-                                    <div className="bytemd-status-right">
-                                        {renderSaveStatus()}
-                                    </div>
+                                )}
+                            </div>
+                        </Spin>
+                    </div>
+
+                    {splitActive && (
+                        <>
+                            <div
+                                className={`split-resizer ${isDraggingSplitter ? 'is-active' : ''}`}
+                                onMouseDown={handleSplitterMouseDown}
+                                onDoubleClick={handleSplitterDoubleClick}
+                                title="拖拽调整分屏宽度，双击复位至 50:50"
+                            >
+                                <div className="split-resizer-line" />
+                                <div className="split-resizer-handle">
+                                    <span className="dot" />
+                                    <span className="dot" />
+                                    <span className="dot" />
                                 </div>
                             </div>
-                        ) : (
-                            <Editor
-                                value={content}
-                                plugins={editorPlugins}
-                                onChange={handleChange}
-                                mode="split"
-                                locale={locale}
-                            />
-                        )}
-                    </div>
-                </Spin>
+
+                            <div
+                                className="split-pane secondary-split-pane"
+                                style={{ width: `${100 - splitPaneRatio}%` }}
+                            >
+                                <SecondaryNotePane
+                                    noteId={secondaryNoteId}
+                                    isPinned={secondaryPinned}
+                                    onTogglePin={() => setSecondaryPinned(prev => !prev)}
+                                    onSwap={handleSwapPanes}
+                                    onClose={handleCloseSecondaryPane}
+                                    onSelectNote={setSecondaryNoteId}
+                                    onNavigateMainNote={onSelectNote}
+                                    selectedNotebook={selectedNotebook}
+                                />
+                            </div>
+                        </>
+                    )}
+                </div>
+
                 <SelectionCopyBubble
                     containerRef={editorContainerRef}
                     editorContextRef={editorContextRef}
@@ -1912,6 +2124,14 @@ const NoteEditor = ({
             <WikiLinkHoverCard
                 onSelectNote={onSelectNote}
                 onCreateNote={handleCreateWikiLinkNote}
+                onOpenSplitNote={targetNoteId => {
+                    if (secondaryPinned) {
+                        message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                        return;
+                    }
+                    setSecondaryNoteId(targetNoteId);
+                    setSplitActive(true);
+                }}
             />
         </div>
     );

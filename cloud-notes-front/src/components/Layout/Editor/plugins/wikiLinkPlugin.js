@@ -48,7 +48,7 @@ function processTextNode(node) {
         linkEl.setAttribute('role', 'button');
         linkEl.setAttribute('tabindex', '0');
         linkEl.setAttribute('data-target-title', targetTitle);
-        linkEl.setAttribute('title', `跳转至笔记: 《${targetTitle}》`);
+        linkEl.setAttribute('title', `跳转至笔记: 《${targetTitle}》（Shift/Alt+点击可在副屏打开）`);
 
         linkEl.innerHTML = `
             <span class="wiki-link-icon" aria-hidden="true">
@@ -114,8 +114,19 @@ export default function wikiLinkPlugin(options = {}) {
                 const targetTitle = linkEl.getAttribute('data-target-title');
                 if (!targetTitle) return;
 
+                const isSplitTrigger = Boolean(event.altKey || event.shiftKey);
+                if (isSplitTrigger) {
+                    window.dispatchEvent(
+                        new CustomEvent('open-wiki-link-split', {
+                            detail: { title: targetTitle }
+                        })
+                    );
+                    return;
+                }
+
                 if (typeof onWikiLinkClick === 'function') {
-                    onWikiLinkClick(targetTitle);
+                    const handled = onWikiLinkClick(targetTitle, event);
+                    if (handled) return;
                 }
 
                 window.dispatchEvent(
