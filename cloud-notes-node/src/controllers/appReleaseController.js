@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const AppRelease = require('../models/AppRelease');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
@@ -190,4 +192,120 @@ exports.getReleases = asyncHandler(async (req, res) => {
         message: '获取版本历史成功',
         data: releases
     });
+});
+
+/**
+ * Expo Updates 官方协议 Manifest 接口
+ * GET /app/manifest
+ */
+exports.getManifest = asyncHandler(async (req, res) => {
+    const platform = req.headers['expo-platform'] || req.query.platform || 'android';
+    const runtimeVersion = req.headers['expo-runtime-version'] || req.query.runtimeVersion;
+    const clientUpdateId = req.headers['expo-current-update-id'];
+
+    const latestOta = await AppRelease.findOne({
+        platform: { $in: [platform, 'all'] },
+        type: 'ota',
+        isActive: true
+    }).sort({ buildNumber: -1 });
+
+    if (!latestOta) {
+        res.setHeader('expo-protocol-version', '1');
+        return res.status(204).end();
+    }
+
+    if (runtimeVersion && latestOta.version !== runtimeVersion) {
+        res.setHeader('expo-protocol-version', '1');
+        return res.status(204).end();
+    }
+
+    if (clientUpdateId && clientUpdateId === latestOta.hash) {
+        res.setHeader('expo-protocol-version', '1');
+        return res.status(204).end();
+    }
+
+    const otaDir = process.env.OTA_DIR || '/var/lib/cloud-notes/updates/ota';
+    const metadataPath = path.join(otaDir, 'metadata.json');
+
+    let fileMetadata = null;
+    if (fs.existsSync(metadataPath)) {
+        try {
+            const raw = fs.readFileSync(metadataPath, 'utf8');
+            fileMetadata = JSON.parse(raw);
+        } catch {
+            fileMetadata = null;
+        }
+    }
+
+    if (!fileMetadata || !fileMetadata.fileMetadata || !fileMetadata.fileMetadata[platform]) {
+        res.setHeader('expo-protocol-version', '1');
+        return res.status(204).end();
+    }
+
+    const platformMeta = fileMetadata.fileMetadata[platform];
+    const baseUrl = config.publicBaseUrl || `${req.protocol}://${req.get('host')}`;
+    const updatesBaseUrl = `${baseUrl}/updates/ota`;
+
+    const mimeMap = {
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        ttf: 'font/ttf',
+        otf: 'font/otf',
+        woff: 'font/woff',
+        woff2: 'font/woff2',
+        js: 'application/javascript',
+        hbc: 'application/javascript'
+    };
+
+    const bundlePath = (platformMeta.bundle || '').replace(/\\/g, '/');
+    const launchAsset = {
+        key: 'bundle',
+        contentType: 'application/javascript',
+        url: `${updatesBaseUrl}/${bundlePath}`
+    };
+
+    const assets = (platformMeta.assets || []).map(asset => {
+        const cleanPath = (asset.path || '').replace(/\\/g, '/');
+        const ext = asset.ext || '';
+        return {
+            key: cleanPath,
+            contentType: mimeMap[ext] || 'application/octet-stream',
+            fileExtension: ext ? `.${ext}` : '',
+            url: `${updatesBaseUrl}/${cleanPath}`
+        };
+    });
+
+    const manifest = {
+        id: latestOta.hash || `ota-${latestOta.version}-b${latestOta.buildNumber}`,
+        createdAt: latestOta.createdAt ? latestOta.createdAt.toISOString() : new Date().toISOString(),
+        runtimeVersion: latestOta.version,
+        launchAsset,
+        assets,
+        metadata: {
+            buildNumber: latestOta.buildNumber,
+            forceUpdate: latestOta.forceUpdate
+        }
+    };
+
+    res.setHeader('expo-protocol-version', '1');
+
+    const acceptHeader = req.headers.accept || '';
+    if (acceptHeader.includes('multipart/mixed')) {
+        const boundary = '---------------------------expo-updates-boundary';
+        const manifestString = JSON.stringify(manifest);
+        res.setHeader('content-type', `multipart/mixed; boundary=${boundary}`);
+        const body =
+            `--${boundary}\r\n` +
+            `Content-Disposition: form-data; name="manifest"\r\n` +
+            `Content-Type: application/expo+json\r\n\r\n` +
+            `${manifestString}\r\n` +
+            `--${boundary}--\r\n`;
+        return res.status(200).send(body);
+    }
+
+    res.setHeader('content-type', 'application/json');
+    return res.status(200).json(manifest);
 });

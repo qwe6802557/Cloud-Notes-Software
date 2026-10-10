@@ -6,6 +6,9 @@ const router = express.Router();
 // 客户端检查更新 (免登录公开端点)
 router.get('/check-update', appReleaseController.checkUpdate);
 
+// Expo Updates 协议 Manifest 端点
+router.get('/manifest', appReleaseController.getManifest);
+
 // 获取版本列表
 router.get('/releases', appReleaseController.getReleases);
 

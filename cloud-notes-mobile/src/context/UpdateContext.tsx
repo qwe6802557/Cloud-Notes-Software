@@ -70,6 +70,24 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (res.code === 200 && res.data && res.data.hasUpdate) {
           setHasUpdate(true);
           setUpdateData(res.data);
+
+          // 双模策略：普通热更启动时后台静默下载，不弹窗打扰；强更、原生升级或手动点击时弹窗
+          if (res.data.type === 'ota' && Updates.isEnabled) {
+            if (!isManual && !res.data.forceUpdate) {
+              setIsModalVisible(false);
+              Updates.checkForUpdateAsync()
+                .then(u => {
+                  if (u.isAvailable) {
+                    Updates.fetchUpdateAsync()
+                      .then(() => console.log('[Update] 静默热更补丁拉取完毕，下次启动生效'))
+                      .catch(err => console.warn('[Update] 静默下载异常:', err.message));
+                  }
+                })
+                .catch(err => console.warn('[Update] 静默检测异常:', err.message));
+              return;
+            }
+          }
+
           setIsModalVisible(true);
         } else {
           setHasUpdate(false);
@@ -221,28 +239,32 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       };
 
       if (updateData.type === 'ota' && Updates.isEnabled) {
-        // ========== 分支 1：原生支持 Expo-Updates 的热更新 ==========
-        const update = await Updates.checkForUpdateAsync();
-        if (update.isAvailable) {
-          const timer = setInterval(() => {
-            setDownloadProgress(prev => {
-              if (prev >= 90) {
-                clearInterval(timer);
-                return 90;
-              }
-              return prev + 15;
-            });
-          }, 200);
+        setIsDownloading(true);
+        setDownloadProgress(20);
+        setIsCompleted(false);
 
-          await Updates.fetchUpdateAsync();
-          clearInterval(timer);
-          setDownloadProgress(100);
-          setIsCompleted(true);
+        try {
+          const update = await Updates.checkForUpdateAsync();
+          if (update.isAvailable) {
+            setDownloadProgress(60);
+            await Updates.fetchUpdateAsync();
+            setDownloadProgress(100);
+            setIsCompleted(true);
 
-          setTimeout(async () => {
-            await Updates.reloadAsync();
-          }, 800);
-          return;
+            setTimeout(async () => {
+              await Updates.reloadAsync();
+            }, 600);
+            return;
+          } else {
+            setDownloadProgress(100);
+            setIsCompleted(true);
+            setTimeout(async () => {
+              await Updates.reloadAsync();
+            }, 600);
+            return;
+          }
+        } catch (otaErr: any) {
+          console.warn('[Update] Expo Updates 触发异常，降级执行 APK 流程:', otaErr.message);
         }
       }
 

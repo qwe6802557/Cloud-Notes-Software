@@ -48,7 +48,7 @@ async function run() {
         let finalApkUrl = '';
 
         if (releaseType === 'ota') {
-            console.log('⏳ [1/4] 正在导出生产 React Native Bundle 与静态资源 (expo export)...');
+            console.log('⏳ [1/4] 正在导出生产 React Native Bundle 与静态资源 (npx expo export)...');
             const distDir = path.join(mobileRoot, 'dist');
             if (fs.existsSync(distDir)) {
                 fs.rmSync(distDir, { recursive: true, force: true });
@@ -59,32 +59,43 @@ async function run() {
                 stdio: 'inherit'
             });
 
-            console.log('⏳ [2/4] 正在打包压缩热更 Bundle...');
+            console.log('⏳ [2/4] 正在打包归档生产静态资产与 Hermes 字节码...');
+            const metadataPath = path.join(distDir, 'metadata.json');
+            if (!fs.existsSync(metadataPath)) {
+                throw new Error('未找到导出的 metadata.json');
+            }
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+            const androidBundleRel = metadata.fileMetadata?.android?.bundle;
+            if (!androidBundleRel) {
+                throw new Error('metadata.json 中缺失 android bundle 信息');
+            }
+            const bundleFullPath = path.join(distDir, androidBundleRel);
+            const bundleBuffer = fs.readFileSync(bundleFullPath);
+            bundleSize = bundleBuffer.length;
+            bundleHash = crypto.createHash('sha256').update(bundleBuffer).digest('hex');
+
+            const localTarPath = path.join(mobileRoot, 'ota-dist.tar.gz');
+            if (fs.existsSync(localTarPath)) fs.unlinkSync(localTarPath);
+            execSync(`tar -czf "${localTarPath}" -C "${distDir}" .`, { cwd: mobileRoot, stdio: 'inherit' });
+
             bundleFileName = `bundle-v${version}-b${buildNumber}.zip`;
             const localZipPath = path.join(mobileRoot, bundleFileName);
-            if (fs.existsSync(localZipPath)) {
-                fs.unlinkSync(localZipPath);
-            }
-
-            // 使用 PowerShell Compress-Archive 进行标准化压缩
+            if (fs.existsSync(localZipPath)) fs.unlinkSync(localZipPath);
             execSync(`powershell -Command "Compress-Archive -Path '${distDir}\\*' -DestinationPath '${localZipPath}' -Force"`, {
                 cwd: mobileRoot,
                 stdio: 'inherit'
             });
 
-            // 计算体积与 SHA-256 哈希
-            const fileBuffer = fs.readFileSync(localZipPath);
-            bundleSize = fileBuffer.length;
-            bundleHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
             console.log(`✅ 热更包打包完成: ${(bundleSize / 1024 / 1024).toFixed(2)} MB, SHA256: ${bundleHash.substring(0, 16)}...`);
 
-            console.log('⏳ [3/4] 安全上传至腾讯云服务器 /var/lib/cloud-notes/updates/ ...');
-            execSync(`ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} "sudo mkdir -p /var/lib/cloud-notes/updates && sudo chown -R ubuntu:ubuntu /var/lib/cloud-notes/updates"`, { stdio: 'inherit' });
+            console.log('⏳ [3/4] 安全上传至腾讯云生产服务器 /var/lib/cloud-notes/updates/ota/ ...');
+            execSync(`ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} "sudo mkdir -p /var/lib/cloud-notes/updates/ota && sudo chown -R ubuntu:ubuntu /var/lib/cloud-notes/updates"`, { stdio: 'inherit' });
+            execSync(`scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${localTarPath}" ${SERVER_USER}@${SERVER_HOST}:/var/lib/cloud-notes/updates/ota-dist.tar.gz`, { stdio: 'inherit' });
             execSync(`scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${localZipPath}" ${SERVER_USER}@${SERVER_HOST}:/var/lib/cloud-notes/updates/${bundleFileName}`, { stdio: 'inherit' });
+            execSync(`ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} "rm -rf /var/lib/cloud-notes/updates/ota/* && tar -xzf /var/lib/cloud-notes/updates/ota-dist.tar.gz -C /var/lib/cloud-notes/updates/ota && rm -f /var/lib/cloud-notes/updates/ota-dist.tar.gz"`, { stdio: 'inherit' });
 
-            if (fs.existsSync(localZipPath)) {
-                fs.unlinkSync(localZipPath);
-            }
+            if (fs.existsSync(localTarPath)) fs.unlinkSync(localTarPath);
+            if (fs.existsSync(localZipPath)) fs.unlinkSync(localZipPath);
         } else {
             // 原生 APK 发布分支
             if (!apkPath || !fs.existsSync(apkPath)) {

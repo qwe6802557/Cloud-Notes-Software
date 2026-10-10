@@ -7,11 +7,18 @@
     "icon": "./assets/images/icon.png",
     "scheme": "jiongrennote",
     "userInterfaceStyle": "automatic",
+    "updates": {
+      "enabled": true,
+      "checkAutomatically": "NEVER",
+      "fallbackToCacheTimeout": 0,
+      "url": "https://notes.yanggenbwebsite.site/api/app/manifest"
+    },
+    "runtimeVersion": "1.0.7",
     "ios": {
       "icon": "./assets/expo.icon"
     },
     "android": {
-      "versionCode": 14,
+      "versionCode": 15,
       "permissions": [
         "INTERNET",
         "REQUEST_INSTALL_PACKAGES",
