@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { getKnowledgeGraph } from '@/api/notes';
+import { getKnowledgeGraph, suggestNoteLinks } from '@/api/notes';
 import {
     ApartmentOutlined,
     ZoomInOutlined,
@@ -48,8 +48,10 @@ const KnowledgeGraph = ({
     const simulationLinksRef = useRef([]);
     const alphaRef = useRef(1.0);
 
-    // 悬停气泡状态（用于展示 rich tooltip）
+    // 悬停气泡状态（用于展示 rich tooltip）与正文摘要缓存
     const [tooltipInfo, setTooltipInfo] = useState(null);
+    const [nodeSnippets, setNodeSnippets] = useState({});
+    const snippetCacheRef = useRef(new Map());
 
     // 拉取图谱数据
     const fetchGraph = useCallback(async () => {
@@ -479,11 +481,39 @@ const KnowledgeGraph = ({
 
             if (targetNode) {
                 canvas.style.cursor = 'pointer';
+
+                // 智能视口避让
+                const CARD_W = 280;
+                const CARD_H = 160;
+                let posX = e.clientX + 14;
+                if (posX + CARD_W > window.innerWidth - 16) {
+                    posX = Math.max(16, e.clientX - CARD_W - 14);
+                }
+                let posY = e.clientY + 14;
+                if (posY + CARD_H > window.innerHeight - 16) {
+                    posY = Math.max(16, e.clientY - CARD_H - 14);
+                }
+
                 setTooltipInfo({
                     node: targetNode,
-                    x: e.clientX,
-                    y: e.clientY
+                    x: posX,
+                    y: posY
                 });
+
+                // 异步拉取摘要
+                if (!snippetCacheRef.current.has(targetNode.id)) {
+                    snippetCacheRef.current.set(targetNode.id, 'fetching');
+                    suggestNoteLinks(targetNode.title).then(res => {
+                        const suggestions = res?.data?.suggestions || res?.suggestions || [];
+                        const match = suggestions.find(s => s._id === targetNode.id) || suggestions[0];
+                        const snippet = match?.snippet || '暂无详细正文摘要';
+                        snippetCacheRef.current.set(targetNode.id, snippet);
+                        setNodeSnippets(prev => ({ ...prev, [targetNode.id]: snippet }));
+                    }).catch(() => {
+                        snippetCacheRef.current.set(targetNode.id, '暂无摘要');
+                        setNodeSnippets(prev => ({ ...prev, [targetNode.id]: '暂无摘要' }));
+                    });
+                }
             } else {
                 canvas.style.cursor = 'default';
                 setTooltipInfo(null);
@@ -813,33 +843,59 @@ const KnowledgeGraph = ({
                 )}
             </div>
 
-            {/* 悬停信息浮层 */}
+            {/* 悬停信息浮层 (Hover Peek Card) */}
             {tooltipInfo && (
                 <div
                     className="graph-tooltip"
                     style={{
-                        top: tooltipInfo.y + 12,
-                        left: tooltipInfo.x + 12
+                        top: tooltipInfo.y,
+                        left: tooltipInfo.x
                     }}
                 >
-                    <div className="tooltip-title">
-                        <FileTextOutlined style={{ marginRight: 6, color: '#3b82f6' }} />
-                        {tooltipInfo.node.title}
-                    </div>
-                    <div className="tooltip-meta">
+                    <div className="tooltip-header">
+                        <div className="tooltip-title">
+                            <FileTextOutlined style={{ marginRight: 6, color: '#3b82f6', flexShrink: 0 }} />
+                            <span title={tooltipInfo.node.title}>{tooltipInfo.node.title}</span>
+                        </div>
                         {tooltipInfo.node.notebookName && (
-                            <span className="notebook-tag">
-                                笔记本: {tooltipInfo.node.notebookName}
+                            <span
+                                className="notebook-badge"
+                                style={{
+                                    backgroundColor: `${tooltipInfo.node.notebookColor || '#3b82f6'}18`,
+                                    color: tooltipInfo.node.notebookColor || '#3b82f6',
+                                    borderColor: `${tooltipInfo.node.notebookColor || '#3b82f6'}40`
+                                }}
+                            >
+                                <span
+                                    className="dot"
+                                    style={{ backgroundColor: tooltipInfo.node.notebookColor || '#3b82f6' }}
+                                />
+                                {tooltipInfo.node.notebookName}
                             </span>
                         )}
-                        <span className="in-degree">
-                            被引用频次: {tooltipInfo.node.inDegree || 0}
+                    </div>
+
+                    <div className="tooltip-meta">
+                        <span className="degree-tag in-degree">
+                            被引: {tooltipInfo.node.inDegree || 0}
                         </span>
-                        <span className="out-degree">
-                            主动引出: {tooltipInfo.node.outDegree || 0}
+                        <span className="degree-tag out-degree">
+                            引出: {tooltipInfo.node.outDegree || 0}
                         </span>
                     </div>
-                    <div className="tooltip-action-tip">点击在右侧打开此笔记</div>
+
+                    <div className="tooltip-snippet">
+                        {nodeSnippets[tooltipInfo.node.id] && nodeSnippets[tooltipInfo.node.id] !== 'fetching' ? (
+                            <div className="snippet-text">“{nodeSnippets[tooltipInfo.node.id]}”</div>
+                        ) : (
+                            <div className="snippet-loading">正在提取笔记摘要...</div>
+                        )}
+                    </div>
+
+                    <div className="tooltip-action-tip">
+                        <ApartmentOutlined style={{ marginRight: 4 }} />
+                        点击节点直接打开此笔记
+                    </div>
                 </div>
             )}
 

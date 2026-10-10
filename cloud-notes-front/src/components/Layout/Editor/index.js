@@ -56,6 +56,7 @@ import wikiLinkPlugin from './plugins/wikiLinkPlugin';
 import LinkSuggestPopup from './LinkSuggestPopup';
 import BacklinksPanel from './BacklinksPanel';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
+import WikiLinkHoverCard from './WikiLinkHoverCard';
 
 const locale = {
     ...zhHans
@@ -502,6 +503,30 @@ const NoteEditor = ({
         window.addEventListener('open-wiki-link', handleOpenWikiLink);
         return () => window.removeEventListener('open-wiki-link', handleOpenWikiLink);
     }, [onSelectNote, selectedNotebook]);
+
+    const handleCreateWikiLinkNote = useCallback(
+        async targetTitle => {
+            try {
+                const newNoteRes = await createNote({
+                    title: targetTitle,
+                    content: '',
+                    notebookId: selectedNotebook || undefined,
+                    type: 'note'
+                });
+                const newId =
+                    newNoteRes?.note?._id ||
+                    newNoteRes?.data?.note?._id ||
+                    newNoteRes?._id;
+                if (newId) {
+                    message.success(`已创建笔记《${targetTitle}》`);
+                    onSelectNote?.(newId);
+                }
+            } catch {
+                message.error('创建关联笔记失败');
+            }
+        },
+        [selectedNotebook, onSelectNote]
+    );
 
     // 锚定并挂载保存状态至 ByteMD 右侧原生状态栏与预览区反向链接
     useEffect(() => {
@@ -1883,6 +1908,11 @@ const NoteEditor = ({
                     ))}
                 </Image.PreviewGroup>
             </div>
+
+            <WikiLinkHoverCard
+                onSelectNote={onSelectNote}
+                onCreateNote={handleCreateWikiLinkNote}
+            />
         </div>
     );
 };

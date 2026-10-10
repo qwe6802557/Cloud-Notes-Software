@@ -854,10 +854,24 @@ exports.suggestNoteLinks = asyncHandler(async (req, res) => {
     }
 
     const notes = await Note.find(query)
-        .select('_id title notebookId updatedAt backlinkCount')
+        .select('_id title notebookId updatedAt backlinkCount content rawContent')
         .populate('notebookId', 'name color')
         .sort({ backlinkCount: -1, updatedAt: -1 })
         .limit(15);
+
+    const stripMarkdown = (md = '') => {
+        return md
+            .replace(/!\[.*?\]\(.*?\)/g, '')
+            .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+            .replace(/\[\[(.*?)(?:\|.*?)?\]\]/g, '$1')
+            .replace(/`{1,3}[\s\S]*?`{1,3}/g, '')
+            .replace(/#+\s+/g, '')
+            .replace(/(\*\*|__)(.*?)\1/g, '$2')
+            .replace(/(\*|_)(.*?)\1/g, '$2')
+            .replace(/>\s+/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    };
 
     res.status(200).json({
         code: 200,
@@ -869,7 +883,8 @@ exports.suggestNoteLinks = asyncHandler(async (req, res) => {
                 notebookName: n.notebookId?.name || '默认笔记本',
                 notebookColor: n.notebookId?.color || '#3b82f6',
                 updatedAt: n.updatedAt,
-                backlinkCount: n.backlinkCount || 0
+                backlinkCount: n.backlinkCount || 0,
+                snippet: stripMarkdown(n.content || n.rawContent || '').slice(0, 180)
             }))
         }
     });

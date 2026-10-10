@@ -134,12 +134,54 @@ export default function wikiLinkPlugin(options = {}) {
                 }
             };
 
+            const handleMouseOver = event => {
+                const linkEl = event.target.closest('.wiki-link');
+                if (!linkEl) return;
+                const targetTitle = linkEl.getAttribute('data-target-title');
+                if (!targetTitle) return;
+
+                const rect = linkEl.getBoundingClientRect();
+                window.dispatchEvent(
+                    new CustomEvent('hover-wiki-link', {
+                        detail: {
+                            title: targetTitle,
+                            rect: {
+                                top: rect.top,
+                                bottom: rect.bottom,
+                                left: rect.left,
+                                right: rect.right,
+                                width: rect.width,
+                                height: rect.height
+                            }
+                        }
+                    })
+                );
+            };
+
+            const handleMouseOut = event => {
+                const linkEl = event.target.closest('.wiki-link');
+                if (!linkEl) return;
+                if (event.relatedTarget && linkEl.contains(event.relatedTarget)) {
+                    return;
+                }
+                const targetTitle = linkEl.getAttribute('data-target-title');
+                window.dispatchEvent(
+                    new CustomEvent('leave-wiki-link', {
+                        detail: { title: targetTitle }
+                    })
+                );
+            };
+
             markdownBody.addEventListener('click', handleClick);
             markdownBody.addEventListener('keydown', handleKeyDown);
+            markdownBody.addEventListener('mouseover', handleMouseOver);
+            markdownBody.addEventListener('mouseout', handleMouseOut);
 
             return () => {
                 markdownBody.removeEventListener('click', handleClick);
                 markdownBody.removeEventListener('keydown', handleKeyDown);
+                markdownBody.removeEventListener('mouseover', handleMouseOver);
+                markdownBody.removeEventListener('mouseout', handleMouseOut);
             };
         }
     };

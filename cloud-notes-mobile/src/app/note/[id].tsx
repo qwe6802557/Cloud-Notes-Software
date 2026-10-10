@@ -24,6 +24,7 @@ import AIAssistantModal from '../../components/AIAssistantModal';
 import VersionHistoryModal from '../../components/VersionHistoryModal';
 import ImageViewerModal from '../../components/ImageViewerModal';
 import LocalRadarModal from '../../components/LocalRadarModal';
+import NotePeekBottomSheet from '../../components/NotePeekBottomSheet';
 
 interface TocItem {
   level: number;
@@ -206,6 +207,11 @@ export default function NoteDetailScreen() {
     unresolvedMentions: [],
     totalCount: 0,
   });
+  const [peekConfig, setPeekConfig] = useState<{
+    visible: boolean;
+    targetTitle?: string;
+    targetNoteId?: string;
+  }>({ visible: false });
 
   const processedContent = useMemo(() => {
     if (!note?.content) return '*该笔记暂无正文内容*';
@@ -222,66 +228,49 @@ export default function NoteDetailScreen() {
     });
   }, [note?.content]);
 
-  const handleWikiLinkPress = async (targetTitle: string) => {
+  const handleWikiLinkPress = (targetTitle: string) => {
+    setPeekConfig({
+      visible: true,
+      targetTitle,
+      targetNoteId: undefined,
+    });
+  };
+
+  const handleBacklinkPress = (targetNoteId: string, title: string) => {
+    setPeekConfig({
+      visible: true,
+      targetTitle: title,
+      targetNoteId,
+    });
+  };
+
+  const handleExecuteCreateWikiNote = async (targetTitle: string) => {
     try {
-      const res = await notesApi.suggestNoteLinks(targetTitle);
-      const list = res?.data?.suggestions || [];
-      const match = list.find((n: any) => n.title.trim().toLowerCase() === targetTitle.trim().toLowerCase());
-      if (match) {
+      let targetNbId = note?.notebookId;
+      if (!targetNbId) {
+        const nbRes = await notesApi.getNotebooks();
+        targetNbId = nbRes?.data?.[0]?._id;
+      }
+      if (!targetNbId) {
+        Alert.alert('提示', '未找到可用的笔记本，请先创建笔记本');
+        return;
+      }
+      const createRes = await notesApi.createNote({
+        title: targetTitle,
+        content: '',
+        notebookId: targetNbId,
+      });
+      if (createRes?.code === 200 && createRes.data) {
+        setPeekConfig({ visible: false });
         router.push({
-          pathname: '/note/[id]',
-          params: { id: match._id },
+          pathname: '/note/edit',
+          params: { id: createRes.data._id },
         });
       } else {
-        const executeCreate = async () => {
-          try {
-            let targetNbId = note?.notebookId;
-            if (!targetNbId) {
-              const nbRes = await notesApi.getNotebooks();
-              targetNbId = nbRes?.data?.[0]?._id;
-            }
-            if (!targetNbId) {
-              Alert.alert('提示', '未找到可用的笔记本，请先创建笔记本');
-              return;
-            }
-            const createRes = await notesApi.createNote({
-              title: targetTitle,
-              content: '',
-              notebookId: targetNbId,
-            });
-            if (createRes?.code === 200 && createRes.data) {
-              router.push({
-                pathname: '/note/edit',
-                params: { id: createRes.data._id },
-              });
-            } else {
-              throw new Error(createRes?.message || '创建失败');
-            }
-          } catch (err: any) {
-            Alert.alert('创建失败', err.message || '网络连接异常');
-          }
-        };
-
-        if (Platform.OS === 'web') {
-          if (window.confirm(`笔记《${targetTitle}》尚未创建，是否立即创建并编辑？`)) {
-            executeCreate();
-          }
-        } else {
-          Alert.alert(
-            '双向链接提示',
-            `笔记《${targetTitle}》尚未创建，是否立即创建？`,
-            [
-              { text: '取消', style: 'cancel' },
-              {
-                text: '立即创建并编辑',
-                onPress: executeCreate,
-              },
-            ]
-          );
-        }
+        throw new Error(createRes?.message || '创建失败');
       }
-    } catch {
-      Alert.alert('提示', '无法获取关联笔记');
+    } catch (err: any) {
+      Alert.alert('创建失败', err.message || '网络连接异常');
     }
   };
 
@@ -719,7 +708,7 @@ export default function NoteDetailScreen() {
                   <TouchableOpacity
                     key={item._id}
                     style={styles.backlinkCard}
-                    onPress={() => router.push({ pathname: '/note/[id]', params: { id: item._id } })}
+                    onPress={() => handleBacklinkPress(item._id, item.title)}
                     activeOpacity={0.7}
                   >
                     <View style={styles.backlinkTopRow}>
@@ -749,7 +738,7 @@ export default function NoteDetailScreen() {
                   <TouchableOpacity
                     key={`unresolved-${item._id}`}
                     style={[styles.backlinkCard, { borderColor: '#fed7aa', backgroundColor: '#fffaf5' }]}
-                    onPress={() => router.push({ pathname: '/note/[id]', params: { id: item._id } })}
+                    onPress={() => handleBacklinkPress(item._id, item.title)}
                     activeOpacity={0.7}
                   >
                     <View style={styles.backlinkTopRow}>
@@ -857,6 +846,21 @@ export default function NoteDetailScreen() {
           }}
         />
       )}
+
+      {/* 双链与反向链接轻量底抽弹窗预览 (Bottom Sheet Peek) */}
+      <NotePeekBottomSheet
+        visible={peekConfig.visible}
+        targetTitle={peekConfig.targetTitle}
+        targetNoteId={peekConfig.targetNoteId}
+        onClose={() => setPeekConfig({ visible: false })}
+        onOpenFullNote={targetId => {
+          router.push({
+            pathname: '/note/[id]',
+            params: { id: targetId },
+          });
+        }}
+        onCreateAndEdit={handleExecuteCreateWikiNote}
+      />
     </View>
   );
 }
