@@ -12,13 +12,14 @@ import {
     ReloadOutlined,
     FileTextOutlined
 } from '@ant-design/icons';
-import { Input, Select, Button, Slider, Popover, Tooltip, Empty, Spin, Tag } from 'antd';
+import { Input, Select, Button, Slider, Popover, Tooltip, Empty, Spin, Tag, Switch } from 'antd';
 import './index.less';
 
 const DEFAULT_SETTINGS = {
     repulsion: 180,
     linkDistance: 120,
-    showLabels: true
+    showLabels: true,
+    hideOrphans: false
 };
 
 const KnowledgeGraph = ({
@@ -84,8 +85,8 @@ const KnowledgeGraph = ({
                 return {
                     ...node,
                     radius: nodeRadius,
-                    x: existing ? existing.x : width / 2 + Math.cos(angle) * radius,
-                    y: existing ? existing.y : height / 2 + Math.sin(angle) * radius,
+                    x: existing ? existing.x : Math.cos(angle) * radius,
+                    y: existing ? existing.y : Math.sin(angle) * radius,
                     vx: existing ? existing.vx * 0.5 : (Math.random() - 0.5) * 2,
                     vy: existing ? existing.vy * 0.5 : (Math.random() - 0.5) * 2
                 };
@@ -284,6 +285,10 @@ const KnowledgeGraph = ({
             // 4. 绘制节点
             for (let i = 0; i < nodes.length; i++) {
                 const node = nodes[i];
+                if (physicsParams.hideOrphans && node.inDegree === 0 && !connectedNodeIds.has(node.id) && node.id !== focusNoteId) {
+                    continue;
+                }
+
                 const isHovered = hoverNode && hoverNode.id === node.id;
                 const isConnected = hoverNode && connectedNodeIds.has(node.id);
                 const isFocus = node.id === focusNoteId;
@@ -309,7 +314,7 @@ const KnowledgeGraph = ({
                 ctx.arc(0, 0, radius, 0, Math.PI * 2);
                 ctx.fillStyle = baseColor;
                 if (hoverNode && !isConnected) {
-                    ctx.globalAlpha = 0.25;
+                    ctx.globalAlpha = 0.2;
                 }
                 ctx.fill();
 
@@ -318,38 +323,84 @@ const KnowledgeGraph = ({
                 ctx.strokeStyle = isFocus ? '#ea580c' : '#ffffff';
                 ctx.stroke();
 
-                // 5. 绘制文本标签
-                const shouldDrawLabel =
-                    showLabels && (t.scale > 0.7 || isHovered || isFocus || node.inDegree > 2);
+                // 5. 绘制文本标签 (LOD 分级、防重叠与悬停聚焦优化)
+                let shouldDrawLabel = false;
+                let isFullText = false;
+
+                if (showLabels) {
+                    if (hoverNode) {
+                        // 悬停模式：仅展示当前悬停节点及其直连邻居或当前聚焦节点，其余背景节点文字全部隐去
+                        if (isHovered || isConnected || isFocus) {
+                            shouldDrawLabel = true;
+                            isFullText = isHovered;
+                        }
+                    } else {
+                        // 无悬停时按视口缩放比例 (LOD) 分级展示
+                        if (isFocus) {
+                            shouldDrawLabel = true;
+                            isFullText = true;
+                        } else if (node.inDegree >= 3) {
+                            // 核心高入度枢纽节点始终展示
+                            shouldDrawLabel = true;
+                        } else if (t.scale >= 2.0) {
+                            // 深度放大特写视图 (间距充裕)：全部展示
+                            shouldDrawLabel = true;
+                        } else if (t.scale >= 1.25 && (node.inDegree >= 1 || nodes.length < 40)) {
+                            // 中景视图：展示有链接的节点，或小规模图谱全部展示
+                            shouldDrawLabel = true;
+                        }
+                    }
+                }
 
                 if (shouldDrawLabel) {
-                    const label = node.title || '未命名';
-                    ctx.font = `500 ${Math.max(10, 12 / Math.min(1.5, t.scale))}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+                    const rawTitle = node.title || '未命名';
+                    // 未悬停且非聚焦状态下进行长文本截断，防止横向过长碰撞遮挡
+                    const label = isFullText || rawTitle.length <= 12
+                        ? rawTitle
+                        : `${rawTitle.slice(0, 10)}...`;
+
+                    const fontSize = Math.max(10, 12 / Math.min(1.5, t.scale));
+                    ctx.font = isHovered ? `600 ${fontSize}px sans-serif` : `500 ${fontSize}px sans-serif`;
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'top';
 
                     const textY = radius + 4;
-                    // 标签背景胶囊
                     const metrics = ctx.measureText(label);
-                    const padX = 5;
-                    const padY = 2;
+                    const padX = 6;
+                    const padY = 3;
                     const textW = metrics.width;
-                    const textH = 14;
+                    const textH = fontSize + 2;
 
-                    ctx.fillStyle = isHovered ? 'rgba(15, 23, 42, 0.85)' : 'rgba(255, 255, 255, 0.85)';
-                    ctx.beginPath();
-                    ctx.roundRect(
-                        -textW / 2 - padX,
-                        textY - padY,
-                        textW + padX * 2,
-                        textH + padY * 2,
-                        4
-                    );
-                    ctx.fill();
+                    if (isHovered) {
+                        // 悬停目标：深色高对比度毛玻璃胶囊
+                        ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+                        ctx.beginPath();
+                        ctx.roundRect(-textW / 2 - padX, textY - padY, textW + padX * 2, textH + padY * 2, 4);
+                        ctx.fill();
 
-                    // 文字本身
-                    ctx.fillStyle = isHovered ? '#ffffff' : '#1e293b';
-                    ctx.fillText(label, 0, textY);
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillText(label, 0, textY);
+                    } else if (isConnected || isFocus) {
+                        // 关联节点 / 聚焦节点：品牌淡蓝胶囊
+                        ctx.fillStyle = 'rgba(239, 246, 255, 0.95)';
+                        ctx.strokeStyle = '#93c5fd';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.roundRect(-textW / 2 - padX, textY - padY, textW + padX * 2, textH + padY * 2, 4);
+                        ctx.fill();
+                        ctx.stroke();
+
+                        ctx.fillStyle = '#1d4ed8';
+                        ctx.fillText(label, 0, textY);
+                    } else {
+                        // 普通状态 (LOD)：轻量级文字发光描边（无大白块胶囊，彻底杜绝膏药遮挡）
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+                        ctx.lineWidth = 3 / t.scale;
+                        ctx.strokeText(label, 0, textY);
+
+                        ctx.fillStyle = '#334155';
+                        ctx.fillText(label, 0, textY);
+                    }
                 }
 
                 ctx.restore();
@@ -696,6 +747,22 @@ const KnowledgeGraph = ({
                                         onChange={v =>
                                             setPhysicsParams(prev => ({ ...prev, linkDistance: v }))
                                         }
+                                    />
+                                </div>
+                                <div className="param-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                                    <span style={{ fontSize: 13, color: '#475569' }}>显示节点文本</span>
+                                    <Switch
+                                        size="small"
+                                        checked={physicsParams.showLabels}
+                                        onChange={v => setPhysicsParams(prev => ({ ...prev, showLabels: v }))}
+                                    />
+                                </div>
+                                <div className="param-item" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 }}>
+                                    <span style={{ fontSize: 13, color: '#475569' }}>隐藏孤立无关联节点</span>
+                                    <Switch
+                                        size="small"
+                                        checked={physicsParams.hideOrphans}
+                                        onChange={v => setPhysicsParams(prev => ({ ...prev, hideOrphans: v }))}
                                     />
                                 </div>
                             </div>
