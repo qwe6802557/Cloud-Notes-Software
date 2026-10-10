@@ -46,6 +46,7 @@ const KnowledgeGraph = ({
     const lastMousePosRef = useRef({ x: 0, y: 0 });
     const simulationNodesRef = useRef([]);
     const simulationLinksRef = useRef([]);
+    const alphaRef = useRef(1.0);
 
     // 悬停气泡状态（用于展示 rich tooltip）
     const [tooltipInfo, setTooltipInfo] = useState(null);
@@ -111,6 +112,7 @@ const KnowledgeGraph = ({
             simulationNodesRef.current = nodes;
             simulationLinksRef.current = links;
             setGraphData(data);
+            alphaRef.current = 1.0;
 
             // 居中画布视口
             transformRef.current = {
@@ -145,7 +147,7 @@ const KnowledgeGraph = ({
         const ctx = canvas.getContext('2d');
 
         let isRunning = true;
-        let alpha = 1.0;
+        alphaRef.current = 1.0;
 
         const renderFrame = () => {
             if (!isRunning) return;
@@ -168,10 +170,11 @@ const KnowledgeGraph = ({
             const { repulsion, linkDistance, showLabels } = physicsParams;
 
             // 1. 物理力学模拟步进
-            if (alpha > 0.005) {
+            if (alphaRef.current > 0.005) {
                 const kRepulsion = repulsion * 20;
                 const kSpring = 0.04;
                 const damping = 0.88;
+                const alpha = alphaRef.current;
 
                 // 节点间库仑斥力
                 for (let i = 0; i < nodes.length; i++) {
@@ -235,7 +238,7 @@ const KnowledgeGraph = ({
                     n.y += n.vy;
                 }
 
-                alpha *= 0.992;
+                alphaRef.current *= 0.992;
             }
 
             // 2. 变换矩阵应用
@@ -466,6 +469,7 @@ const KnowledgeGraph = ({
                 dragNodeRef.current.y = worldPos.y;
                 dragNodeRef.current.vx = 0;
                 dragNodeRef.current.vy = 0;
+                alphaRef.current = Math.max(alphaRef.current, 0.2);
                 return;
             }
 
@@ -500,6 +504,7 @@ const KnowledgeGraph = ({
             const targetNode = findNodeUnderMouse(mouseX, mouseY);
             if (targetNode) {
                 dragNodeRef.current = targetNode;
+                alphaRef.current = Math.max(alphaRef.current, 0.25);
             } else {
                 isDraggingCanvasRef.current = true;
                 lastMousePosRef.current = { x: mouseX, y: mouseY };
@@ -510,9 +515,10 @@ const KnowledgeGraph = ({
 
     // 鼠标松开与点击
     const handleMouseUp = useCallback(
-        e => {
+        () => {
             if (dragNodeRef.current) {
                 dragNodeRef.current = null;
+                alphaRef.current = Math.max(alphaRef.current, 0.35);
             }
             if (isDraggingCanvasRef.current) {
                 isDraggingCanvasRef.current = false;
@@ -599,6 +605,7 @@ const KnowledgeGraph = ({
             y: height / 2,
             scale: 0.95
         };
+        alphaRef.current = 0.8;
     };
 
     // 搜索定位节点

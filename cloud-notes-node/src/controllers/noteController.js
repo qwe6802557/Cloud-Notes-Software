@@ -826,9 +826,9 @@ exports.getNoteBacklinks = asyncHandler(async (req, res, next) => {
 // 获取用户全量或局部知识网络图谱
 exports.getKnowledgeGraph = asyncHandler(async (req, res) => {
     const userId = req.user._id;
-    const { focusNoteId } = req.query;
+    const { focusNoteId, notebookId } = req.query;
 
-    const graphData = await noteLinkService.getKnowledgeGraphData(userId, focusNoteId);
+    const graphData = await noteLinkService.getKnowledgeGraphData(userId, focusNoteId, notebookId);
     res.status(200).json({
         code: 200,
         message: '获取知识网络图谱成功',

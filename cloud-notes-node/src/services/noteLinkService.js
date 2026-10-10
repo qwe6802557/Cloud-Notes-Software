@@ -1,4 +1,5 @@
 const Note = require('../models/Note');
+const Notebook = require('../models/Notebook');
 
 /**
  * 从笔记内容中提取所有 [[...]] 双链标题
@@ -265,27 +266,51 @@ const getBacklinksWithContext = async (userId, noteId) => {
 /**
  * 生成全量或局部的力导向知识网络图谱数据 (Nodes & Edges)
  */
-const getKnowledgeGraphData = async (userId, focusNoteId = null) => {
+const getKnowledgeGraphData = async (userId, focusNoteId = null, notebookId = null) => {
+    // 1. 获取用户所有有效笔记本 (确保下拉框选项完整)
+    const userNotebooks = await Notebook.find({
+        userId,
+        isDeleted: false
+    }).select('_id name color').lean();
+
+    const notebookMap = new Map();
+    userNotebooks.forEach(nb => {
+        notebookMap.set(nb._id.toString(), {
+            id: nb._id.toString(),
+            name: nb.name,
+            color: nb.color || '#3b82f6'
+        });
+    });
+
+    // 2. 组装笔记过滤查询条件
     const query = {
         userId,
         isDeleted: false,
         type: 'note'
     };
 
+    if (notebookId && notebookId !== 'all') {
+        query.notebookId = notebookId;
+    }
+
     const notes = await Note.find(query)
         .populate('notebookId', 'name color')
         .select('_id title notebookId outlinks backlinkCount updatedAt');
 
     const noteIdSet = new Set(notes.map(n => n._id.toString()));
-    const notebookMap = new Map();
 
     const nodes = notes.map(n => {
         const nb = n.notebookId;
-        if (nb && !notebookMap.has(nb._id.toString())) {
-            notebookMap.set(nb._id.toString(), {
-                id: nb._id.toString(),
-                name: nb.name,
-                color: nb.color || '#3b82f6'
+        const nbId = nb ? nb._id.toString() : 'default';
+        const nbName = nb ? nb.name : '默认笔记本';
+        const nbColor = nb?.color || '#3b82f6';
+
+        // 兜底补全笔记本信息
+        if (nb && !notebookMap.has(nbId)) {
+            notebookMap.set(nbId, {
+                id: nbId,
+                name: nbName,
+                color: nbColor
             });
         }
 
