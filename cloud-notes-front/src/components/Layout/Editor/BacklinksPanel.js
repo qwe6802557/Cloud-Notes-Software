@@ -28,12 +28,17 @@ const formatTime = isoStr => {
 
 const BacklinksPanel = ({ noteId, noteTitle, onNavigateNote, onOpenLocalGraph }) => {
     const [loading, setLoading] = useState(false);
-    const [expanded, setExpanded] = useState(true);
+    const [expanded, setExpanded] = useState(false);
     const [data, setData] = useState({
         backlinks: [],
         unresolvedMentions: [],
         totalCount: 0
     });
+
+    // 切换笔记时重置为默认收起状态
+    useEffect(() => {
+        setExpanded(false);
+    }, [noteId]);
 
     const fetchBacklinks = useCallback(async () => {
         if (!noteId) return;
@@ -123,13 +128,15 @@ const BacklinksPanel = ({ noteId, noteTitle, onNavigateNote, onOpenLocalGraph })
                             <ReloadOutlined spin={loading} />
                         </button>
                     </Tooltip>
-                    <button
-                        type="button"
-                        className="action-btn toggle-btn"
-                        onClick={() => setExpanded(!expanded)}
-                    >
-                        {expanded ? <UpOutlined /> : <DownOutlined />}
-                    </button>
+                    <Tooltip title={expanded ? '收起反向链接面板' : '展开反向链接面板'}>
+                        <button
+                            type="button"
+                            className="action-btn toggle-btn"
+                            onClick={() => setExpanded(!expanded)}
+                        >
+                            {expanded ? <UpOutlined /> : <DownOutlined />}
+                        </button>
+                    </Tooltip>
                 </div>
             </div>
 
