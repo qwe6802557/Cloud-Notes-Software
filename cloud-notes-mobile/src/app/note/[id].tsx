@@ -233,7 +233,52 @@ export default function NoteDetailScreen() {
           params: { id: match._id },
         });
       } else {
-        Alert.alert('双向链接', `笔记《${targetTitle}》尚未创建。`);
+        const executeCreate = async () => {
+          try {
+            let targetNbId = note?.notebookId;
+            if (!targetNbId) {
+              const nbRes = await notesApi.getNotebooks();
+              targetNbId = nbRes?.data?.[0]?._id;
+            }
+            if (!targetNbId) {
+              Alert.alert('提示', '未找到可用的笔记本，请先创建笔记本');
+              return;
+            }
+            const createRes = await notesApi.createNote({
+              title: targetTitle,
+              content: '',
+              notebookId: targetNbId,
+            });
+            if (createRes?.code === 200 && createRes.data) {
+              router.push({
+                pathname: '/note/edit',
+                params: { id: createRes.data._id },
+              });
+            } else {
+              throw new Error(createRes?.message || '创建失败');
+            }
+          } catch (err: any) {
+            Alert.alert('创建失败', err.message || '网络连接异常');
+          }
+        };
+
+        if (Platform.OS === 'web') {
+          if (window.confirm(`笔记《${targetTitle}》尚未创建，是否立即创建并编辑？`)) {
+            executeCreate();
+          }
+        } else {
+          Alert.alert(
+            '双向链接提示',
+            `笔记《${targetTitle}》尚未创建，是否立即创建？`,
+            [
+              { text: '取消', style: 'cancel' },
+              {
+                text: '立即创建并编辑',
+                onPress: executeCreate,
+              },
+            ]
+          );
+        }
       }
     } catch {
       Alert.alert('提示', '无法获取关联笔记');

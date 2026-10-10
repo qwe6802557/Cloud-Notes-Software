@@ -43,6 +43,7 @@ export interface InlineAIToolbarProps {
   onPickImage: () => void;
   onOpenFullAIModal: () => void;
   onTriggerAIAction: (actionKey: string, customPrompt?: string) => void;
+  onTriggerWikiLink?: () => void;
 }
 
 export default function InlineAIToolbar({
@@ -54,6 +55,7 @@ export default function InlineAIToolbar({
   onPickImage,
   onOpenFullAIModal,
   onTriggerAIAction,
+  onTriggerWikiLink,
 }: InlineAIToolbarProps) {
   // 当处于选区时，用户可手动切回常规 Markdown 格式工具；重新选词时自动重置
   const [preferMarkdownInSelection, setPreferMarkdownInSelection] = useState(false);
@@ -241,6 +243,15 @@ export default function InlineAIToolbar({
               contentContainerStyle={styles.markdownContent}
               keyboardShouldPersistTaps="handled"
             >
+              {/* 双链快捷按钮 */}
+              <TouchableOpacity
+                style={[styles.mdBtn, styles.wikiLinkBtn]}
+                onPress={onTriggerWikiLink ? onTriggerWikiLink : () => onInsertMarkdown('[[', ']]')}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.wikiLinkBtnText}>[[ ]]</Text>
+              </TouchableOpacity>
+
               <TouchableOpacity style={styles.mdBtn} onPress={() => onInsertMarkdown('## ')}>
                 <Text style={styles.mdBtnText}>H2</Text>
               </TouchableOpacity>
@@ -475,6 +486,16 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: '#334155',
+  },
+  wikiLinkBtn: {
+    width: 38,
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+  },
+  wikiLinkBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2563eb',
   },
   backToSelectionAIBtn: {
     width: 34,

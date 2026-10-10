@@ -23,6 +23,7 @@ import AIAssistantModal from '../../components/AIAssistantModal';
 import VersionHistoryModal from '../../components/VersionHistoryModal';
 import InlineAIToolbar from '../../components/InlineAIToolbar';
 import InlineAIStreamCard from '../../components/InlineAIStreamCard';
+import LinkSuggestBar from '../../components/LinkSuggestBar';
 
 export default function NoteEditScreen() {
   const router = useRouter();
@@ -58,6 +59,65 @@ export default function NoteEditScreen() {
 
   const inlineAbortControllerRef = useRef<AbortController | null>(null);
   const contentInputRef = useRef<TextInput>(null);
+
+  // 双链输入联想状态
+  const [wikiSuggestVisible, setWikiSuggestVisible] = useState(false);
+  const [wikiSuggestKeyword, setWikiSuggestKeyword] = useState('');
+  const [wikiMatchRange, setWikiMatchRange] = useState<{ start: number; end: number } | null>(null);
+
+  // 检测光标前是否存在未闭合的 [[
+  const checkWikiLinkTrigger = (text: string, selection: { start: number; end: number }) => {
+    if (selection.start !== selection.end) {
+      setWikiSuggestVisible(false);
+      return;
+    }
+
+    const pos = selection.start;
+    const textBefore = text.slice(0, pos);
+    const lastOpen = textBefore.lastIndexOf('[[');
+    if (lastOpen === -1) {
+      setWikiSuggestVisible(false);
+      return;
+    }
+
+    const textAfterOpen = textBefore.slice(lastOpen + 2);
+    if (textAfterOpen.includes('\n') || textAfterOpen.includes(']]')) {
+      setWikiSuggestVisible(false);
+      return;
+    }
+
+    setWikiSuggestKeyword(textAfterOpen);
+    setWikiMatchRange({ start: lastOpen, end: pos });
+    setWikiSuggestVisible(true);
+  };
+
+  // 快捷插入 [[ 并呼起联想条
+  const handleTriggerWikiLink = () => {
+    const pos = cursorPosition.end || content.length;
+    const before = content.slice(0, pos);
+    const after = content.slice(pos);
+    const newContent = `${before}[[${after}`;
+    setContent(newContent);
+    const newPos = pos + 2;
+    setCursorPosition({ start: newPos, end: newPos });
+    setWikiSuggestKeyword('');
+    setWikiMatchRange({ start: pos, end: newPos });
+    setWikiSuggestVisible(true);
+  };
+
+  // 选择双链候选并自动闭合
+  const handleSelectWikiSuggestion = (selectedTitle: string) => {
+    if (!wikiMatchRange) return;
+    const before = content.slice(0, wikiMatchRange.start);
+    const after = content.slice(wikiMatchRange.end);
+    const replacement = `[[${selectedTitle}]] `;
+    const newContent = `${before}${replacement}${after}`;
+    setContent(newContent);
+    const nextPos = before.length + replacement.length;
+    setCursorPosition({ start: nextPos, end: nextPos });
+    setWikiSuggestVisible(false);
+    setWikiMatchRange(null);
+  };
 
   // 组件卸载时中止请求
   useEffect(() => {
@@ -432,11 +492,18 @@ export default function NoteEditScreen() {
               placeholder="开始记录您的思考 (支持 Markdown 语法)..."
               placeholderTextColor="#94a3b8"
               value={content}
-              onChangeText={setContent}
+              onChangeText={text => {
+                setContent(text);
+                checkWikiLinkTrigger(text, cursorPosition);
+              }}
               multiline
               scrollEnabled={Platform.OS === 'web' ? true : false}
               textAlignVertical="top"
-              onSelectionChange={e => setCursorPosition(e.nativeEvent.selection)}
+              onSelectionChange={e => {
+                const sel = e.nativeEvent.selection;
+                setCursorPosition(sel);
+                checkWikiLinkTrigger(content, sel);
+              }}
             />
           </ScrollView>
 
@@ -462,6 +529,14 @@ export default function NoteEditScreen() {
             onRetry={lastInlineParams ? () => startInlineStream(lastInlineParams) : undefined}
           />
 
+          {/* 双链输入联想浮动胶囊条 */}
+          <LinkSuggestBar
+            visible={wikiSuggestVisible}
+            keyword={wikiSuggestKeyword}
+            onSelectSuggestion={handleSelectWikiSuggestion}
+            onClose={() => setWikiSuggestVisible(false)}
+          />
+
           {/* 智能感知联动工具栏 */}
           <InlineAIToolbar
             hasSelection={cursorPosition.start !== cursorPosition.end}
@@ -472,6 +547,7 @@ export default function NoteEditScreen() {
             onPickImage={handlePickImage}
             onOpenFullAIModal={() => setShowAIModal(true)}
             onTriggerAIAction={handleTriggerInlineAI}
+            onTriggerWikiLink={handleTriggerWikiLink}
           />
         </KeyboardAvoidingView>
       )}
