@@ -67,13 +67,30 @@ exports.checkUpdate = asyncHandler(async (req, res) => {
         });
     }
 
-    // 判断是否强制整包更新：如果客户端版本低于最低兼容版本，强制转为 native 整包强更
+    // 判断是否强制整包更新：如果客户端版本低于最低兼容版本，或原生构建未激活 OTA (buildNumber < 15)，强制降级为 native 整包
     let effectiveType = latestRelease.type;
     let effectiveForce = latestRelease.forceUpdate;
 
-    if (isVersionOlder(currentVersion, latestRelease.minCompatibleVersion)) {
+    if (isVersionOlder(currentVersion, latestRelease.minCompatibleVersion) || clientBuild < 15) {
         effectiveType = 'native';
         effectiveForce = true;
+    }
+
+    // 若下发整包，获取对应原生安装包体积与直链
+    let effectiveSize = latestRelease.size;
+    let effectiveApkUrl = latestRelease.apkUrl;
+
+    if (effectiveType === 'native' && latestRelease.type !== 'native') {
+        const latestNative = await AppRelease.findOne({
+            platform: { $in: [platform, 'all'] },
+            type: 'native',
+            isActive: true
+        }).sort({ buildNumber: -1 });
+
+        if (latestNative) {
+            effectiveSize = latestNative.size || effectiveSize;
+            effectiveApkUrl = latestNative.apkUrl || effectiveApkUrl;
+        }
     }
 
     // 格式化下载直链前缀
@@ -103,8 +120,8 @@ exports.checkUpdate = asyncHandler(async (req, res) => {
             changelog: latestRelease.changelog || '功能优化与体验提升',
             downloadUrl: resolveUrl(latestRelease.downloadUrl),
             hash: latestRelease.hash,
-            size: latestRelease.size,
-            apkUrl: resolveUrl(latestRelease.apkUrl),
+            size: effectiveSize,
+            apkUrl: resolveUrl(effectiveApkUrl),
             releaseDate: latestRelease.createdAt
         }
     });
