@@ -129,37 +129,64 @@
     }
 
     .system-nav-tabs {
-      display: flex;
-      gap: 4px;
-      padding-top: 4px;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      padding-top: 8px;
 
       .system-tab-item {
-        flex: 1;
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        padding: 6px 2px;
-        border-radius: 6px;
+        padding: 7px 4px;
+        border-radius: 8px;
         font-size: 11px;
         color: #64748b;
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
         cursor: pointer;
-        transition: all 0.15s ease;
+        user-select: none;
+        transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 
         .tab-icon {
-          font-size: 14px;
-          margin-bottom: 2px;
+          font-size: 15px;
+          margin-bottom: 3px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: transform 0.15s ease;
+        }
+
+        .tab-label {
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          line-height: 1.2;
+          font-weight: 500;
+          letter-spacing: 0.2px;
         }
 
         &:hover {
           background-color: #f1f5f9;
+          border-color: #cbd5e1;
           color: #0f172a;
+
+          .tab-icon {
+            transform: translateY(-1px);
+          }
         }
 
         &.is-active {
           background-color: #eff6ff;
+          border-color: #bfdbfe;
           color: #2563eb;
           font-weight: 600;
+          box-shadow: 0 1px 2px rgba(37, 99, 235, 0.06);
+
+          .tab-icon {
+            color: #2563eb;
+          }
         }
       }
     }
