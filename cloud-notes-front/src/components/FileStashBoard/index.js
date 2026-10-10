@@ -31,7 +31,8 @@ import {
     ArrowLeftOutlined,
     FolderAddOutlined,
     FileAddOutlined,
-    RightOutlined
+    RightOutlined,
+    EyeOutlined
 } from '@ant-design/icons';
 import {
     getStashFiles,
@@ -42,6 +43,7 @@ import {
     deleteStashFolder,
     downloadStashFolder
 } from '@/api/stash';
+import FilePreviewPanel from './FilePreviewPanel';
 import './index.less';
 
 const formatBytes = (bytes, decimals = 1) => {
@@ -193,13 +195,33 @@ const FileStashBoard = () => {
     // 拖拽高亮状态
     const [isDragOver, setIsDragOver] = useState(false);
 
+    // 文件即时预览状态与平滑过渡缓存
+    const [previewFile, setPreviewFile] = useState(null);
+    const [renderedPreviewFile, setRenderedPreviewFile] = useState(null);
+    const [isFullScreen, setIsFullScreen] = useState(false);
+
+    useEffect(() => {
+        if (previewFile) {
+            setRenderedPreviewFile(previewFile);
+        } else {
+            setIsFullScreen(false);
+            const timer = setTimeout(() => {
+                setRenderedPreviewFile(null);
+            }, 320);
+            return () => clearTimeout(timer);
+        }
+    }, [previewFile]);
+
+    const activePreviewFile = previewFile || renderedPreviewFile;
+
     // 原生隐藏 input 引用
     const fileInputRef = useRef(null);
     const folderInputRef = useRef(null);
 
-    // 切换 tab 时重置当前路径到根目录
+    // 切换 tab 时重置当前路径与预览
     useEffect(() => {
         setCurrentPath('');
+        setPreviewFile(null);
     }, [currentTab]);
 
     // 拉取暂存文件列表
@@ -462,11 +484,25 @@ const FileStashBoard = () => {
         document.body.removeChild(link);
     };
 
+    // 切换文件预览状态
+    const handleTogglePreview = file => {
+        const fileId = file._id || file.id;
+        const currentPreviewId = previewFile?._id || previewFile?.id;
+        if (currentPreviewId === fileId) {
+            setPreviewFile(null);
+        } else {
+            setPreviewFile(file);
+        }
+    };
+
     // 单文件转永久
     const handlePromoteFile = async file => {
         try {
             await promoteStashFile(file._id || file.id);
             message.success(`【${file.originalName}】已转为永久保存文件`);
+            if (previewFile && ((previewFile._id || previewFile.id) === (file._id || file.id))) {
+                setPreviewFile(prev => (prev ? { ...prev, storageType: 'permanent' } : null));
+            }
             fetchFiles();
         } catch {
             message.error('转为永久保存失败');
@@ -478,6 +514,9 @@ const FileStashBoard = () => {
         try {
             await deleteStashFile(file._id || file.id);
             message.success('暂存文件已删除');
+            if (previewFile && ((previewFile._id || previewFile.id) === (file._id || file.id))) {
+                setPreviewFile(null);
+            }
             setFiles(prev => prev.filter(f => (f._id || f.id) !== (file._id || file.id)));
             if (currentTab === 'temp') {
                 setTempCount(prev => Math.max(0, prev - 1));
@@ -636,7 +675,8 @@ const FileStashBoard = () => {
 
     return (
         <div className="file-stash-board">
-            {/* 隐藏原生输入控件 */}
+            <div className={`stash-main-pane ${previewFile ? 'with-preview' : ''}`}>
+                {/* 隐藏原生输入控件 */}
             <input
                 type="file"
                 ref={fileInputRef}
@@ -888,7 +928,7 @@ const FileStashBoard = () => {
                                         onClick={() => handleEnterFolder(folder)}
                                         className="action-icon-btn enter-btn"
                                     >
-                                        进入
+                                        <span className="btn-text">进入</span>
                                     </Button>
 
                                     <Tooltip title="一键将整文件夹打包为 ZIP 下载（保留目录层级）">
@@ -899,7 +939,7 @@ const FileStashBoard = () => {
                                             onClick={() => handleDownloadFolder(folder)}
                                             className="action-icon-btn"
                                         >
-                                            打包下载
+                                            <span className="btn-text">打包下载</span>
                                         </Button>
                                     </Tooltip>
 
@@ -912,7 +952,7 @@ const FileStashBoard = () => {
                                                 onClick={() => handlePromoteFolder(folder)}
                                                 className="action-icon-btn"
                                             >
-                                                转永久
+                                                <span className="btn-text">转永久</span>
                                             </Button>
                                         </Tooltip>
                                     )}
@@ -945,14 +985,23 @@ const FileStashBoard = () => {
                         const isTemp = file.storageType === 'temp';
                         const remaining = file.remainingSeconds ?? 0;
                         const isUrgent = isTemp && remaining <= 60;
+                        const isPreviewing = previewFile && ((previewFile._id || previewFile.id) === fileId);
 
                         return (
-                            <div key={fileId} className="file-card-item">
-                                <div className={`file-type-icon ${meta.className}`}>
+                            <div key={fileId} className={`file-card-item ${isPreviewing ? 'is-previewing' : ''}`}>
+                                <div
+                                    className={`file-type-icon ${meta.className}`}
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => handleTogglePreview(file)}
+                                >
                                     {meta.icon}
                                 </div>
 
-                                <div className="file-meta-content">
+                                <div
+                                    className="file-meta-content"
+                                    style={{ cursor: 'pointer' }}
+                                    onClick={() => handleTogglePreview(file)}
+                                >
                                     <div className="file-name-row">
                                         <Tooltip title={file.originalName}>
                                             <span className="file-name-text">
@@ -979,6 +1028,18 @@ const FileStashBoard = () => {
                                 </div>
 
                                 <div className="file-actions-cluster">
+                                    <Tooltip title={isPreviewing ? '关闭预览' : '点击快速预览'}>
+                                        <Button
+                                            type={isPreviewing ? 'primary' : 'text'}
+                                            size="small"
+                                            icon={<EyeOutlined />}
+                                            onClick={() => handleTogglePreview(file)}
+                                            className={`action-icon-btn ${isPreviewing ? 'is-active-eye' : ''}`}
+                                        >
+                                            <span className="btn-text">预览</span>
+                                        </Button>
+                                    </Tooltip>
+
                                     <Tooltip title="直接下载">
                                         <Button
                                             type="text"
@@ -987,7 +1048,7 @@ const FileStashBoard = () => {
                                             onClick={() => handleDownloadFile(file)}
                                             className="action-icon-btn"
                                         >
-                                            下载
+                                            <span className="btn-text">下载</span>
                                         </Button>
                                     </Tooltip>
 
@@ -999,7 +1060,7 @@ const FileStashBoard = () => {
                                             onClick={() => handleCopyUrl(file)}
                                             className="action-icon-btn"
                                         >
-                                            复制链接
+                                            <span className="btn-text">复制链接</span>
                                         </Button>
                                     </Tooltip>
 
@@ -1012,7 +1073,7 @@ const FileStashBoard = () => {
                                                 onClick={() => handlePromoteFile(file)}
                                                 className="action-icon-btn"
                                             >
-                                                转永久
+                                                <span className="btn-text">转永久</span>
                                             </Button>
                                         </Tooltip>
                                     )}
@@ -1051,6 +1112,23 @@ const FileStashBoard = () => {
                     />
                 </div>
             )}
+            </div>
+
+            {/* 右侧平滑弹性展开的文件即时预览抽屉 */}
+            <div className={`stash-preview-drawer ${previewFile ? 'is-open' : ''} ${isFullScreen ? 'is-fullscreen' : ''}`}>
+                {activePreviewFile && (
+                    <FilePreviewPanel
+                        file={activePreviewFile}
+                        onClose={() => {
+                            setIsFullScreen(false);
+                            setPreviewFile(null);
+                        }}
+                        isFullScreen={isFullScreen}
+                        onToggleFullScreen={() => setIsFullScreen(prev => !prev)}
+                        onPromote={handlePromoteFile}
+                    />
+                )}
+            </div>
         </div>
     );
 };

@@ -160,3 +160,30 @@ export const searchNotes = params => {
         params
     });
 };
+
+// 获取知识网络图谱数据 (支持全局与局部子图)
+export const getKnowledgeGraph = params => {
+    return request({
+        url: '/notes/graph',
+        method: 'get',
+        params
+    });
+};
+
+// 联想笔记双链候选项
+export const suggestNoteLinks = keyword => {
+    return request({
+        url: '/notes/suggest-links',
+        method: 'get',
+        params: { keyword }
+    });
+};
+
+// 获取单篇笔记的反向链接 (Backlinks)
+export const getNoteBacklinks = noteId => {
+    return request({
+        url: `/notes/${noteId}/backlinks`,
+        method: 'get'
+    });
+};
+

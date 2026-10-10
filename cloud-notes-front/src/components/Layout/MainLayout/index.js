@@ -3,6 +3,7 @@ import { Layout, Modal, message } from 'antd';
 import NavTree from '../NavTree';
 import NoteEditor from '../Editor';
 import FileStashBoard from '@/components/FileStashBoard';
+import KnowledgeGraph from '@/components/KnowledgeGraph';
 import CommandPalette from '@/components/CommandPalette';
 import { updateNote, createNote } from '@/api/notes';
 import { logout } from '@/api/user';
@@ -193,9 +194,18 @@ const MainLayout = () => {
                 <Layout.Content className="main-content">
                     {activeView === 'stash' ? (
                         <FileStashBoard />
+                    ) : activeView === 'graph' ? (
+                        <KnowledgeGraph
+                            onSelectNote={noteId => {
+                                setActiveView('notes');
+                                handleNoteChange(noteId);
+                            }}
+                        />
                     ) : (
                         <NoteEditor
                             selectedNote={selectedNote}
+                            selectedNotebook={selectedNotebook}
+                            onSelectNote={handleNoteChange}
                             onSave={handleSaveNote}
                             onDirtyChange={setEditorDirty}
                             onSaveStateChange={handleSaveStateChange}

@@ -1888,5 +1888,68 @@
   }
 }
 
+// 双向链接 (WikiLinks [[...]]) 沉浸式交互徽标
+.wiki-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  margin: 0 2px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 4px;
+  color: #1d4ed8 !important;
+  font-weight: 500;
+  text-decoration: none !important;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease-in-out;
+  vertical-align: baseline;
+  line-height: 1.4;
+
+  .wiki-link-icon {
+    display: inline-flex;
+    align-items: center;
+    color: #3b82f6;
+    font-size: 11px;
+    opacity: 0.85;
+    transition: transform 0.15s ease;
+  }
+
+  .wiki-link-title {
+    color: #1d4ed8;
+    border-bottom: 1px dashed rgba(29, 78, 216, 0.4);
+    transition: border-color 0.15s ease;
+  }
+
+  &:hover {
+    background: #dbeafe;
+    border-color: #93c5fd;
+    color: #1e40af !important;
+    transform: translateY(-0.5px);
+    box-shadow: 0 2px 5px rgba(37, 99, 235, 0.12);
+
+    .wiki-link-icon {
+      transform: scale(1.1);
+      opacity: 1;
+    }
+
+    .wiki-link-title {
+      border-bottom-color: #1e40af;
+    }
+  }
+
+  &:active {
+    transform: translateY(0);
+    box-shadow: none;
+  }
+
+  &:focus-visible {
+    outline: 2px solid #3b82f6;
+    outline-offset: 1px;
+  }
+}
+
+
 
 

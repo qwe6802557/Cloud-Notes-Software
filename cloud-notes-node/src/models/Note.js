@@ -69,6 +69,18 @@ const noteSchema = new mongoose.Schema({
     lastOpenedAt: {
         type: Date,
         default: Date.now
+    },
+    outlinks: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Note'
+    }],
+    unresolvedLinks: [{
+        type: String,
+        trim: true
+    }],
+    backlinkCount: {
+        type: Number,
+        default: 0
     }
 }, {
     timestamps: true
@@ -80,6 +92,8 @@ noteSchema.index({ notebookId: 1, isDeleted: 1 });
 noteSchema.index({ notebookId: 1, parentId: 1, isDeleted: 1 });
 noteSchema.index({ notebookId: 1, parentId: 1, order: 1 });
 noteSchema.index({ tags: 1 });
+noteSchema.index({ userId: 1, outlinks: 1, isDeleted: 1 });
+noteSchema.index({ userId: 1, unresolvedLinks: 1 });
 noteSchema.index({ title: 'text', content: 'text' });
 
 // 更新时间

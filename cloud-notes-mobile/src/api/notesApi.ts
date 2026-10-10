@@ -213,3 +213,21 @@ export const rollbackNoteHistory = (noteId: string, historyId: string): Promise<
     method: 'post',
   });
 };
+
+// 获取单篇笔记的反向链接 (Backlinks)
+export const getNoteBacklinks = (noteId: string): Promise<ApiResponse<{ backlinks: any[]; unresolvedMentions: any[]; totalCount: number }>> => {
+  return request({
+    url: `/notes/${noteId}/backlinks`,
+    method: 'get',
+  });
+};
+
+// 联想笔记双链候选项
+export const suggestNoteLinks = (keyword: string): Promise<ApiResponse<{ suggestions: any[] }>> => {
+  return request({
+    url: '/notes/suggest-links',
+    method: 'get',
+    params: { keyword },
+  });
+};
+

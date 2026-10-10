@@ -172,6 +172,7 @@ exports.publishRelease = asyncHandler(async (req, res) => {
         release.size = size || 0;
         release.apkUrl = apkUrl || '';
         release.isActive = true;
+        release.createdAt = new Date();
         await release.save();
     } else {
         release = await AppRelease.create({
@@ -212,6 +213,22 @@ exports.getReleases = asyncHandler(async (req, res) => {
 });
 
 /**
+ * 将任意哈希或种子字符串转换为确定性的标准 UUID v4 格式 (8-4-4-4-12)
+ * Android 原生 ExpoUpdatesUpdate.fromExpoUpdatesManifest 强制调用 UUID.fromString(manifest.getID())
+ */
+const toDeterministicUuid = seed => {
+    const crypto = require('crypto');
+    const raw = String(seed || 'cloud-notes-ota').trim();
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) {
+        return raw.toLowerCase();
+    }
+    const hex = /^[0-9a-f]{32,}$/i.test(raw)
+        ? raw.toLowerCase()
+        : crypto.createHash('sha256').update(raw).digest('hex');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+};
+
+/**
  * Expo Updates 官方协议 Manifest 接口
  * GET /app/manifest
  */
@@ -228,16 +245,26 @@ exports.getManifest = asyncHandler(async (req, res) => {
 
     if (!latestOta) {
         res.setHeader('expo-protocol-version', '1');
+        res.setHeader('expo-sfv-version', '0');
         return res.status(204).end();
     }
 
     if (runtimeVersion && latestOta.version !== runtimeVersion) {
         res.setHeader('expo-protocol-version', '1');
+        res.setHeader('expo-sfv-version', '0');
         return res.status(204).end();
     }
 
-    if (clientUpdateId && clientUpdateId === latestOta.hash) {
+    const manifestId = toDeterministicUuid(
+        latestOta.hash || `${latestOta.version}-b${latestOta.buildNumber}`
+    );
+
+    if (
+        clientUpdateId &&
+        (clientUpdateId.toLowerCase() === manifestId || clientUpdateId === latestOta.hash)
+    ) {
         res.setHeader('expo-protocol-version', '1');
+        res.setHeader('expo-sfv-version', '0');
         return res.status(204).end();
     }
 
@@ -256,6 +283,7 @@ exports.getManifest = asyncHandler(async (req, res) => {
 
     if (!fileMetadata || !fileMetadata.fileMetadata || !fileMetadata.fileMetadata[platform]) {
         res.setHeader('expo-protocol-version', '1');
+        res.setHeader('expo-sfv-version', '0');
         return res.status(204).end();
     }
 
@@ -277,37 +305,70 @@ exports.getManifest = asyncHandler(async (req, res) => {
         hbc: 'application/javascript'
     };
 
-    const bundlePath = (platformMeta.bundle || '').replace(/\\/g, '/');
+    const bundlePath = (platformMeta.bundle || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    const bundleExt = path.posix.extname(bundlePath) || '.hbc';
+    const bundleBase = path.posix.basename(bundlePath, bundleExt) || 'bundle';
+    // key 严禁包含路径分隔符 '/'，且每次构建必须唯一，防止 SQLite assets 表命中旧缓存
+    const launchAssetKey = latestOta.hash
+        ? `bundle-${latestOta.hash.slice(0, 32)}`
+        : `${bundleBase}-b${latestOta.buildNumber}`;
+
     const launchAsset = {
-        key: 'bundle',
+        key: launchAssetKey,
         contentType: 'application/javascript',
+        fileExtension: bundleExt,
         url: `${updatesBaseUrl}/${bundlePath}`
     };
 
     const assets = (platformMeta.assets || []).map(asset => {
-        const cleanPath = (asset.path || '').replace(/\\/g, '/');
+        const cleanPath = (asset.path || '').replace(/\\/g, '/').replace(/^\/+/, '');
+        // 关键修复：必须剥离 'assets/' 目录前缀，仅保留纯 packagerHash 文件名作为 key
+        // 否则 Android 原生 UpdatesUtils.isSafeFilename 会因包含 '/' 抛出 IOException 拒绝加载，
+        // 且剥离后可直接匹配 APK 内嵌 app.manifest 的 packagerHash 免去重复下载静态字体/图标
+        const assetKey = path.posix.basename(cleanPath);
         const ext = asset.ext || '';
         return {
-            key: cleanPath,
+            key: assetKey,
             contentType: mimeMap[ext] || 'application/octet-stream',
             fileExtension: ext ? `.${ext}` : '',
             url: `${updatesBaseUrl}/${cleanPath}`
         };
     });
 
+    const commitDate = latestOta.updatedAt || latestOta.createdAt || new Date();
+
     const manifest = {
-        id: latestOta.hash || `ota-${latestOta.version}-b${latestOta.buildNumber}`,
-        createdAt: latestOta.createdAt ? latestOta.createdAt.toISOString() : new Date().toISOString(),
+        id: manifestId,
+        createdAt: new Date(commitDate).toISOString(),
         runtimeVersion: latestOta.version,
         launchAsset,
         assets,
         metadata: {
-            buildNumber: latestOta.buildNumber,
-            forceUpdate: latestOta.forceUpdate
+            buildNumber: String(latestOta.buildNumber),
+            forceUpdate: String(Boolean(latestOta.forceUpdate))
+        },
+        extra: {
+            scopeKey: 'jiong-ren-note',
+            expoClient: {
+                name: '囧人云笔记',
+                slug: 'jiong-ren-note',
+                scheme: 'jiongrennote',
+                version: latestOta.version,
+                runtimeVersion: latestOta.version,
+                android: {
+                    package: 'com.jiongren.cloudnotes',
+                    versionCode: latestOta.buildNumber
+                },
+                ios: {
+                    buildNumber: String(latestOta.buildNumber)
+                }
+            }
         }
     };
 
     res.setHeader('expo-protocol-version', '1');
+    res.setHeader('expo-sfv-version', '0');
+    res.setHeader('cache-control', 'private, max-age=0');
 
     const acceptHeader = req.headers.accept || '';
     if (acceptHeader.includes('multipart/mixed')) {
@@ -317,12 +378,13 @@ exports.getManifest = asyncHandler(async (req, res) => {
         const body =
             `--${boundary}\r\n` +
             `Content-Disposition: form-data; name="manifest"\r\n` +
-            `Content-Type: application/expo+json\r\n\r\n` +
+            `Content-Type: application/expo+json; charset=utf-8\r\n\r\n` +
             `${manifestString}\r\n` +
             `--${boundary}--\r\n`;
         return res.status(200).send(body);
     }
 
-    res.setHeader('content-type', 'application/json');
+    res.setHeader('content-type', 'application/expo+json; charset=utf-8');
     return res.status(200).json(manifest);
 });
+

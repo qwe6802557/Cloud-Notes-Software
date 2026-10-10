@@ -11,6 +11,7 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -198,6 +199,44 @@ export default function NoteDetailScreen() {
   const [showImageViewer, setShowImageViewer] = useState(false);
   const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
   const [tocList, setTocList] = useState<TocItem[]>([]);
+  const [backlinksData, setBacklinksData] = useState<{ backlinks: any[]; unresolvedMentions: any[]; totalCount: number }>({
+    backlinks: [],
+    unresolvedMentions: [],
+    totalCount: 0,
+  });
+
+  const processedContent = useMemo(() => {
+    if (!note?.content) return '*该笔记暂无正文内容*';
+    return note.content.replace(/\[\[([^[\]\r\n]+)\]\]/g, (match, p1) => {
+      const raw = p1.trim();
+      let title = raw;
+      let alias = raw;
+      if (raw.includes('|')) {
+        const parts = raw.split('|');
+        title = parts[0].trim();
+        alias = parts.slice(1).join('|').trim() || title;
+      }
+      return `[${alias}](wikilink://${encodeURIComponent(title)})`;
+    });
+  }, [note?.content]);
+
+  const handleWikiLinkPress = async (targetTitle: string) => {
+    try {
+      const res = await notesApi.suggestNoteLinks(targetTitle);
+      const list = res?.data?.suggestions || [];
+      const match = list.find((n: any) => n.title.trim().toLowerCase() === targetTitle.trim().toLowerCase());
+      if (match) {
+        router.push({
+          pathname: '/note/[id]',
+          params: { id: match._id },
+        });
+      } else {
+        Alert.alert('双向链接', `笔记《${targetTitle}》尚未创建。`);
+      }
+    } catch {
+      Alert.alert('提示', '无法获取关联笔记');
+    }
+  };
 
   // 提取正文所有图片，组成连续画廊数组
   const docImages = useMemo(() => {
@@ -365,9 +404,61 @@ export default function NoteDetailScreen() {
           />
         );
       },
+      link: (node: any, children: any, parent: any, styles: any) => {
+        const href = node.attributes?.href || '';
+        if (href.startsWith('wikilink://')) {
+          const targetTitle = decodeURIComponent(href.replace('wikilink://', ''));
+          return (
+            <TouchableOpacity
+              key={node.key}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#eff6ff',
+                paddingHorizontal: 6,
+                paddingVertical: 1,
+                borderRadius: 4,
+                marginHorizontal: 2,
+                borderWidth: 1,
+                borderColor: '#bfdbfe',
+              }}
+              onPress={() => handleWikiLinkPress(targetTitle)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="link" size={11} color="#2563eb" style={{ marginRight: 2 }} />
+              <Text style={{ color: '#1d4ed8', fontWeight: '500', fontSize: 13 }}>
+                {children}
+              </Text>
+            </TouchableOpacity>
+          );
+        }
+        return (
+          <Text
+            key={node.key}
+            style={styles.link}
+            onPress={() => {
+              if (href) Linking.openURL(href).catch(() => {});
+            }}
+          >
+            {children}
+          </Text>
+        );
+      },
     }),
     [serverUrl, docImages]
   );
+
+  const fetchBacklinks = async () => {
+    if (!id) return;
+    try {
+      const res = await notesApi.getNoteBacklinks(id);
+      if (res?.data) {
+        setBacklinksData(res.data);
+      }
+    } catch {
+      // 忽略
+    }
+  };
 
   const fetchNote = async () => {
     if (!id) return;
@@ -403,6 +494,7 @@ export default function NoteDetailScreen() {
 
   useEffect(() => {
     fetchNote();
+    fetchBacklinks();
   }, [id]);
 
   const handleDeleteNote = () => {
@@ -541,9 +633,46 @@ export default function NoteDetailScreen() {
           {/* 原生 Markdown 渲染主体 */}
           <View style={styles.markdownWrapper}>
             <Markdown style={markdownStyles} rules={markdownRules}>
-              {note.content || '*该笔记暂无正文内容*'}
+              {processedContent}
             </Markdown>
           </View>
+
+          {/* 反向链接面板 (Backlinks) */}
+          {backlinksData.totalCount > 0 && (
+            <View style={styles.backlinksContainer}>
+              <View style={styles.backlinksHeader}>
+                <Ionicons name="git-network-outline" size={16} color="#2563eb" />
+                <Text style={styles.backlinksTitle}>反向链接 (Backlinks)</Text>
+                <View style={styles.backlinksBadge}>
+                  <Text style={styles.backlinksBadgeText}>{backlinksData.totalCount}</Text>
+                </View>
+              </View>
+
+              {backlinksData.backlinks.map((item: any) => (
+                <TouchableOpacity
+                  key={item._id}
+                  style={styles.backlinkCard}
+                  onPress={() => router.push({ pathname: '/note/[id]', params: { id: item._id } })}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.backlinkTopRow}>
+                    <Ionicons name="document-text-outline" size={14} color="#3b82f6" />
+                    <Text style={styles.backlinkNoteTitle} numberOfLines={1}>{item.title}</Text>
+                    {item.notebookId?.name && (
+                      <View style={styles.backlinkNotebookTag}>
+                        <Text style={styles.backlinkNotebookText}>{item.notebookId.name}</Text>
+                      </View>
+                    )}
+                  </View>
+                  {item.contextSnippet && (
+                    <Text style={styles.backlinkSnippet} numberOfLines={2}>
+                      “{item.contextSnippet.replace(/==/g, '')}”
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </ScrollView>
       ) : (
         <View style={styles.centerContainer}>
@@ -794,5 +923,76 @@ const styles = StyleSheet.create({
   tocH1: {
     fontWeight: '600',
     color: '#0f172a',
+  },
+  backlinksContainer: {
+    marginTop: 24,
+    marginBottom: 40,
+    padding: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  backlinksHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 6,
+  },
+  backlinksTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  backlinksBadge: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  backlinksBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#2563eb',
+  },
+  backlinkCard: {
+    padding: 12,
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 8,
+  },
+  backlinkTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  backlinkNoteTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#0f172a',
+    flex: 1,
+  },
+  backlinkNotebookTag: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  backlinkNotebookText: {
+    fontSize: 10,
+    color: '#64748b',
+  },
+  backlinkSnippet: {
+    marginTop: 6,
+    fontSize: 12,
+    lineHeight: 18,
+    color: '#64748b',
+    backgroundColor: '#f8fafc',
+    padding: 6,
+    borderRadius: 4,
   },
 });

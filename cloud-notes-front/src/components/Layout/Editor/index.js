@@ -7,7 +7,7 @@ import gemoji from '@bytemd/plugin-gemoji';
 import math from '@bytemd/plugin-math';
 import mermaid from '@bytemd/plugin-mermaid';
 import breaks from '@bytemd/plugin-breaks';
-import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image, Popover, Radio, Divider } from 'antd';
+import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image, Popover, Radio, Divider, Drawer, Modal } from 'antd';
 import {
     EditOutlined,
     EyeOutlined,
@@ -31,7 +31,8 @@ import {
     MoreOutlined,
     CheckCircleOutlined,
     CloseCircleOutlined,
-    SyncOutlined
+    SyncOutlined,
+    ApartmentOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -43,7 +44,7 @@ import 'bytemd/dist/index.css';
 import 'highlight.js/styles/github.css';
 import 'katex/dist/katex.css';
 import './index.less';
-import { getNoteDetail } from '@/api/notes';
+import { getNoteDetail, suggestNoteLinks, createNote } from '@/api/notes';
 import { uploadNoteImage } from '@/api/upload';
 import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences';
 import TOCDrawer from './TOCDrawer';
@@ -51,6 +52,10 @@ import VersionHistoryModal from './VersionHistoryModal';
 import SelectionCopyBubble from './SelectionCopyBubble';
 import AIFullNoteModal from './AIFullNoteModal';
 import lazyImagePlugin from './plugins/lazyImagePlugin';
+import wikiLinkPlugin from './plugins/wikiLinkPlugin';
+import LinkSuggestPopup from './LinkSuggestPopup';
+import BacklinksPanel from './BacklinksPanel';
+import KnowledgeGraph from '@/components/KnowledgeGraph';
 
 const locale = {
     ...zhHans
@@ -69,7 +74,8 @@ const basePlugins = [
         locale: zhHansMermaid
     }),
     breaks(),
-    lazyImagePlugin()
+    lazyImagePlugin(),
+    wikiLinkPlugin()
 ];
 
 const calculateContentAnalytics = text => {
@@ -382,6 +388,8 @@ const ModeSegmented = ({ value, onChange }) => {
 
 const NoteEditor = ({
     selectedNote,
+    selectedNotebook,
+    onSelectNote,
     onSave,
     onDirtyChange,
     onSaveStateChange,
@@ -403,6 +411,7 @@ const NoteEditor = ({
     const [uploadingImage, setUploadingImage] = useState(false);
     const [tocVisible, setTocVisible] = useState(false);
     const [historyModalVisible, setHistoryModalVisible] = useState(false);
+    const [localGraphVisible, setLocalGraphVisible] = useState(false);
     const [aiModalVisible, setAiModalVisible] = useState(false);
     const [aiModalAction, setAiModalAction] = useState('full_summary');
     const [imagePreview, setImagePreview] = useState({
@@ -419,6 +428,7 @@ const NoteEditor = ({
     const previousModeRef = useRef(mode);
     const editorContainerRef = useRef(null);
     const [statusAnchorEl, setStatusAnchorEl] = useState(null);
+    const [backlinksAnchorEl, setBacklinksAnchorEl] = useState(null);
 
     const contentAnalytics = useMemo(() => calculateContentAnalytics(content), [content]);
 
@@ -440,17 +450,71 @@ const NoteEditor = ({
         return () => window.removeEventListener('open-ai-modal', handleOpenAI);
     }, [selectedNote]);
 
-    // 锚定并挂载保存状态至 ByteMD 右侧原生状态栏（同步滚动按钮之前）
+    // 监听正文双向链接跳转与快捷创建
+    useEffect(() => {
+        const handleOpenWikiLink = async e => {
+            const targetTitle = e.detail?.title;
+            if (!targetTitle) return;
+
+            try {
+                const res = await suggestNoteLinks(targetTitle);
+                const list = res?.data?.suggestions || res?.suggestions || [];
+                const exactMatch = list.find(
+                    n => n.title.trim().toLowerCase() === targetTitle.trim().toLowerCase()
+                );
+
+                if (exactMatch) {
+                    onSelectNote?.(exactMatch._id);
+                } else {
+                    Modal.confirm({
+                        title: '创建关联双链笔记',
+                        content: `笔记《${targetTitle}》尚未创建。是否立即以此标题创建新笔记？`,
+                        okText: '立即创建',
+                        cancelText: '取消',
+                        centered: true,
+                        onOk: async () => {
+                            try {
+                                const newNoteRes = await createNote({
+                                    title: targetTitle,
+                                    content: '',
+                                    notebookId: selectedNotebook || undefined,
+                                    type: 'note'
+                                });
+                                const newId =
+                                    newNoteRes?.note?._id ||
+                                    newNoteRes?.data?.note?._id ||
+                                    newNoteRes?._id;
+                                if (newId) {
+                                    message.success(`已创建笔记《${targetTitle}》`);
+                                    onSelectNote?.(newId);
+                                }
+                            } catch {
+                                message.error('创建关联笔记失败');
+                            }
+                        }
+                    });
+                }
+            } catch {
+                message.error('检索关联笔记失败');
+            }
+        };
+
+        window.addEventListener('open-wiki-link', handleOpenWikiLink);
+        return () => window.removeEventListener('open-wiki-link', handleOpenWikiLink);
+    }, [onSelectNote, selectedNotebook]);
+
+    // 锚定并挂载保存状态至 ByteMD 右侧原生状态栏与预览区反向链接
     useEffect(() => {
         if (mode === 'preview') {
             setStatusAnchorEl(null);
+            setBacklinksAnchorEl(null);
             return;
         }
 
         const container = editorContainerRef.current;
         if (!container) return;
 
-        const attachAnchor = () => {
+        const attachAnchors = () => {
             const statusRight = container.querySelector('.bytemd-status-right');
             if (statusRight) {
                 let anchor = statusRight.querySelector('.bytemd-status-save-anchor');
@@ -461,13 +525,24 @@ const NoteEditor = ({
                 }
                 setStatusAnchorEl(anchor);
             }
+
+            const previewEl = container.querySelector('.bytemd-preview');
+            if (previewEl) {
+                let backlinkAnchor = previewEl.querySelector('.bytemd-backlinks-anchor');
+                if (!backlinkAnchor) {
+                    backlinkAnchor = document.createElement('div');
+                    backlinkAnchor.className = 'bytemd-backlinks-anchor';
+                    previewEl.appendChild(backlinkAnchor);
+                }
+                setBacklinksAnchorEl(backlinkAnchor);
+            }
         };
 
-        attachAnchor();
-        const timer = setTimeout(attachAnchor, 80);
+        attachAnchors();
+        const timer = setTimeout(attachAnchors, 80);
 
         const observer = new MutationObserver(() => {
-            attachAnchor();
+            attachAnchors();
         });
 
         observer.observe(container, { childList: true, subtree: true });
@@ -1364,6 +1439,15 @@ const NoteEditor = ({
                         onClick={() => setHistoryModalVisible(true)}
                     />
                 </Tooltip>
+                <Tooltip title="局部知识图谱 (Radar)">
+                    <Button
+                        className="toolbar-tool-btn"
+                        type={localGraphVisible ? 'primary' : 'text'}
+                        icon={<ApartmentOutlined />}
+                        disabled={!selectedNote}
+                        onClick={() => setLocalGraphVisible(true)}
+                    />
+                </Tooltip>
                 <Tooltip title={zenMode ? '退出沉浸模式 (Esc)' : '专注沉浸模式 (Ctrl+Shift+F)'}>
                     <Button
                         className="toolbar-tool-btn"
@@ -1624,6 +1708,12 @@ const NoteEditor = ({
                             <div className="preview-only-wrapper">
                                 <div className="preview-only">
                                     <Viewer value={content} plugins={basePlugins} />
+                                    <BacklinksPanel
+                                        noteId={selectedNote}
+                                        noteTitle={noteTitle}
+                                        onNavigateNote={onSelectNote}
+                                        onOpenLocalGraph={() => setLocalGraphVisible(true)}
+                                    />
                                 </div>
                                 <div className="bytemd-status preview-status-bar">
                                     <div className="bytemd-status-left">
@@ -1650,9 +1740,22 @@ const NoteEditor = ({
                     containerRef={editorContainerRef}
                     editorContextRef={editorContextRef}
                 />
+                <LinkSuggestPopup
+                    containerRef={editorContainerRef}
+                    editorContextRef={editorContextRef}
+                />
             </div>
 
             {statusAnchorEl && createPortal(renderSaveStatus(), statusAnchorEl)}
+            {backlinksAnchorEl && createPortal(
+                <BacklinksPanel
+                    noteId={selectedNote}
+                    noteTitle={noteTitle}
+                    onNavigateNote={onSelectNote}
+                    onOpenLocalGraph={() => setLocalGraphVisible(true)}
+                />,
+                backlinksAnchorEl
+            )}
 
             <TOCDrawer
                 visible={tocVisible}
@@ -1678,6 +1781,24 @@ const NoteEditor = ({
                 noteContent={content}
                 onInsertContent={handleInsertAIContent}
             />
+
+            <Drawer
+                title="当前笔记局部知识图谱 (Radar)"
+                open={localGraphVisible}
+                onClose={() => setLocalGraphVisible(false)}
+                width={700}
+                destroyOnClose
+                bodyStyle={{ padding: 0 }}
+            >
+                <KnowledgeGraph
+                    focusNoteId={selectedNote}
+                    isLocalMode={true}
+                    onSelectNote={id => {
+                        setLocalGraphVisible(false);
+                        onSelectNote?.(id);
+                    }}
+                />
+            </Drawer>
 
             <div style={{ display: 'none' }}>
                 <Image.PreviewGroup

@@ -28,11 +28,19 @@ interface UpdateContextType {
 const UpdateContext = createContext<UpdateContextType | null>(null);
 
 export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const currentVersion = Constants.expoConfig?.version || '1.0.0';
+  const manifestObj = (Updates.manifest as any) || {};
+  const manifestMeta = manifestObj.metadata || {};
+  const manifestClient = manifestObj.extra?.expoClient || {};
+
+  const currentVersion =
+    manifestClient.version || Constants.expoConfig?.version || '1.0.7';
   const currentBuildNumber =
-    (Platform.OS === 'android'
-      ? Constants.expoConfig?.android?.versionCode
-      : Constants.expoConfig?.ios?.buildNumber) || 1;
+    Number(
+      manifestMeta.buildNumber ||
+        (Platform.OS === 'android'
+          ? manifestClient.android?.versionCode ?? Constants.expoConfig?.android?.versionCode
+          : manifestClient.ios?.buildNumber ?? Constants.expoConfig?.ios?.buildNumber)
+    ) || 1;
 
   const isCheckingRef = useRef(false);
   const [isChecking, setIsChecking] = useState(false);

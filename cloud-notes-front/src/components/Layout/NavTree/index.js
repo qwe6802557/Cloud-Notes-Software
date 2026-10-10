@@ -34,7 +34,8 @@ import {
     RollbackOutlined,
     LeftOutlined,
     RightOutlined,
-    CloudUploadOutlined
+    CloudUploadOutlined,
+    ApartmentOutlined
 } from '@ant-design/icons';
 import {
     getNotebooks,
@@ -58,6 +59,7 @@ const SYSTEM_VIEWS = [
     { key: 'all', label: '全部笔记', icon: <BookOutlined /> },
     { key: 'recent', label: '最近文档', icon: <ClockCircleOutlined /> },
     { key: 'starred', label: '收藏文档', icon: <StarOutlined /> },
+    { key: 'graph', label: '知识网络', icon: <ApartmentOutlined /> },
     { key: 'stash', label: '文件暂存', icon: <CloudUploadOutlined /> },
     { key: 'trash', label: '回收站', icon: <DeleteOutlined /> }
 ];
@@ -213,10 +215,12 @@ const NavTree = forwardRef(({
 
     // 当父级视图与侧边栏激活标签双向联动
     useEffect(() => {
-        if (activeView === 'notes' && viewType === 'stash') {
+        if (activeView === 'notes' && (viewType === 'stash' || viewType === 'graph')) {
             setViewType('all');
         } else if (activeView === 'stash' && viewType !== 'stash') {
             setViewType('stash');
+        } else if (activeView === 'graph' && viewType !== 'graph') {
+            setViewType('graph');
         }
     }, [activeView, viewType]);
 
@@ -777,7 +781,7 @@ const NavTree = forwardRef(({
         }
         setViewType(key);
         if (onViewChange) {
-            onViewChange(key === 'stash' ? 'stash' : 'notes');
+            onViewChange(key === 'stash' ? 'stash' : key === 'graph' ? 'graph' : 'notes');
         }
     };
 
@@ -1315,6 +1319,29 @@ const NavTree = forwardRef(({
                                 </div>
                                 <div style={{ fontSize: 12, lineHeight: 1.6, color: '#64748b' }}>
                                     右侧主工作区已进入暂存中转站，支持临时文件（10分钟自动销毁）与永久文件跨端即时互传。
+                                </div>
+                            </div>
+                        ) : viewType === 'graph' ? (
+                            <div style={{ padding: '36px 16px', textAlign: 'center' }}>
+                                <div style={{
+                                    width: 48,
+                                    height: 48,
+                                    borderRadius: 12,
+                                    background: '#eff6ff',
+                                    color: '#2563eb',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 24,
+                                    margin: '0 auto 14px'
+                                }}>
+                                    <ApartmentOutlined />
+                                </div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', marginBottom: 8 }}>
+                                    知识网络图谱已开启
+                                </div>
+                                <div style={{ fontSize: 12, lineHeight: 1.6, color: '#64748b' }}>
+                                    右侧主工作区已进入全库双向链接拓扑网，节点大小由被引用频次决定，支持全景力学交互与点击穿透打开笔记。
                                 </div>
                             </div>
                         ) : viewType === 'all' ? (

@@ -1,6 +1,7 @@
 const Note = require('../models/Note');
 const Tag = require('../models/Tag');
 const NoteHistory = require('../models/NoteHistory');
+const noteLinkService = require('../services/noteLinkService');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -112,6 +113,14 @@ exports.createNote = asyncHandler(async (req, res, next) => {
             { _id: { $in: tags } },
             { $inc: { count: 1 } }
         );
+    }
+
+    if (type === 'note' && note.content) {
+        const linkResult = await noteLinkService.syncNoteLinks(userId, note._id, note.content, []);
+        note.outlinks = linkResult.outlinks;
+        note.unresolvedLinks = linkResult.unresolvedLinks;
+        await note.save({ validateBeforeSave: false });
+        await noteLinkService.resolveUnresolvedBacklinksOnTitleChange(userId, note);
     }
 
     res.status(201).json({
@@ -265,35 +274,50 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
     const userId = req.user._id;
     const { saveType, ...updateData } = req.body;
 
+    // 检查当前笔记
+    const currentNote = await Note.findOne({ _id: noteId, userId });
+    if (!currentNote) {
+        return next(new AppError('笔记不存在', 404));
+    }
+
     // 检查并处理标签变更
     if (updateData.tags) {
-        const currentNote = await Note.findById(noteId);
-        if (currentNote) {
-            // 找出新增的标签
-            const newTags = updateData.tags.filter(
-                tag => !currentNote.tags.includes(tag)
+        // 找出新增的标签
+        const newTags = updateData.tags.filter(
+            tag => !currentNote.tags.includes(tag)
+        );
+
+        // 找出移除的标签
+        const removedTags = currentNote.tags.filter(
+            tag => !updateData.tags.includes(tag.toString())
+        );
+
+        // 更新标签计数
+        if (newTags.length > 0) {
+            await Tag.updateMany(
+                { _id: { $in: newTags } },
+                { $inc: { count: 1 } }
             );
-
-            // 找出移除的标签
-            const removedTags = currentNote.tags.filter(
-                tag => !updateData.tags.includes(tag.toString())
-            );
-
-            // 更新标签计数
-            if (newTags.length > 0) {
-                await Tag.updateMany(
-                    { _id: { $in: newTags } },
-                    { $inc: { count: 1 } }
-                );
-            }
-
-            if (removedTags.length > 0) {
-                await Tag.updateMany(
-                    { _id: { $in: removedTags } },
-                    { $inc: { count: -1 } }
-                );
-            }
         }
+
+        if (removedTags.length > 0) {
+            await Tag.updateMany(
+                { _id: { $in: removedTags } },
+                { $inc: { count: -1 } }
+            );
+        }
+    }
+
+    // 处理正文双链提取与维护
+    if (currentNote.type === 'note' && updateData.content !== undefined) {
+        const linkResult = await noteLinkService.syncNoteLinks(
+            userId,
+            noteId,
+            updateData.content,
+            currentNote.outlinks || []
+        );
+        updateData.outlinks = linkResult.outlinks;
+        updateData.unresolvedLinks = linkResult.unresolvedLinks;
     }
 
     const note = await Note.findOneAndUpdate(
@@ -305,8 +329,9 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
         }
     ).populate('tags', 'name color');
 
-    if (!note) {
-        return next(new AppError('笔记不存在', 404));
+    // 若标题发生变更，触发反向链接 unresolvedLinks 的动态激活
+    if (currentNote.type === 'note' && updateData.title && updateData.title.trim() !== currentNote.title.trim()) {
+        await noteLinkService.resolveUnresolvedBacklinksOnTitleChange(userId, note);
     }
 
     if (note.type === 'note' && (updateData.content !== undefined || updateData.title !== undefined)) {
@@ -424,6 +449,16 @@ exports.deleteNote = asyncHandler(async (req, res, next) => {
         );
     }
 
+    // 清理出链的 backlinkCount
+    if (note.type === 'note') {
+        await noteLinkService.handleNoteDeletion(userId, note.outlinks);
+    } else {
+        const deletedNotes = await Note.find({ _id: { $in: idsToDelete }, type: 'note', userId });
+        for (const dn of deletedNotes) {
+            await noteLinkService.handleNoteDeletion(userId, dn.outlinks);
+        }
+    }
+
     res.status(200).json({
         code: 200,
         message: note.type === 'folder' ? '删除目录成功' : '删除笔记成功',
@@ -501,6 +536,16 @@ exports.restoreNote = asyncHandler(async (req, res, next) => {
 
     if (resetParent) {
         await Note.updateOne({ _id: note._id, userId }, { parentId: null });
+    }
+
+    // 恢复出链的 backlinkCount
+    if (note.type === 'note') {
+        await noteLinkService.handleNoteRestore(userId, note.outlinks);
+    } else {
+        const restoredNotes = await Note.find({ _id: { $in: idsToRestore }, type: 'note', userId });
+        for (const rn of restoredNotes) {
+            await noteLinkService.handleNoteRestore(userId, rn.outlinks);
+        }
     }
 
     const restoredNote = await Note.findById(note._id).populate('tags', 'name color');
@@ -759,3 +804,74 @@ exports.rollbackNoteHistory = asyncHandler(async (req, res, next) => {
         }
     });
 });
+
+// 获取指定笔记的反向链接及上下文语境
+exports.getNoteBacklinks = asyncHandler(async (req, res, next) => {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    const note = await Note.findOne({ _id: id, userId, isDeleted: false });
+    if (!note) {
+        return next(new AppError('笔记不存在', 404));
+    }
+
+    const result = await noteLinkService.getBacklinksWithContext(userId, id);
+    res.status(200).json({
+        code: 200,
+        message: '获取反向链接成功',
+        data: result
+    });
+});
+
+// 获取用户全量或局部知识网络图谱
+exports.getKnowledgeGraph = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const { focusNoteId } = req.query;
+
+    const graphData = await noteLinkService.getKnowledgeGraphData(userId, focusNoteId);
+    res.status(200).json({
+        code: 200,
+        message: '获取知识网络图谱成功',
+        data: graphData
+    });
+});
+
+// 编辑器 [[ 输入联想推荐
+exports.suggestNoteLinks = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const { keyword = '' } = req.query;
+    const trimmed = (keyword || '').trim();
+
+    const query = {
+        userId,
+        isDeleted: false,
+        type: 'note'
+    };
+
+    if (trimmed) {
+        const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        query.title = { $regex: escaped, $options: 'i' };
+    }
+
+    const notes = await Note.find(query)
+        .select('_id title notebookId updatedAt backlinkCount')
+        .populate('notebookId', 'name color')
+        .sort({ backlinkCount: -1, updatedAt: -1 })
+        .limit(15);
+
+    res.status(200).json({
+        code: 200,
+        message: '获取推荐笔记成功',
+        data: {
+            suggestions: notes.map(n => ({
+                _id: n._id,
+                title: n.title,
+                notebookName: n.notebookId?.name || '默认笔记本',
+                notebookColor: n.notebookId?.color || '#3b82f6',
+                updatedAt: n.updatedAt,
+                backlinkCount: n.backlinkCount || 0
+            }))
+        }
+    });
+});
+

@@ -21,6 +21,7 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import * as stashApi from '../../api/stashApi';
 import { StashFile } from '../../api/stashApi';
+import FilePreviewModal from '../../components/FilePreviewModal';
 
 const formatBytes = (bytes: number, decimals = 1) => {
   if (!bytes || bytes === 0) return '0 B';
@@ -78,6 +79,9 @@ export default function StashScreen() {
   const [isUploading, setIsUploading] = useState(false);
   const [showPickerSheet, setShowPickerSheet] = useState(false);
 
+  // 文件沉浸式全屏预览状态
+  const [previewFile, setPreviewFile] = useState<StashFile | null>(null);
+
   // 虚拟目录导航层级状态：'' 表示根目录
   const [currentPath, setCurrentPath] = useState('');
 
@@ -94,9 +98,10 @@ export default function StashScreen() {
   // Web 端隐藏的文件夹 input 引用
   const webFolderInputRef = useRef<any>(null);
 
-  // 切换 tab 时重置当前路径到根目录
+  // 切换 tab 时重置当前路径与预览状态
   useEffect(() => {
     setCurrentPath('');
+    setPreviewFile(null);
   }, [currentTab]);
 
   // 拉取暂存文件列表
@@ -457,6 +462,9 @@ export default function StashScreen() {
     try {
       await stashApi.promoteStashFile(file._id || file.id || '');
       Alert.alert('成功', `【${file.originalName}】已升级为永久文件`);
+      if (previewFile && ((previewFile._id || previewFile.id) === (file._id || file.id))) {
+        setPreviewFile(prev => (prev ? { ...prev, storageType: 'permanent' } : null));
+      }
       loadFiles(true);
     } catch (e: any) {
       Alert.alert('操作失败', e.message || '转为永久保存失败');
@@ -473,6 +481,9 @@ export default function StashScreen() {
         onPress: async () => {
           try {
             await stashApi.deleteStashFile(file._id || file.id || '');
+            if (previewFile && ((previewFile._id || previewFile.id) === (file._id || file.id))) {
+              setPreviewFile(null);
+            }
             loadFiles(true);
           } catch (e: any) {
             Alert.alert('删除失败', e.message || '网络异常');
@@ -624,7 +635,11 @@ export default function StashScreen() {
 
     return (
       <View key={item._id || item.id} style={styles.card}>
-        <View style={styles.cardHeaderRow}>
+        <TouchableOpacity
+          style={styles.cardHeaderRow}
+          onPress={() => setPreviewFile(item)}
+          activeOpacity={0.7}
+        >
           <View style={[styles.iconBox, { backgroundColor: meta.bg }]}>
             <Ionicons name={meta.name} size={22} color={meta.color} />
           </View>
@@ -648,7 +663,11 @@ export default function StashScreen() {
               )}
             </View>
           </View>
-        </View>
+          <View style={[styles.actionBtn, styles.headerPreviewBtn]}>
+            <Ionicons name="eye-outline" size={15} color="#1890ff" />
+            <Text style={[styles.actionBtnText, { color: '#1890ff' }]}>预览</Text>
+          </View>
+        </TouchableOpacity>
 
         {/* 底部操作行 */}
         <View style={styles.cardActionRow}>
@@ -977,6 +996,14 @@ export default function StashScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* 沉浸式全屏文件即时预览模态框 */}
+      <FilePreviewModal
+        visible={Boolean(previewFile)}
+        file={previewFile}
+        onClose={() => setPreviewFile(null)}
+        onPromote={handlePromote}
+      />
     </View>
   );
 }
@@ -1126,6 +1153,13 @@ const styles = StyleSheet.create({
   },
   cardMetaCol: {
     flex: 1,
+    marginRight: 10,
+  },
+  headerPreviewBtn: {
+    backgroundColor: '#eff6ff',
+    borderColor: '#bfdbfe',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
   },
   cardTitle: {
     fontSize: 14,
