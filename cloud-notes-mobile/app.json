@@ -11,7 +11,7 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
-      "versionCode": 13,
+      "versionCode": 14,
       "permissions": [
         "INTERNET",
         "REQUEST_INSTALL_PACKAGES",

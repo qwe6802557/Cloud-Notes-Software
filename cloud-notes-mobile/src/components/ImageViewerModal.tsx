@@ -4,15 +4,16 @@ import {
   Alert,
   Dimensions,
   FlatList,
-  Image,
   Modal,
   Platform,
+  Image as RNImage,
   StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
@@ -39,7 +40,7 @@ export interface ImageViewerModalProps {
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 /**
- * 单张手势缩放幻灯片：全尺寸高清渲染，彻底解决黑屏、模糊与长图截断问题
+ * 单张手势缩放幻灯片：自适应高保真渲染，支持长图展开、垂直滚动阅读与全景缩放
  */
 function ZoomableImageSlide({
   uri,
@@ -69,7 +70,7 @@ function ZoomableImageSlide({
     if (!uri) return;
     setLoading(true);
     setHasError(false);
-    Image.getSize(
+    RNImage.getSize(
       uri,
       (w, h) => {
         if (w > 0 && h > 0) {
@@ -83,21 +84,31 @@ function ZoomableImageSlide({
     );
   }, [uri]);
 
-  // 当滑动切走时，平滑重置缩放和偏移
+  const isLong = imgRatio > 1.6;
+  const rawHeight = Math.round(SCREEN_WIDTH * imgRatio);
+  const displayHeight = isLong ? Math.min(rawHeight, 3800) : SCREEN_HEIGHT;
+  const displayWidth = SCREEN_WIDTH;
+  const initialTopOffsetY = isLong && displayHeight > SCREEN_HEIGHT
+    ? (displayHeight - SCREEN_HEIGHT) / 2
+    : 0;
+
+  // 滑动切走时重置；长图激活时初始平滑对齐顶端
   useEffect(() => {
     if (!isActive) {
       scale.value = 1;
       savedScale.value = 1;
       translateX.value = 0;
       savedTranslateX.value = 0;
-      translateY.value = 0;
-      savedTranslateY.value = 0;
+      translateY.value = initialTopOffsetY;
+      savedTranslateY.value = initialTopOffsetY;
+    } else {
+      translateY.value = initialTopOffsetY;
+      savedTranslateY.value = initialTopOffsetY;
     }
-  }, [isActive]);
+  }, [isActive, initialTopOffsetY]);
 
-  const isLong = imgRatio > 1.6;
   const maxZoom = isLong ? Math.max(3.8, Math.min(imgRatio * 1.6, 6.0)) : 4.0;
-  const doubleTapTargetScale = isLong ? 3.0 : 2.5;
+  const doubleTapTargetScale = 2.5;
 
   // 双击手势：1x 与放大之间平滑切换
   const doubleTapGesture = Gesture.Tap()
@@ -109,18 +120,12 @@ function ZoomableImageSlide({
         savedScale.value = 1;
         translateX.value = withSpring(0);
         savedTranslateX.value = 0;
-        translateY.value = withSpring(0);
-        savedTranslateY.value = 0;
+        translateY.value = withSpring(initialTopOffsetY);
+        savedTranslateY.value = initialTopOffsetY;
         runOnJS(onZoomChange)(false);
       } else {
         scale.value = withSpring(doubleTapTargetScale);
         savedScale.value = doubleTapTargetScale;
-        // 若为长图，双击放大时平滑偏向顶部，方便从头自如阅读
-        if (isLong) {
-          const topOffset = ((doubleTapTargetScale - 1) * SCREEN_HEIGHT) / 3.5;
-          translateY.value = withSpring(topOffset);
-          savedTranslateY.value = topOffset;
-        }
         runOnJS(onZoomChange)(true);
       }
     });
@@ -147,8 +152,11 @@ function ZoomableImageSlide({
         savedScale.value = 1;
         translateX.value = withSpring(0);
         savedTranslateX.value = 0;
-        translateY.value = withSpring(0);
-        savedTranslateY.value = 0;
+        const targetY = isLong
+          ? Math.min(Math.max(translateY.value, -initialTopOffsetY), initialTopOffsetY)
+          : 0;
+        translateY.value = withSpring(targetY);
+        savedTranslateY.value = targetY;
         runOnJS(onZoomChange)(false);
       } else if (scale.value > maxZoom) {
         scale.value = withSpring(maxZoom);
@@ -158,30 +166,34 @@ function ZoomableImageSlide({
       }
     });
 
-  // 拖拽平移手势：放大状态下全方位拖拽并支持安全边界回弹
+  // 拖拽平移手势：放大状态下全方位拖拽；长图在 1x 状态下支持垂直顺畅阅读滑动
   const panGesture = Gesture.Pan()
     .averageTouches(true)
     .onUpdate(e => {
       if (scale.value > 1.05) {
         translateX.value = savedTranslateX.value + e.translationX;
         translateY.value = savedTranslateY.value + e.translationY;
+      } else if (isLong && displayHeight > SCREEN_HEIGHT) {
+        translateY.value = savedTranslateY.value + e.translationY;
       }
     })
     .onEnd(() => {
-      if (scale.value > 1.05) {
-        const maxTx = ((scale.value - 1) * SCREEN_WIDTH) / 2;
-        const maxTy = isLong
-          ? Math.max(((scale.value - 1) * SCREEN_HEIGHT) / 2, ((scale.value * (imgRatio / 2) - 1) * SCREEN_HEIGHT) / 2)
-          : ((scale.value - 1) * SCREEN_HEIGHT) / 2;
+      const maxTx = scale.value > 1.05 ? ((scale.value - 1) * SCREEN_WIDTH) / 2 : 0;
+      const maxTy = isLong
+        ? Math.max(initialTopOffsetY, (displayHeight * scale.value - SCREEN_HEIGHT) / 2)
+        : ((scale.value - 1) * SCREEN_HEIGHT) / 2;
 
-        if (Math.abs(translateX.value) > maxTx + 30) {
-          translateX.value = withSpring(Math.sign(translateX.value) * maxTx);
-        }
-        if (Math.abs(translateY.value) > maxTy + 40) {
-          translateY.value = withSpring(Math.sign(translateY.value) * maxTy);
-        }
-
+      if (Math.abs(translateX.value) > maxTx + 30) {
+        translateX.value = withSpring(Math.sign(translateX.value) * maxTx);
+        savedTranslateX.value = Math.sign(translateX.value) * maxTx;
+      } else {
         savedTranslateX.value = translateX.value;
+      }
+
+      if (Math.abs(translateY.value) > maxTy + 40) {
+        translateY.value = withSpring(Math.sign(translateY.value) * maxTy);
+        savedTranslateY.value = Math.sign(translateY.value) * maxTy;
+      } else {
         savedTranslateY.value = translateY.value;
       }
     });
@@ -204,9 +216,20 @@ function ZoomableImageSlide({
         <Animated.View style={[styles.imageWrapper, animatedStyle]}>
           <Image
             source={{ uri }}
-            style={styles.fullImage}
-            resizeMode="contain"
-            resizeMethod="scale" // 核心：强制高保真渲染，禁止 Android Fresco 降采样模糊
+            style={{
+              width: displayWidth,
+              height: displayHeight,
+            }}
+            contentFit={isLong ? 'cover' : 'contain'}
+            allowDownscaling={false}
+            priority="high"
+            transition={150}
+            onLoad={e => {
+              if (e.source.width > 0 && e.source.height > 0) {
+                setImgRatio(e.source.height / e.source.width);
+              }
+              setLoading(false);
+            }}
             onLoadStart={() => {
               setLoading(true);
               setHasError(false);
@@ -422,16 +445,11 @@ const styles = StyleSheet.create({
     height: SCREEN_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
   imageWrapper: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  fullImage: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT,
   },
   overlayControls: {
     ...StyleSheet.absoluteFill,
