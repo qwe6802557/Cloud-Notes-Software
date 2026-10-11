@@ -765,6 +765,13 @@ const NavTree = forwardRef(({
                 return;
             }
         }
+        if (node?.title) {
+            window.dispatchEvent(
+                new CustomEvent('cloud-note-title-updated', {
+                    detail: { id: targetKey, title: node.title }
+                })
+            );
+        }
         setSelectedNote(targetKey);
         if (onViewChange) {
             onViewChange('notes');

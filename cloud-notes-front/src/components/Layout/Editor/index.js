@@ -433,6 +433,8 @@ const NoteEditor = ({
     const handleSaveRef = useRef(null);
     const previousModeRef = useRef(mode);
     const editorContainerRef = useRef(null);
+    const currentLoadedNoteIdRef = useRef(null);
+    const noteContentCacheRef = useRef(new Map());
     const [statusAnchorEl, setStatusAnchorEl] = useState(null);
     const [backlinksAnchorEl, setBacklinksAnchorEl] = useState(null);
 
@@ -475,9 +477,9 @@ const NoteEditor = ({
         }
     }, [selectedNote, primaryActiveId, openTab]);
 
-    // 当笔记标题被读取或变更时，实时同步到标签页
+    // 当笔记标题被读取或变更时，仅当其归属于当前加载笔记时才同步到标签页，杜绝切标签时用上一个笔记标题冲掉新标签
     useEffect(() => {
-        if (selectedNote && noteTitle) {
+        if (selectedNote && noteTitle && currentLoadedNoteIdRef.current === selectedNote) {
             updateTabTitle(selectedNote, noteTitle);
         }
     }, [selectedNote, noteTitle, updateTabTitle]);
@@ -1372,11 +1374,25 @@ const NoteEditor = ({
 
         if (selectedNote) {
             loadingNoteRef.current = true;
-            setLoading(true);
             setSaveError('');
-            contentRef.current = '';
-            setContent('');
-            lastSavedContentRef.current = '';
+
+            // 1. 优先从内存缓存中秒级呈现正文与标题，消除切换标签时的白屏清空与文字闪烁
+            const cached = noteContentCacheRef.current.get(selectedNote);
+            if (cached) {
+                contentRef.current = cached.content || '';
+                setContent(cached.content || '');
+                lastSavedContentRef.current = cached.lastSavedContent || cached.content || '';
+                setNoteTitle(cached.title || '');
+                currentLoadedNoteIdRef.current = selectedNote;
+                setLoading(false);
+            } else {
+                // 若未在内存缓存中，预填已有标签已知标题，杜绝标题瞬时空白
+                const existingTab = primaryTabs.find(t => t.id === selectedNote);
+                if (existingTab?.title) {
+                    setNoteTitle(existingTab.title);
+                }
+                setLoading(true);
+            }
 
             getNoteDetail(selectedNote)
                 .then(result => {
@@ -1385,12 +1401,26 @@ const NoteEditor = ({
                     }
 
                     const noteContent = result?.note?.content || '';
-                    setNoteTitle(result?.note?.title || '');
+                    const loadedTitle = result?.note?.title || '';
+                    currentLoadedNoteIdRef.current = selectedNote;
+
                     contentRef.current = noteContent;
                     setContent(noteContent);
                     lastSavedContentRef.current = noteContent;
+                    setNoteTitle(loadedTitle);
+                    if (loadedTitle) {
+                        updateTabTitle(selectedNote, loadedTitle);
+                    }
                     setLastSavedAt(result?.note?.updatedAt ? new Date(result.note.updatedAt) : null);
                     setIsDirty(false);
+
+                    // 写入/刷新内存缓存
+                    noteContentCacheRef.current.set(selectedNote, {
+                        content: noteContent,
+                        lastSavedContent: noteContent,
+                        title: loadedTitle,
+                        updatedAt: result?.note?.updatedAt
+                    });
                 })
                 .catch(() => {
                     if (mounted) {
@@ -1404,6 +1434,7 @@ const NoteEditor = ({
                     }
                 });
         } else {
+            currentLoadedNoteIdRef.current = null;
             setNoteTitle('');
             loadingNoteRef.current = false;
             contentRef.current = '';
@@ -1417,12 +1448,20 @@ const NoteEditor = ({
         return () => {
             mounted = false;
         };
-    }, [selectedNote]);
+    }, [selectedNote, primaryTabs, updateTabTitle]);
 
     const handleChange = value => {
         contentRef.current = value;
         setContent(value);
         setSaveError('');
+
+        if (selectedNote) {
+            const cached = noteContentCacheRef.current.get(selectedNote) || {};
+            noteContentCacheRef.current.set(selectedNote, {
+                ...cached,
+                content: value
+            });
+        }
 
         if (!loadingNoteRef.current) {
             setIsDirty(value !== lastSavedContentRef.current);
@@ -1463,6 +1502,15 @@ const NoteEditor = ({
             setLastSavedAt(new Date());
             setIsDirty(false);
             setSaveError('');
+
+            if (selectedNote) {
+                noteContentCacheRef.current.set(selectedNote, {
+                    content,
+                    lastSavedContent: content,
+                    title: noteTitle,
+                    updatedAt: new Date().toISOString()
+                });
+            }
 
             if (!options.silent) {
                 message.success('保存成功');
