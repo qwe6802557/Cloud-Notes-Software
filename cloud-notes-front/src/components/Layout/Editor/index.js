@@ -1974,27 +1974,9 @@ const NoteEditor = ({
         };
     }, [isDirty]);
 
-    if (!selectedNote && !loading && primaryTabs.length === 0) {
+    if ((!selectedNote && !loading) || primaryTabs.length === 0) {
         return (
             <div className={`note-editor ${zenMode ? 'is-zen-mode' : ''}`}>
-                <NoteTabBar
-                    tabs={primaryTabs}
-                    activeTabId={primaryActiveId || selectedNote}
-                    pane="primary"
-                    isSplitViewOpen={splitActive}
-                    onSelectTab={id => {
-                        setActivePane('primary');
-                        openTab(id, { pane: 'primary' });
-                    }}
-                    onCloseTab={id => handleTabCloseRequest(id, 'primary')}
-                    onCloseOtherTabs={id => closeOtherTabs(id, 'primary')}
-                    onCloseTabsToRight={id => closeTabsToRight(id, 'primary')}
-                    onTogglePinTab={id => togglePinTab(id, 'primary')}
-                    onMakeTabPermanent={id => makeTabPermanent(id, 'primary')}
-                    onOpenInOppositePane={id => openInOppositePane(id, 'primary')}
-                    onReorderTabs={(src, tgt) => reorderTabs(src, tgt, 'primary')}
-                    onCreateTab={onCreateNote}
-                />
                 {renderToolbar()}
                 <div className="empty-state">
                     <Empty

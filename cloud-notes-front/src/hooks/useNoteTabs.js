@@ -1,80 +1,29 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-
-const STORAGE_KEY = 'cloud_notes_tabs_workspace_v1';
+import { useState, useEffect, useCallback } from 'react';
 
 /**
- * 从 localStorage 读取已保存的标签页工作区状态
- */
-const loadSavedTabsState = () => {
-    try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.primaryTabs)) {
-            return parsed;
-        }
-    } catch {
-        // 解析异常忽略，降级为默认空状态
-    }
-    return null;
-};
-
-/**
- * 多标签页工作区管理 Hook (支持主栏/副栏双独立标签栈、VS Code预览态、常驻态、脏数据提示与持久化)
+ * 多标签页工作区管理 Hook (支持主栏/副栏双独立标签栈、VS Code预览态、常驻态、脏数据提示)
+ * 默认进入为空白态，用户点击或新建笔记时按需添加标签
  */
 export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
-    const savedState = useRef(loadSavedTabsState()).current;
+    // 主屏与副屏标签数组: NoteTabItem[]，默认初始空白
+    const [primaryTabs, setPrimaryTabs] = useState([]);
+    const [primaryActiveId, setPrimaryActiveId] = useState(null);
 
-    // 主屏与副屏标签数组: NoteTabItem[]
-    const [primaryTabs, setPrimaryTabs] = useState(savedState?.primaryTabs || []);
-    const [primaryActiveId, setPrimaryActiveId] = useState(savedState?.primaryActiveId || null);
-
-    const [secondaryTabs, setSecondaryTabs] = useState(savedState?.secondaryTabs || []);
-    const [secondaryActiveId, setSecondaryActiveId] = useState(savedState?.secondaryActiveId || null);
+    const [secondaryTabs, setSecondaryTabs] = useState([]);
+    const [secondaryActiveId, setSecondaryActiveId] = useState(null);
 
     // 当前获得焦点/活跃的分栏: 'primary' | 'secondary'
-    const [activePane, setActivePane] = useState(savedState?.activePane || 'primary');
+    const [activePane, setActivePane] = useState('primary');
 
-    // 双栏分屏开关与比例持久化
-    const [isSplitViewOpen, setIsSplitViewOpen] = useState(savedState?.isSplitViewOpen || false);
-    const [splitPaneRatio, setSplitPaneRatio] = useState(savedState?.splitPaneRatio || 50);
+    // 双栏分屏开关与比例
+    const [isSplitViewOpen, setIsSplitViewOpen] = useState(false);
+    const [splitPaneRatio, setSplitPaneRatio] = useState(50);
 
-    // 持久化到 localStorage
+    // 清理历史残留的自动强行开启缓存
     useEffect(() => {
         try {
-            const dataToSave = {
-                primaryTabs: primaryTabs.map(t => ({
-                    id: t.id,
-                    title: t.title,
-                    notebookId: t.notebookId,
-                    isPreview: t.isPreview,
-                    isPinned: t.isPinned
-                })),
-                primaryActiveId,
-                secondaryTabs: secondaryTabs.map(t => ({
-                    id: t.id,
-                    title: t.title,
-                    notebookId: t.notebookId,
-                    isPreview: t.isPreview,
-                    isPinned: t.isPinned
-                })),
-                secondaryActiveId,
-                activePane,
-                isSplitViewOpen,
-                splitPaneRatio
-            };
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
-        } catch {
-            // 存储异常忽略
-        }
-    }, [primaryTabs, primaryActiveId, secondaryTabs, secondaryActiveId, activePane, isSplitViewOpen, splitPaneRatio]);
-
-    // 初次挂载时若存在本地持久化的活跃主标签，自动通知外部恢复笔记正文
-    useEffect(() => {
-        if (primaryActiveId && onActiveNoteChange) {
-            onActiveNoteChange(primaryActiveId);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+            localStorage.removeItem('cloud_notes_tabs_workspace_v1');
+        } catch {}
     }, []);
 
     /**
@@ -205,13 +154,15 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
         const nextTabs = tabs.filter(t => t.id !== noteId);
         setTabs(nextTabs);
 
-        // 若关闭的是当前活跃标签，则智能激活相邻标签
-        if (activeId === noteId) {
-            let nextActiveId = null;
-            if (nextTabs.length > 0) {
-                const nextIndex = Math.min(targetIndex, nextTabs.length - 1);
-                nextActiveId = nextTabs[nextIndex].id;
+        // 若所有标签均已关闭，重置活跃指针并通知外部回到空白态；若关闭的是当前活跃标签，则激活相邻标签
+        if (nextTabs.length === 0) {
+            setActiveId(null);
+            if (pane === 'primary' && onActiveNoteChange) {
+                onActiveNoteChange(null);
             }
+        } else if (activeId === noteId) {
+            const nextIndex = Math.min(targetIndex, nextTabs.length - 1);
+            const nextActiveId = nextTabs[nextIndex].id;
             setActiveId(nextActiveId);
             if (pane === 'primary' && onActiveNoteChange) {
                 onActiveNoteChange(nextActiveId);

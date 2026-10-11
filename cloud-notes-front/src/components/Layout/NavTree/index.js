@@ -728,6 +728,41 @@ const NavTree = forwardRef(({
         return treeData;
     }, [searchTerm, searchResults, treeData]);
 
+    // 当选中的笔记发生变化时，若其处于折叠目录中，自动展开对应父文件夹并平滑滚动，确保左侧始终同步选中且可见
+    useEffect(() => {
+        if (!selectedNote || !treeData || treeData.length === 0) return;
+
+        const findParentKeys = (nodes, targetKey, parents = []) => {
+            for (const node of nodes) {
+                if (node.key === targetKey) {
+                    return parents;
+                }
+                if (node.children && node.children.length > 0) {
+                    const res = findParentKeys(node.children, targetKey, [...parents, node.key]);
+                    if (res) return res;
+                }
+            }
+            return null;
+        };
+
+        const parentKeys = findParentKeys(treeData, selectedNote);
+        if (parentKeys && parentKeys.length > 0) {
+            setExpandedKeys(prev => {
+                const set = new Set([...prev, ...parentKeys]);
+                return Array.from(set);
+            });
+        }
+
+        const timer = setTimeout(() => {
+            const selectedEl = document.querySelector('.nav-tree-node-title.is-selected') || document.querySelector('.flat-item.is-selected');
+            if (selectedEl && typeof selectedEl.scrollIntoView === 'function') {
+                selectedEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+        }, 120);
+
+        return () => clearTimeout(timer);
+    }, [selectedNote, treeData]);
+
     // 切换树节点展开收起
     const handleExpand = expanded => {
         setExpandedKeys(expanded);

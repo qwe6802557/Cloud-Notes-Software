@@ -15,16 +15,7 @@ const MainLayout = () => {
     const navTreeRef = useRef(null);
     const [collapsed, setCollapsed] = useState(false);
     const [selectedNotebook, setSelectedNotebook] = useState(null);
-    const [selectedNote, setSelectedNote] = useState(() => {
-        try {
-            const raw = localStorage.getItem('cloud_notes_tabs_workspace_v1');
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                return parsed?.primaryActiveId || null;
-            }
-        } catch {}
-        return null;
-    });
+    const [selectedNote, setSelectedNote] = useState(null);
     const [editorDirty, setEditorDirty] = useState(false);
     const [editorSaving, setEditorSaving] = useState(false);
     const [savedNote, setSavedNote] = useState(null);
@@ -76,10 +67,7 @@ const MainLayout = () => {
         }
 
         setSelectedNotebook(notebookId);
-        // 仅在明确切换不同笔记本时重置笔记，初次挂载时不冲掉多标签页恢复的激活笔记
-        if (selectedNotebook !== null) {
-            setSelectedNote(null);
-        }
+        setSelectedNote(null);
         setEditorDirty(false);
         return true;
     }, [confirmLeaveUnsavedNote, selectedNotebook]);
