@@ -476,8 +476,7 @@ const NoteEditor = ({
             const cachedTitle = noteContentCacheRef.current[selectedNote]?.title;
             openTab(selectedNote, {
                 title: cachedTitle || undefined,
-                pane: 'primary',
-                forcePermanent: true
+                pane: 'primary'
             });
         }
     }, [selectedNote, primaryActiveId, openTab]);

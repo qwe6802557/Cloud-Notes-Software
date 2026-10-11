@@ -65,7 +65,7 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
                 title,
                 notebookId,
                 isPreview: false,
-                isPinned: Boolean(options.forcePermanent || options.isPinned),
+                isPinned: Boolean(options.isPinned),
                 isDirty: false
             };
 

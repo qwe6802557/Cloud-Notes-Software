@@ -2,7 +2,6 @@ import React, { useRef, useCallback, useState } from 'react';
 import { Dropdown } from 'antd';
 import {
     CloseOutlined,
-    PushpinFilled,
     PlusOutlined,
     DownOutlined,
     FileTextOutlined
@@ -74,8 +73,7 @@ const NoteTabBar = ({
         label: (
             <div className={`tab-dropdown-item ${tab.id === activeTabId ? 'is-active' : ''}`}>
                 <FileTextOutlined style={{ marginRight: 6 }} />
-                <span className={tab.isPreview ? 'is-preview' : ''}>{tab.title || '无标题笔记'}</span>
-                {tab.isPinned && <PushpinFilled style={{ color: '#d97706', marginLeft: 6, fontSize: 11 }} />}
+                <span>{tab.title || '无标题笔记'}</span>
                 {tab.isDirty && <span className="tab-dirty-dot" style={{ marginLeft: 6 }}>●</span>}
             </div>
         ),
@@ -106,7 +104,7 @@ const NoteTabBar = ({
                             onOpenInOppositePane={onOpenInOppositePane}
                         >
                             <div
-                                className={`note-tab-item ${isActive ? 'is-active' : ''} ${tab.isPreview ? 'is-preview' : ''} ${tab.isPinned ? 'is-pinned' : ''} ${tab.isDirty ? 'is-dirty' : ''} ${isDragging ? 'is-dragging' : ''} ${isDragOver ? 'is-drag-over' : ''}`}
+                                className={`note-tab-item ${isActive ? 'is-active' : ''} ${tab.isDirty ? 'is-dirty' : ''} ${isDragging ? 'is-dragging' : ''} ${isDragOver ? 'is-drag-over' : ''}`}
                                 role="tab"
                                 aria-selected={isActive}
                                 draggable
@@ -115,7 +113,7 @@ const NoteTabBar = ({
                                 onDrop={e => handleDrop(e, index)}
                                 onDragEnd={handleDragEnd}
                                 onClick={() => onSelectTab(tab.id, pane)}
-                                onDoubleClick={() => onMakeTabPermanent(tab.id, pane)}
+                                onDoubleClick={() => onMakeTabPermanent && onMakeTabPermanent(tab.id, pane)}
                                 onAuxClick={e => {
                                     // 鼠标中键点击关闭标签
                                     if (e.button === 1) {
@@ -123,47 +121,31 @@ const NoteTabBar = ({
                                         onCloseTab(tab.id, pane);
                                     }
                                 }}
-                                title={`${tab.title || '无标题笔记'}${tab.isPinned ? ' (已固定)' : ''}`}
+                                title={tab.title || '无标题笔记'}
                             >
-                                {/* 固定图钉标记 */}
-                                {tab.isPinned && (
-                                    <span
-                                        className="tab-pin-icon"
-                                        onClick={e => {
-                                            e.stopPropagation();
-                                            onTogglePinTab(tab.id, pane);
-                                        }}
-                                        title="取消固定"
-                                    >
-                                        <PushpinFilled />
-                                    </span>
-                                )}
-
                                 {/* 笔记标题（超长自动截断，保持文件名扩展名） */}
                                 <span className="tab-title">
                                     {tab.title || '无标题笔记'}
                                 </span>
 
-                                {/* 关闭按钮与未保存圆点 */}
-                                {!tab.isPinned && (
-                                    <span
-                                        className="tab-close-btn"
-                                        onClick={e => {
-                                            e.stopPropagation();
-                                            onCloseTab(tab.id, pane);
-                                        }}
-                                        title={tab.isDirty ? '有未保存修改 (点击关闭)' : '关闭 (Alt+W)'}
-                                    >
-                                        {tab.isDirty ? (
-                                            <>
-                                                <span className="dirty-indicator">●</span>
-                                                <CloseOutlined className="hover-close-icon" />
-                                            </>
-                                        ) : (
-                                            <CloseOutlined />
-                                        )}
-                                    </span>
-                                )}
+                                {/* 每个标签均可点击叉关闭/删除 */}
+                                <span
+                                    className="tab-close-btn"
+                                    onClick={e => {
+                                        e.stopPropagation();
+                                        onCloseTab(tab.id, pane);
+                                    }}
+                                    title={tab.isDirty ? '有未保存修改 (点击关闭)' : '关闭 (Alt+W)'}
+                                >
+                                    {tab.isDirty ? (
+                                        <>
+                                            <span className="dirty-indicator">●</span>
+                                            <CloseOutlined className="hover-close-icon" />
+                                        </>
+                                    ) : (
+                                        <CloseOutlined />
+                                    )}
+                                </span>
                             </div>
                         </TabContextMenu>
                     );
