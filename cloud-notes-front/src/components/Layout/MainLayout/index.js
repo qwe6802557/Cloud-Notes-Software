@@ -77,14 +77,16 @@ const MainLayout = () => {
             return true;
         }
 
-        if (!options.skipConfirm && !await confirmLeaveUnsavedNote()) {
-            return false;
+        if (!options.skipConfirm && editorDirty) {
+            if (!await confirmLeaveUnsavedNote()) {
+                return false;
+            }
         }
 
         setSelectedNote(noteId);
         setEditorDirty(false);
         return true;
-    }, [confirmLeaveUnsavedNote, selectedNote]);
+    }, [confirmLeaveUnsavedNote, editorDirty, selectedNote]);
 
     const handleSaveStateChange = useCallback(status => {
         setEditorSaving(Boolean(status?.saving || status?.autoSaving));

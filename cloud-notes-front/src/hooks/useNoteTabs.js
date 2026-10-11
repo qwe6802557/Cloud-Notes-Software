@@ -1,10 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 /**
  * 多标签页工作区管理 Hook (支持主栏/副栏双独立标签栈、VS Code预览态、常驻态、脏数据提示)
  * 默认进入为空白态，用户点击或新建笔记时按需添加标签
  */
 export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
+    // 正在关闭的标签白名单，防止在 React 异步渲染间隙被再次意外创建
+    const closingNoteIdsRef = useRef(new Set());
+
     // 主屏与副屏标签数组: NoteTabItem[]，默认初始空白
     const [primaryTabs, setPrimaryTabs] = useState([]);
     const [primaryActiveId, setPrimaryActiveId] = useState(null);
@@ -34,7 +37,7 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
      * @param {object} options { title, notebookId, pane, forcePermanent, isPinned }
      */
     const openTab = useCallback((noteId, options = {}) => {
-        if (!noteId) return;
+        if (!noteId || closingNoteIdsRef.current.has(noteId)) return;
 
         const targetPane = options.pane || activePane;
         const title = options.title || '无标题笔记';
@@ -147,18 +150,24 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
         const nextTabs = tabs.filter(t => t.id !== noteId);
         setTabs(nextTabs);
 
+        // 记录正在关闭的标签ID，防止生命周期异步更新期间被外部错误重新开启
+        closingNoteIdsRef.current.add(noteId);
+        setTimeout(() => {
+            closingNoteIdsRef.current.delete(noteId);
+        }, 800);
+
         // 若所有标签均已关闭，重置活跃指针并通知外部回到空白态；若关闭的是当前活跃标签，则激活相邻标签
         if (nextTabs.length === 0) {
             setActiveId(null);
             if (pane === 'primary' && onActiveNoteChange) {
-                onActiveNoteChange(null);
+                onActiveNoteChange(null, { skipConfirm: true });
             }
         } else if (activeId === noteId) {
             const nextIndex = Math.min(targetIndex, nextTabs.length - 1);
             const nextActiveId = nextTabs[nextIndex].id;
             setActiveId(nextActiveId);
             if (pane === 'primary' && onActiveNoteChange) {
-                onActiveNoteChange(nextActiveId);
+                onActiveNoteChange(nextActiveId, { skipConfirm: true });
             }
         }
 

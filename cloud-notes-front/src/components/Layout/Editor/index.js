@@ -435,6 +435,7 @@ const NoteEditor = ({
     const editorContainerRef = useRef(null);
     const currentLoadedNoteIdRef = useRef(null);
     const noteContentCacheRef = useRef(new Map());
+    const closingNoteIdRef = useRef(null);
     const [statusAnchorEl, setStatusAnchorEl] = useState(null);
     const [backlinksAnchorEl, setBacklinksAnchorEl] = useState(null);
 
@@ -472,14 +473,26 @@ const NoteEditor = ({
 
     // 当选中的笔记发生变化时，同步在主栏打开或激活标签页（切换为别的笔记时新增标签，绝不关闭和替换原有标签）
     useEffect(() => {
+        if (closingNoteIdRef.current === selectedNote) {
+            return;
+        }
         if (selectedNote && selectedNote !== primaryActiveId) {
-            const cachedTitle = noteContentCacheRef.current[selectedNote]?.title;
+            const cached = noteContentCacheRef.current instanceof Map
+                ? noteContentCacheRef.current.get(selectedNote)
+                : noteContentCacheRef.current?.[selectedNote];
+            const cachedTitle = cached?.title;
             openTab(selectedNote, {
                 title: cachedTitle || undefined,
                 pane: 'primary'
             });
         }
     }, [selectedNote, primaryActiveId, openTab]);
+
+    useEffect(() => {
+        if (selectedNote !== closingNoteIdRef.current) {
+            closingNoteIdRef.current = null;
+        }
+    }, [selectedNote]);
 
     // 当笔记标题被读取或变更时，仅当其归属于当前加载笔记时才同步到标签页，杜绝切标签时用上一个笔记标题冲掉新标签
     useEffect(() => {
@@ -500,6 +513,8 @@ const NoteEditor = ({
         const tabs = pane === 'primary' ? primaryTabs : secondaryTabs;
         const targetTab = tabs.find(t => t.id === tabId);
         if (!targetTab) return;
+
+        closingNoteIdRef.current = tabId;
 
         if (targetTab.isDirty) {
             Modal.confirm({
