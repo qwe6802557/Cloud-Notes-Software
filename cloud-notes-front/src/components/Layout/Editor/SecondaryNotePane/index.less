@@ -309,13 +309,16 @@
 
     // 正文内容与状态栏
     .pane-content-wrap {
-      flex: 1;
+      flex: 1 1 auto;
+      min-height: 0;
+      height: 100%;
       overflow: hidden;
       display: flex;
       flex-direction: column;
 
       .secondary-preview-scroller {
-        flex: 1;
+        flex: 1 1 auto;
+        min-height: 0;
         overflow-y: auto;
         padding: 24px 32px 60px;
         background-color: #ffffff;
@@ -338,30 +341,61 @@
       }
 
       .secondary-editor-wrapper {
-        flex: 1;
+        flex: 1 1 auto;
+        min-height: 0;
+        height: 100%;
         overflow: hidden;
         display: flex;
         flex-direction: column;
 
-        .bytemd {
+        > div {
           height: 100% !important;
-          border: none;
+          flex: 1 1 auto !important;
+          min-height: 0 !important;
+          display: flex !important;
+          flex-direction: column !important;
+          overflow: hidden !important;
+        }
+
+        .bytemd {
+          flex: 1 1 auto !important;
+          min-height: 0 !important;
+          height: 100% !important;
+          display: flex !important;
+          flex-direction: column !important;
+          border: none !important;
 
           .bytemd-toolbar {
+            flex: 0 0 auto !important;
             border-top: none;
             border-bottom: 1px solid #e2e8f0;
             background-color: #f8fafc;
           }
 
           .bytemd-body {
-            flex: 1;
-            height: calc(100% - 40px);
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            height: calc(100% - 40px) !important;
+            display: flex !important;
+            overflow: hidden !important;
+
+            .bytemd-editor,
+            .bytemd-preview {
+              height: 100% !important;
+              overflow: auto !important;
+            }
 
             .CodeMirror {
               height: 100% !important;
               font-family: inherit;
               font-size: 14.5px;
               line-height: 1.7;
+
+              .CodeMirror-scroll {
+                height: 100% !important;
+                min-height: 100% !important;
+                overflow-y: auto !important;
+              }
             }
           }
         }
