@@ -18,7 +18,7 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
-      "versionCode": 23,
+      "versionCode": 24,
       "permissions": [
         "INTERNET",
         "REQUEST_INSTALL_PACKAGES",
@@ -47,7 +47,20 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 88
         }
-      ]
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "buildArchs": ["arm64-v8a"],
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
+            "useLegacyPackaging": true,
+            "extraProguardRules": "-keep class com.facebook.react.** { *; }\n-keep class com.facebook.hermes.** { *; }\n-keep class com.swmansion.reanimated.** { *; }\n-keep class com.swmansion.rnscreens.** { *; }\n-dontwarn com.facebook.react.**\n-dontwarn okhttp3.**"
+          }
+        }
+      ],
+      "./plugins/withExcludeUnusedFonts"
     ],
     "experiments": {
       "typedRoutes": true,
