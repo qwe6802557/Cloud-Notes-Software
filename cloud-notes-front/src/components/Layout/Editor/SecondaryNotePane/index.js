@@ -28,6 +28,7 @@ import zhHansMath from '@bytemd/plugin-math/locales/zh_Hans.json';
 import { getNoteDetail, updateNote, getRecentNotes, suggestNoteLinks } from '@/api/notes';
 import lazyImagePlugin from '../plugins/lazyImagePlugin';
 import wikiLinkPlugin from '../plugins/wikiLinkPlugin';
+import NoteTabBar from '../NoteTabBar';
 import './index.less';
 
 const locale = { ...zhHans };
@@ -51,7 +52,17 @@ const SecondaryNotePane = ({
     onClose,
     onSelectNote,
     onNavigateMainNote,
-    selectedNotebook
+    selectedNotebook,
+    tabs = [],
+    activeTabId,
+    onSelectTab,
+    onCloseTab,
+    onCloseOtherTabs,
+    onCloseTabsToRight,
+    onMakeTabPermanent,
+    onOpenInOppositePane,
+    onReorderTabs,
+    onCreateTab
 }) => {
     const [loading, setLoading] = useState(false);
     const [noteData, setNoteData] = useState(null);
@@ -99,6 +110,13 @@ const SecondaryNotePane = ({
                 setNoteData(data);
                 setEditContent(data.content || '');
                 setIsDirty(false);
+                if (data._id && data.title) {
+                    window.dispatchEvent(
+                        new CustomEvent('cloud-note-title-updated', {
+                            detail: { id: data._id, title: data.title }
+                        })
+                    );
+                }
             } else {
                 message.warning('未能加载到该参考笔记');
             }
@@ -207,6 +225,23 @@ const SecondaryNotePane = ({
 
     return (
         <div className="secondary-note-pane">
+            {tabs && tabs.length > 0 && (
+                <NoteTabBar
+                    tabs={tabs}
+                    activeTabId={activeTabId}
+                    pane="secondary"
+                    isSplitViewOpen={true}
+                    onSelectTab={onSelectTab}
+                    onCloseTab={onCloseTab}
+                    onCloseOtherTabs={onCloseOtherTabs}
+                    onCloseTabsToRight={onCloseTabsToRight}
+                    onTogglePinTab={onTogglePin}
+                    onMakeTabPermanent={onMakeTabPermanent}
+                    onOpenInOppositePane={onOpenInOppositePane}
+                    onReorderTabs={onReorderTabs}
+                    onCreateTab={onCreateTab}
+                />
+            )}
             {/* 顶部控制栏 */}
             <div className="pane-header">
                 <div className="pane-header-left">

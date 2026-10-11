@@ -1,0 +1,245 @@
+.note-tab-bar {
+    display: flex;
+    align-items: center;
+    height: 36px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    user-select: none;
+    position: relative;
+    z-index: 10;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+
+    &.note-tab-bar-secondary {
+        background: #f1f5f9;
+        border-bottom-color: #cbd5e1;
+    }
+
+    .note-tab-bar-scroll-area {
+        display: flex;
+        align-items: stretch;
+        height: 100%;
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none; // Firefox
+        -ms-overflow-style: none; // IE/Edge
+
+        &::-webkit-scrollbar {
+            display: none; // Chrome/Safari
+        }
+    }
+
+    .note-tab-item {
+        display: inline-flex;
+        align-items: center;
+        height: 100%;
+        padding: 0 12px;
+        background: transparent;
+        color: #64748b;
+        font-size: 13px;
+        font-weight: 500;
+        border-right: 1px solid #e2e8f0;
+        cursor: pointer;
+        position: relative;
+        white-space: nowrap;
+        transition: background-color 0.15s ease, color 0.15s ease;
+        max-width: 220px;
+        min-width: 70px;
+        box-sizing: border-box;
+
+        &:hover {
+            background: #ffffff;
+            color: #1e293b;
+
+            .tab-close-btn {
+                opacity: 1;
+
+                .dirty-indicator {
+                    display: none;
+                }
+                .hover-close-icon {
+                    display: inline-block;
+                }
+            }
+        }
+
+        &.is-active {
+            background: #ffffff;
+            color: #0f172a;
+            font-weight: 600;
+
+            &::after {
+                content: '';
+                position: absolute;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                height: 2px;
+                background: #1890ff;
+            }
+
+            .tab-close-btn {
+                opacity: 0.85;
+            }
+        }
+
+        &.is-preview {
+            font-style: italic;
+            color: #475569;
+
+            .tab-title {
+                opacity: 0.9;
+            }
+        }
+
+        &.is-pinned {
+            padding: 0 10px;
+            max-width: 140px;
+            background: rgba(245, 158, 11, 0.05);
+
+            &.is-active {
+                background: #ffffff;
+            }
+
+            .tab-pin-icon {
+                color: #d97706;
+                margin-right: 6px;
+                font-size: 12px;
+                display: flex;
+                align-items: center;
+            }
+        }
+
+        &.is-dragging {
+            opacity: 0.4;
+            background: #e2e8f0;
+        }
+
+        &.is-drag-over {
+            border-left: 2px solid #1890ff;
+        }
+
+        .tab-title {
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .tab-close-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            margin-left: 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            color: #94a3b8;
+            opacity: 0;
+            transition: opacity 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+
+            &:hover {
+                background: #e2e8f0;
+                color: #0f172a;
+            }
+
+            .dirty-indicator {
+                font-size: 14px;
+                line-height: 1;
+                color: #f59e0b;
+                display: inline-block;
+            }
+
+            .hover-close-icon {
+                display: none;
+            }
+        }
+
+        &.is-dirty {
+            .tab-close-btn {
+                opacity: 1;
+            }
+        }
+    }
+
+    .tab-create-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 100%;
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        transition: color 0.15s ease, background-color 0.15s ease;
+
+        &:hover {
+            color: #1e293b;
+            background: rgba(0, 0, 0, 0.03);
+        }
+    }
+
+    .tab-overflow-trigger {
+        display: flex;
+        align-items: center;
+        height: 100%;
+        padding: 0 4px;
+        background: #f8fafc;
+        border-left: 1px solid #e2e8f0;
+
+        .tab-overflow-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            border: none;
+            background: transparent;
+            color: #64748b;
+            cursor: pointer;
+            font-size: 11px;
+            transition: all 0.15s ease;
+
+            &:hover {
+                background: #e2e8f0;
+                color: #0f172a;
+            }
+        }
+    }
+}
+
+// 标签下拉菜单项样式
+.tab-dropdown-item {
+    display: flex;
+    align-items: center;
+    max-width: 260px;
+
+    span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .is-preview {
+        font-style: italic;
+        color: #64748b;
+    }
+
+    &.is-active {
+        font-weight: 600;
+        color: #1890ff;
+    }
+
+    .tab-dirty-dot {
+        color: #f59e0b;
+        font-size: 12px;
+    }
+}

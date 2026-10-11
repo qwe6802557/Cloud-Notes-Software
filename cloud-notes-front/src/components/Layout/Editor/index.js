@@ -59,6 +59,8 @@ import BacklinksPanel from './BacklinksPanel';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import WikiLinkHoverCard from './WikiLinkHoverCard';
 import SecondaryNotePane from './SecondaryNotePane';
+import NoteTabBar from './NoteTabBar';
+import { useNoteTabs } from '@/hooks/useNoteTabs';
 
 const locale = {
     ...zhHans
@@ -428,25 +430,126 @@ const NoteEditor = ({
     const editorContextRef = useRef(null);
     const imageInputRef = useRef(null);
     const contentRef = useRef('');
+    const handleSaveRef = useRef(null);
     const previousModeRef = useRef(mode);
     const editorContainerRef = useRef(null);
     const [statusAnchorEl, setStatusAnchorEl] = useState(null);
     const [backlinksAnchorEl, setBacklinksAnchorEl] = useState(null);
 
-    // PC 端双栏分屏联动写作状态
-    const [splitActive, setSplitActive] = useState(false);
-    const [secondaryNoteId, setSecondaryNoteId] = useState(null);
-    const [secondaryPinned, setSecondaryPinned] = useState(false);
-    const [splitPaneRatio, setSplitPaneRatio] = useState(() => {
-        try {
-            const saved = localStorage.getItem('cloud_notes_split_ratio');
-            if (saved) {
-                const num = parseFloat(saved);
-                if (!isNaN(num) && num >= 25 && num <= 75) return num;
-            }
-        } catch {}
-        return 50;
+    // 多标签页与双栏分屏联动状态 (useNoteTabs)
+    const {
+        primaryTabs,
+        primaryActiveId,
+        secondaryTabs,
+        secondaryActiveId,
+        activePane,
+        setActivePane,
+        isSplitViewOpen: splitActive,
+        setIsSplitViewOpen: setSplitActive,
+        splitPaneRatio,
+        setSplitPaneRatio,
+        openTab,
+        closeTab,
+        closeOtherTabs,
+        closeTabsToRight,
+        makeTabPermanent,
+        togglePinTab,
+        setTabDirty,
+        openInOppositePane,
+        reorderTabs,
+        updateTabTitle
+    } = useNoteTabs({
+        onActiveNoteChange: onSelectNote
     });
+
+    const secondaryNoteId = secondaryActiveId;
+    const secondaryPinned = Boolean(secondaryTabs.find(t => t.id === secondaryActiveId)?.isPinned);
+    const setSecondaryNoteId = useCallback(id => {
+        if (id) openTab(id, { pane: 'secondary', forcePermanent: true });
+    }, [openTab]);
+
+    // 当选中的笔记发生变化时，同步在主栏打开或激活标签页
+    useEffect(() => {
+        if (selectedNote && selectedNote !== primaryActiveId) {
+            openTab(selectedNote, { isPreview: true, pane: 'primary' });
+        }
+    }, [selectedNote, primaryActiveId, openTab]);
+
+    // 当笔记标题被读取或变更时，实时同步到标签页
+    useEffect(() => {
+        if (selectedNote && noteTitle) {
+            updateTabTitle(selectedNote, noteTitle);
+        }
+    }, [selectedNote, noteTitle, updateTabTitle]);
+
+    // 同步未保存脏数据状态到标签页
+    useEffect(() => {
+        if (selectedNote) {
+            setTabDirty(selectedNote, isDirty, 'primary');
+        }
+    }, [selectedNote, isDirty, setTabDirty]);
+
+    // 处理关闭标签请求（未保存时二次确认，否则直接关闭）
+    const handleTabCloseRequest = useCallback((tabId, pane = 'primary') => {
+        const tabs = pane === 'primary' ? primaryTabs : secondaryTabs;
+        const targetTab = tabs.find(t => t.id === tabId);
+        if (!targetTab) return;
+
+        if (targetTab.isDirty) {
+            Modal.confirm({
+                title: '关闭未保存标签页？',
+                content: `笔记《${targetTab.title || '无标题笔记'}》有未保存的修改，关闭后将丢失这些更改。是否保存后再关闭？`,
+                okText: '保存并关闭',
+                cancelText: '放弃修改',
+                okType: 'primary',
+                centered: true,
+                onOk: async () => {
+                    if (pane === 'primary' && tabId === selectedNote) {
+                        await handleSaveRef.current?.();
+                    }
+                    closeTab(tabId, pane, true);
+                },
+                onCancel: () => {
+                    closeTab(tabId, pane, true);
+                }
+            });
+        } else {
+            closeTab(tabId, pane, true);
+        }
+    }, [primaryTabs, secondaryTabs, selectedNote, closeTab]);
+
+    // 标签页快捷键: Alt + W 关闭当前标签, Ctrl + Tab 循环切换标签
+    useEffect(() => {
+        const handleTabShortcuts = e => {
+            // Alt + W: 关闭当前分栏活跃标签
+            if (e.altKey && e.key.toLowerCase() === 'w') {
+                e.preventDefault();
+                const currentActive = activePane === 'primary' ? (primaryActiveId || selectedNote) : secondaryActiveId;
+                if (currentActive) {
+                    handleTabCloseRequest(currentActive, activePane);
+                }
+            }
+            // Ctrl + Tab: 循环切换标签
+            if (e.ctrlKey && e.key === 'Tab') {
+                e.preventDefault();
+                const tabs = activePane === 'primary' ? primaryTabs : secondaryTabs;
+                const activeId = activePane === 'primary' ? (primaryActiveId || selectedNote) : secondaryActiveId;
+                if (tabs.length > 1) {
+                    const currIdx = tabs.findIndex(t => t.id === activeId);
+                    const nextIdx = e.shiftKey
+                        ? (currIdx - 1 + tabs.length) % tabs.length
+                        : (currIdx + 1) % tabs.length;
+                    const nextTab = tabs[nextIdx];
+                    if (nextTab) {
+                        openTab(nextTab.id, { pane: activePane });
+                    }
+                }
+            }
+        };
+        window.addEventListener('keydown', handleTabShortcuts);
+        return () => window.removeEventListener('keydown', handleTabShortcuts);
+    }, [activePane, primaryActiveId, secondaryActiveId, selectedNote, primaryTabs, secondaryTabs, handleTabCloseRequest, openTab]);
+
     const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
     const splitWrapperRef = useRef(null);
     const isDraggingSplitterRef = useRef(false);
@@ -615,7 +718,7 @@ const NoteEditor = ({
 
         window.addEventListener('open-wiki-link-split', handleOpenWikiLinkSplit);
         return () => window.removeEventListener('open-wiki-link-split', handleOpenWikiLinkSplit);
-    }, [secondaryPinned, selectedNotebook]);
+    }, [secondaryPinned, selectedNotebook, setSecondaryNoteId, setSplitActive]);
 
     // 分割线拖拽调整宽度逻辑
     const handleSplitterMouseDown = useCallback(e => {
@@ -640,6 +743,7 @@ const NoteEditor = ({
             setIsDraggingSplitter(false);
             document.body.style.cursor = '';
             document.body.style.userSelect = '';
+
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
 
@@ -658,7 +762,7 @@ const NoteEditor = ({
 
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
-    }, []);
+    }, [setSplitPaneRatio]);
 
     // 双击分割线复位至 50:50
     const handleSplitterDoubleClick = useCallback(() => {
@@ -667,25 +771,36 @@ const NoteEditor = ({
             localStorage.setItem('cloud_notes_split_ratio', '50.0');
         } catch {}
         message.info('分屏比例已复位至 50:50');
-    }, []);
+    }, [setSplitPaneRatio]);
 
     // 左右栏内容对调 (Swap Panes)
     const handleSwapPanes = useCallback(() => {
-        if (!secondaryNoteId) {
+        if (!secondaryNoteId || !selectedNote) {
             message.warning('副屏尚未选择参考笔记，无法对调');
             return;
         }
         const currentMain = selectedNote;
         const currentSec = secondaryNoteId;
-        onSelectNote?.(currentSec);
-        setSecondaryNoteId(currentMain);
+        const mainTab = primaryTabs.find(t => t.id === currentMain);
+        const secTab = secondaryTabs.find(t => t.id === currentSec);
+
+        openTab(currentSec, {
+            pane: 'primary',
+            forcePermanent: true,
+            title: secTab?.title
+        });
+        openTab(currentMain, {
+            pane: 'secondary',
+            forcePermanent: true,
+            title: mainTab?.title || noteTitle
+        });
         message.success('已对调主副栏笔记');
-    }, [secondaryNoteId, selectedNote, onSelectNote]);
+    }, [secondaryNoteId, selectedNote, primaryTabs, secondaryTabs, noteTitle, openTab]);
 
     // 关闭副屏
     const handleCloseSecondaryPane = useCallback(() => {
         setSplitActive(false);
-    }, []);
+    }, [setSplitActive]);
 
     // 锚定并挂载保存状态至 ByteMD 右侧原生状态栏与预览区反向链接
     useEffect(() => {
@@ -1366,6 +1481,7 @@ const NoteEditor = ({
             }
         }
     }, [autoSaving, content, isDirty, noteTitle, onSave, saving, selectedNote]);
+    handleSaveRef.current = handleSave;
 
     const handleRollbackSuccess = useCallback(rolledBackNote => {
         if (!rolledBackNote) return;
@@ -1810,9 +1926,27 @@ const NoteEditor = ({
         };
     }, [isDirty]);
 
-    if (!selectedNote && !loading) {
+    if (!selectedNote && !loading && primaryTabs.length === 0) {
         return (
             <div className={`note-editor ${zenMode ? 'is-zen-mode' : ''}`}>
+                <NoteTabBar
+                    tabs={primaryTabs}
+                    activeTabId={primaryActiveId || selectedNote}
+                    pane="primary"
+                    isSplitViewOpen={splitActive}
+                    onSelectTab={id => {
+                        setActivePane('primary');
+                        openTab(id, { pane: 'primary' });
+                    }}
+                    onCloseTab={id => handleTabCloseRequest(id, 'primary')}
+                    onCloseOtherTabs={id => closeOtherTabs(id, 'primary')}
+                    onCloseTabsToRight={id => closeTabsToRight(id, 'primary')}
+                    onTogglePinTab={id => togglePinTab(id, 'primary')}
+                    onMakeTabPermanent={id => makeTabPermanent(id, 'primary')}
+                    onOpenInOppositePane={id => openInOppositePane(id, 'primary')}
+                    onReorderTabs={(src, tgt) => reorderTabs(src, tgt, 'primary')}
+                    onCreateTab={onCreateNote}
+                />
                 {renderToolbar()}
                 <div className="empty-state">
                     <Empty
@@ -1828,6 +1962,26 @@ const NoteEditor = ({
 
     return (
         <div className={`note-editor ${zenMode ? 'is-zen-mode' : ''} ${zenMode ? `is-zen-${mode}` : ''}`}>
+            {!zenMode && (
+                <NoteTabBar
+                    tabs={primaryTabs}
+                    activeTabId={primaryActiveId || selectedNote}
+                    pane="primary"
+                    isSplitViewOpen={splitActive}
+                    onSelectTab={id => {
+                        setActivePane('primary');
+                        openTab(id, { pane: 'primary' });
+                    }}
+                    onCloseTab={id => handleTabCloseRequest(id, 'primary')}
+                    onCloseOtherTabs={id => closeOtherTabs(id, 'primary')}
+                    onCloseTabsToRight={id => closeTabsToRight(id, 'primary')}
+                    onTogglePinTab={id => togglePinTab(id, 'primary')}
+                    onMakeTabPermanent={id => makeTabPermanent(id, 'primary')}
+                    onOpenInOppositePane={id => openInOppositePane(id, 'primary')}
+                    onReorderTabs={(src, tgt) => reorderTabs(src, tgt, 'primary')}
+                    onCreateTab={onCreateNote}
+                />
+            )}
             {zenMode ? (
                 <div className="zen-top-reveal-group">
                     <div className="zen-hover-trigger" />
@@ -1960,8 +2114,33 @@ const NoteEditor = ({
                             >
                                 <SecondaryNotePane
                                     noteId={secondaryNoteId}
+                                    tabs={secondaryTabs}
+                                    activeTabId={secondaryActiveId}
+                                    onSelectTab={id => {
+                                        setActivePane('secondary');
+                                        openTab(id, { pane: 'secondary' });
+                                    }}
+                                    onCloseTab={id => handleTabCloseRequest(id, 'secondary')}
+                                    onCloseOtherTabs={id => closeOtherTabs(id, 'secondary')}
+                                    onCloseTabsToRight={id => closeTabsToRight(id, 'secondary')}
+                                    onTogglePin={id => togglePinTab(id || secondaryActiveId, 'secondary')}
+                                    onMakeTabPermanent={id => makeTabPermanent(id, 'secondary')}
+                                    onOpenInOppositePane={id => openInOppositePane(id, 'secondary')}
+                                    onReorderTabs={(src, tgt) => reorderTabs(src, tgt, 'secondary')}
+                                    onCreateTab={() => {
+                                        createNote({
+                                            title: '副屏参考笔记',
+                                            content: '',
+                                            notebookId: selectedNotebook || undefined,
+                                            type: 'note'
+                                        }).then(res => {
+                                            const newId = res?.note?._id || res?.data?.note?._id || res?._id;
+                                            if (newId) openTab(newId, { pane: 'secondary', forcePermanent: true });
+                                        }).catch(() => {
+                                            message.error('创建副屏笔记失败');
+                                        });
+                                    }}
                                     isPinned={secondaryPinned}
-                                    onTogglePin={() => setSecondaryPinned(prev => !prev)}
                                     onSwap={handleSwapPanes}
                                     onClose={handleCloseSecondaryPane}
                                     onSelectNote={setSecondaryNoteId}
