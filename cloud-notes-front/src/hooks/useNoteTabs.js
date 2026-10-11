@@ -28,14 +28,15 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
 
     /**
      * 打开或激活一个笔记标签页
+     * 行为规范：切换为别的笔记时，原有tab不关闭和替换，始终新增一个tab并选中显示；
+     * 若该笔记tab已存在，则平滑切换激活该tab
      * @param {string} noteId 笔记ID
-     * @param {object} options { title, notebookId, isPreview, pane, forcePermanent }
+     * @param {object} options { title, notebookId, pane, forcePermanent, isPinned }
      */
     const openTab = useCallback((noteId, options = {}) => {
         if (!noteId) return;
 
         const targetPane = options.pane || activePane;
-        const isPreview = options.forcePermanent ? false : (options.isPreview !== undefined ? options.isPreview : true);
         const title = options.title || '无标题笔记';
         const notebookId = options.notebookId || null;
 
@@ -46,35 +47,27 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
             const existingIndex = prevTabs.findIndex(t => t.id === noteId);
 
             if (existingIndex !== -1) {
-                // 已存在该标签：若当前为强制常驻，则移除预览态标志
-                return prevTabs.map((tab, idx) => {
-                    if (idx === existingIndex) {
-                        return {
-                            ...tab,
-                            title: options.title || tab.title,
-                            isPreview: !options.forcePermanent && tab.isPreview ? tab.isPreview : false
-                        };
-                    }
-                    return tab;
-                });
+                // 已存在该标签：若有更新的真实标题则更新，保留标签栈
+                if (options.title && options.title !== '无标题笔记' && prevTabs[existingIndex].title !== options.title) {
+                    return prevTabs.map((tab, idx) => {
+                        if (idx === existingIndex) {
+                            return { ...tab, title: options.title };
+                        }
+                        return tab;
+                    });
+                }
+                return prevTabs;
             }
 
-            // 新开标签：如果处于预览态，且当前存在未固定的预览标签，则就地替换预览标签
-            const previewIndex = prevTabs.findIndex(t => t.isPreview && !t.isPinned);
+            // 新开标签：始终新增一个tab并追加到末尾，绝不替换或关闭旧tab
             const newTab = {
                 id: noteId,
                 title,
                 notebookId,
-                isPreview,
-                isPinned: false,
+                isPreview: false,
+                isPinned: Boolean(options.forcePermanent || options.isPinned),
                 isDirty: false
             };
-
-            if (isPreview && previewIndex !== -1) {
-                const updated = [...prevTabs];
-                updated[previewIndex] = newTab;
-                return updated;
-            }
 
             return [...prevTabs, newTab];
         });
@@ -280,10 +273,12 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
         };
 
         window.addEventListener('note-title-updated', handleNoteTitleUpdate);
+        window.addEventListener('cloud-note-title-updated', handleNoteTitleUpdate);
         window.addEventListener('note-deleted', handleNoteDeleted);
 
         return () => {
             window.removeEventListener('note-title-updated', handleNoteTitleUpdate);
+            window.removeEventListener('cloud-note-title-updated', handleNoteTitleUpdate);
             window.removeEventListener('note-deleted', handleNoteDeleted);
         };
     }, [updateTabTitle, removeDeletedTab]);

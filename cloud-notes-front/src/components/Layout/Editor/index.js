@@ -470,10 +470,15 @@ const NoteEditor = ({
         if (id) openTab(id, { pane: 'secondary', forcePermanent: true });
     }, [openTab]);
 
-    // 当选中的笔记发生变化时，同步在主栏打开或激活标签页
+    // 当选中的笔记发生变化时，同步在主栏打开或激活标签页（切换为别的笔记时新增标签，绝不关闭和替换原有标签）
     useEffect(() => {
         if (selectedNote && selectedNote !== primaryActiveId) {
-            openTab(selectedNote, { isPreview: true, pane: 'primary' });
+            const cachedTitle = noteContentCacheRef.current[selectedNote]?.title;
+            openTab(selectedNote, {
+                title: cachedTitle || undefined,
+                pane: 'primary',
+                forcePermanent: true
+            });
         }
     }, [selectedNote, primaryActiveId, openTab]);
 

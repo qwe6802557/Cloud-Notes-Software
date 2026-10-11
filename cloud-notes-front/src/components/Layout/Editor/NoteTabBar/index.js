@@ -123,7 +123,7 @@ const NoteTabBar = ({
                                         onCloseTab(tab.id, pane);
                                     }
                                 }}
-                                title={`${tab.title}${tab.isPreview ? ' (预览模式 - 双击或修改转为常驻)' : ''}${tab.isPinned ? ' (已固定)' : ''}`}
+                                title={`${tab.title || '无标题笔记'}${tab.isPinned ? ' (已固定)' : ''}`}
                             >
                                 {/* 固定图钉标记 */}
                                 {tab.isPinned && (
