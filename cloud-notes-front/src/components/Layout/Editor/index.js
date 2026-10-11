@@ -459,6 +459,8 @@ const NoteEditor = ({
         togglePinTab,
         setTabDirty,
         openInOppositePane,
+        moveTabCrossPane,
+        swapPanes,
         reorderTabs,
         updateTabTitle
     } = useNoteTabs({
@@ -566,10 +568,15 @@ const NoteEditor = ({
                     }
                 }
             }
+            // Ctrl + \ / Cmd + \: 快速开启/收起双栏分屏
+            if ((e.ctrlKey || e.metaKey) && (e.key === '\\' || e.code === 'Backslash')) {
+                e.preventDefault();
+                setSplitActive(prev => !prev);
+            }
         };
         window.addEventListener('keydown', handleTabShortcuts);
         return () => window.removeEventListener('keydown', handleTabShortcuts);
-    }, [activePane, primaryActiveId, secondaryActiveId, selectedNote, primaryTabs, secondaryTabs, handleTabCloseRequest, openTab]);
+    }, [activePane, primaryActiveId, secondaryActiveId, selectedNote, primaryTabs, secondaryTabs, handleTabCloseRequest, openTab, setSplitActive]);
 
     const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
     const splitWrapperRef = useRef(null);
@@ -796,27 +803,13 @@ const NoteEditor = ({
 
     // 左右栏内容对调 (Swap Panes)
     const handleSwapPanes = useCallback(() => {
-        if (!secondaryNoteId || !selectedNote) {
-            message.warning('副屏尚未选择参考笔记，无法对调');
+        if (!secondaryActiveId && !primaryActiveId) {
+            message.warning('尚未打开任何笔记，无法对调');
             return;
         }
-        const currentMain = selectedNote;
-        const currentSec = secondaryNoteId;
-        const mainTab = primaryTabs.find(t => t.id === currentMain);
-        const secTab = secondaryTabs.find(t => t.id === currentSec);
-
-        openTab(currentSec, {
-            pane: 'primary',
-            forcePermanent: true,
-            title: secTab?.title
-        });
-        openTab(currentMain, {
-            pane: 'secondary',
-            forcePermanent: true,
-            title: mainTab?.title || noteTitle
-        });
-        message.success('已对调主副栏笔记');
-    }, [secondaryNoteId, selectedNote, primaryTabs, secondaryTabs, noteTitle, openTab]);
+        swapPanes();
+        message.success('已对调主副分栏工作区');
+    }, [swapPanes, secondaryActiveId, primaryActiveId]);
 
     // 关闭副屏
     const handleCloseSecondaryPane = useCallback(() => {
@@ -2011,36 +2004,6 @@ const NoteEditor = ({
 
     return (
         <div className={`note-editor ${zenMode ? 'is-zen-mode' : ''} ${zenMode ? `is-zen-${mode}` : ''}`}>
-            {!zenMode && (
-                <NoteTabBar
-                    tabs={primaryTabs}
-                    activeTabId={primaryActiveId || selectedNote}
-                    pane="primary"
-                    isSplitViewOpen={splitActive}
-                    onSelectTab={id => {
-                        setActivePane('primary');
-                        openTab(id, { pane: 'primary' });
-                    }}
-                    onCloseTab={id => handleTabCloseRequest(id, 'primary')}
-                    onCloseOtherTabs={id => closeOtherTabs(id, 'primary')}
-                    onCloseTabsToRight={id => closeTabsToRight(id, 'primary')}
-                    onTogglePinTab={id => togglePinTab(id, 'primary')}
-                    onMakeTabPermanent={id => makeTabPermanent(id, 'primary')}
-                    onOpenInOppositePane={id => openInOppositePane(id, 'primary')}
-                    onReorderTabs={(src, tgt) => reorderTabs(src, tgt, 'primary')}
-                    onCreateTab={onCreateNote}
-                />
-            )}
-            {zenMode ? (
-                <div className="zen-top-reveal-group">
-                    <div className="zen-hover-trigger" />
-                    <div className="zen-toolbar-container">
-                        {renderToolbar()}
-                    </div>
-                </div>
-            ) : (
-                renderToolbar()
-            )}
             {zenMode && (
                 <div className="zen-top-actions">
                     <div className="zen-mode-switch-pill" role="group" aria-label="视图模式切换">
@@ -2102,43 +2065,77 @@ const NoteEditor = ({
                         className="split-pane primary-split-pane"
                         style={{ width: splitActive ? `${splitPaneRatio}%` : '100%' }}
                     >
-                        <Spin spinning={loading} tip="加载中...">
-                            <div
-                                className={`editor-container editor-container-${mode} font-family-${fontFamily} font-size-${fontSize}`}
-                                onClick={handlePreviewContainerClick}
-                            >
-                                {mode === 'preview' ? (
-                                    <div className="preview-only-wrapper">
-                                        <div className="preview-only">
-                                            <Viewer value={content} plugins={basePlugins} />
-                                            <BacklinksPanel
-                                                noteId={selectedNote}
-                                                noteTitle={noteTitle}
-                                                onNavigateNote={onSelectNote}
-                                                onOpenLocalGraph={() => setLocalGraphVisible(true)}
-                                            />
-                                        </div>
-                                        <div className="bytemd-status preview-status-bar">
-                                            <div className="bytemd-status-left">
-                                                <span>字数: <strong>{contentAnalytics.effectiveWords}</strong></span>
-                                                <span>行数: <strong>{contentAnalytics.lines}</strong></span>
-                                            </div>
-                                            <div className="bytemd-status-right">
-                                                {renderSaveStatus()}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <Editor
-                                        value={content}
-                                        plugins={editorPlugins}
-                                        onChange={handleChange}
-                                        mode="split"
-                                        locale={locale}
-                                    />
-                                )}
+                        {!zenMode && (
+                            <NoteTabBar
+                                tabs={primaryTabs}
+                                activeTabId={primaryActiveId || selectedNote}
+                                pane="primary"
+                                isSplitViewOpen={splitActive}
+                                onToggleSplitView={() => setSplitActive(prev => !prev)}
+                                onSelectTab={id => {
+                                    setActivePane('primary');
+                                    openTab(id, { pane: 'primary' });
+                                }}
+                                onCloseTab={id => handleTabCloseRequest(id, 'primary')}
+                                onCloseOtherTabs={id => closeOtherTabs(id, 'primary')}
+                                onCloseTabsToRight={id => closeTabsToRight(id, 'primary')}
+                                onTogglePinTab={id => togglePinTab(id, 'primary')}
+                                onMakeTabPermanent={id => makeTabPermanent(id, 'primary')}
+                                onOpenInOppositePane={id => openInOppositePane(id, 'primary')}
+                                onReorderTabs={(src, tgt) => reorderTabs(src, tgt, 'primary')}
+                                onCrossPaneDrop={moveTabCrossPane}
+                                onCreateTab={onCreateNote}
+                            />
+                        )}
+                        {zenMode ? (
+                            <div className="zen-top-reveal-group">
+                                <div className="zen-hover-trigger" />
+                                <div className="zen-toolbar-container">
+                                    {renderToolbar()}
+                                </div>
                             </div>
-                        </Spin>
+                        ) : (
+                            renderToolbar()
+                        )}
+                        <div className="primary-editor-scroll-area">
+                            <Spin spinning={loading} tip="加载中...">
+                                <div
+                                    className={`editor-container editor-container-${mode} font-family-${fontFamily} font-size-${fontSize}`}
+                                    onClick={handlePreviewContainerClick}
+                                >
+                                    {mode === 'preview' ? (
+                                        <div className="preview-only-wrapper">
+                                            <div className="preview-only">
+                                                <Viewer value={content} plugins={basePlugins} />
+                                                <BacklinksPanel
+                                                    noteId={selectedNote}
+                                                    noteTitle={noteTitle}
+                                                    onNavigateNote={onSelectNote}
+                                                    onOpenLocalGraph={() => setLocalGraphVisible(true)}
+                                                />
+                                            </div>
+                                            <div className="bytemd-status preview-status-bar">
+                                                <div className="bytemd-status-left">
+                                                    <span>字数: <strong>{contentAnalytics.effectiveWords}</strong></span>
+                                                    <span>行数: <strong>{contentAnalytics.lines}</strong></span>
+                                                </div>
+                                                <div className="bytemd-status-right">
+                                                    {renderSaveStatus()}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <Editor
+                                            value={content}
+                                            plugins={editorPlugins}
+                                            onChange={handleChange}
+                                            mode="split"
+                                            locale={locale}
+                                        />
+                                    )}
+                                </div>
+                            </Spin>
+                        </div>
                     </div>
 
                     {splitActive && (
@@ -2176,6 +2173,7 @@ const NoteEditor = ({
                                     onMakeTabPermanent={id => makeTabPermanent(id, 'secondary')}
                                     onOpenInOppositePane={id => openInOppositePane(id, 'secondary')}
                                     onReorderTabs={(src, tgt) => reorderTabs(src, tgt, 'secondary')}
+                                    onCrossPaneDrop={moveTabCrossPane}
                                     onCreateTab={() => {
                                         createNote({
                                             title: '副屏参考笔记',

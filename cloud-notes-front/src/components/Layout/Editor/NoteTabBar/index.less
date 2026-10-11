@@ -200,6 +200,40 @@
             }
         }
     }
+
+    .note-tab-bar-actions {
+        display: flex;
+        align-items: center;
+        height: 100%;
+        padding: 0 4px;
+        background: inherit;
+        border-left: 1px solid #e2e8f0;
+
+        .tab-action-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            border: none;
+            background: transparent;
+            color: #64748b;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.15s ease;
+
+            &:hover {
+                background: #e2e8f0;
+                color: #0f172a;
+            }
+
+            &.is-active {
+                color: #1890ff;
+                background: #eff6ff;
+            }
+        }
+    }
 }
 
 // 标签下拉菜单项样式

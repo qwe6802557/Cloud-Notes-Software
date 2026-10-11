@@ -251,6 +251,97 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
     }, []);
 
     /**
+     * 跨分栏移动/投送标签页
+     * 从 sourcePane 移出并插入到 targetPane，同步更新活跃指针
+     */
+    const moveTabCrossPane = useCallback(({ id, title, notebookId, sourcePane, targetPane, targetIndex }) => {
+        if (!id || !sourcePane || !targetPane || sourcePane === targetPane) return;
+
+        const isSourcePrimary = sourcePane === 'primary';
+        const sourceTabs = isSourcePrimary ? primaryTabs : secondaryTabs;
+        const sourceActiveId = isSourcePrimary ? primaryActiveId : secondaryActiveId;
+        const sourceSetTabs = isSourcePrimary ? setPrimaryTabs : setSecondaryTabs;
+        const sourceSetActiveId = isSourcePrimary ? setPrimaryActiveId : setSecondaryActiveId;
+
+        const isTargetPrimary = targetPane === 'primary';
+        const targetSetTabs = isTargetPrimary ? setPrimaryTabs : setSecondaryTabs;
+        const targetSetActiveId = isTargetPrimary ? setPrimaryActiveId : setSecondaryActiveId;
+
+        const sourceIndex = sourceTabs.findIndex(t => t.id === id);
+        const tabToMove = sourceIndex !== -1 ? sourceTabs[sourceIndex] : {
+            id,
+            title: title || '无标题笔记',
+            notebookId: notebookId || null,
+            isPreview: false,
+            isPinned: false,
+            isDirty: false
+        };
+
+        if (!isSplitViewOpen) {
+            setIsSplitViewOpen(true);
+        }
+
+        // 1. 从源分栏移除
+        const nextSourceTabs = sourceTabs.filter(t => t.id !== id);
+        sourceSetTabs(nextSourceTabs);
+
+        // 如果源分栏移除的是当前激活项，重置或切换源分栏激活项
+        if (sourceActiveId === id) {
+            if (nextSourceTabs.length === 0) {
+                sourceSetActiveId(null);
+                if (isSourcePrimary && onActiveNoteChange) {
+                    onActiveNoteChange(null, { skipConfirm: true });
+                }
+            } else {
+                const nextIdx = Math.min(Math.max(0, sourceIndex), nextSourceTabs.length - 1);
+                const nextId = nextSourceTabs[nextIdx].id;
+                sourceSetActiveId(nextId);
+                if (isSourcePrimary && onActiveNoteChange) {
+                    onActiveNoteChange(nextId, { skipConfirm: true });
+                }
+            }
+        }
+
+        // 2. 注入目标分栏
+        targetSetTabs(prev => {
+            const exists = prev.some(t => t.id === id);
+            if (exists) return prev;
+            const updated = [...prev];
+            if (typeof targetIndex === 'number' && targetIndex >= 0 && targetIndex <= updated.length) {
+                updated.splice(targetIndex, 0, tabToMove);
+            } else {
+                updated.push(tabToMove);
+            }
+            return updated;
+        });
+
+        // 3. 激活目标分栏
+        targetSetActiveId(id);
+        setActivePane(targetPane);
+        if (isTargetPrimary && onActiveNoteChange) {
+            onActiveNoteChange(id);
+        }
+    }, [primaryTabs, secondaryTabs, primaryActiveId, secondaryActiveId, isSplitViewOpen, onActiveNoteChange]);
+
+    /**
+     * 对调主栏与副栏的标签栈与活跃状态
+     */
+    const swapPanes = useCallback(() => {
+        setPrimaryTabs(secondaryTabs);
+        setSecondaryTabs(primaryTabs);
+
+        const newPrimaryActive = secondaryActiveId;
+        const newSecondaryActive = primaryActiveId;
+
+        setPrimaryActiveId(newPrimaryActive);
+        setSecondaryActiveId(newSecondaryActive);
+
+        if (onActiveNoteChange) {
+            onActiveNoteChange(newPrimaryActive);
+        }
+    }, [primaryTabs, secondaryTabs, primaryActiveId, secondaryActiveId, onActiveNoteChange]);
+
+    /**
      * 更新标签标题（树节点重命名或保存响应）
      */
     const updateTabTitle = useCallback((noteId, newTitle) => {
@@ -313,6 +404,8 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
         togglePinTab,
         setTabDirty,
         openInOppositePane,
+        moveTabCrossPane,
+        swapPanes,
         reorderTabs,
         updateTabTitle,
         removeDeletedTab

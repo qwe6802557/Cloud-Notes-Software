@@ -195,12 +195,24 @@
         &.primary-split-pane {
           min-width: 280px;
           flex-shrink: 0;
+          display: flex;
+          flex-direction: column;
 
-          .ant-spin-nested-loading,
-          .ant-spin-container {
-            height: 100%;
+          .primary-editor-scroll-area {
+            flex: 1;
+            min-height: 0;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
+
+            .ant-spin-nested-loading,
+            .ant-spin-container {
+              height: 100%;
+              flex: 1;
+              min-height: 0;
+              display: flex;
+              flex-direction: column;
+            }
           }
         }
 

@@ -1,10 +1,11 @@
 import React, { useRef, useCallback, useState } from 'react';
-import { Dropdown } from 'antd';
+import { Dropdown, Tooltip } from 'antd';
 import {
     CloseOutlined,
     PlusOutlined,
     DownOutlined,
-    FileTextOutlined
+    FileTextOutlined,
+    SplitCellsOutlined
 } from '@ant-design/icons';
 import TabContextMenu from './TabContextMenu';
 import './index.less';
@@ -16,6 +17,8 @@ const NoteTabBar = ({
     tabs = [],
     activeTabId,
     pane = 'primary', // 'primary' | 'secondary'
+    isSplitViewOpen = false,
+    onToggleSplitView,
     onSelectTab,
     onCloseTab,
     onCloseOtherTabs,
@@ -24,6 +27,7 @@ const NoteTabBar = ({
     onMakeTabPermanent,
     onOpenInOppositePane,
     onReorderTabs,
+    onCrossPaneDrop,
     onCreateTab
 }) => {
     const tabsListRef = useRef(null);
@@ -38,10 +42,19 @@ const NoteTabBar = ({
         }
     }, []);
 
-    // 标签拖拽事件处理
+    // 标签拖拽事件处理（支持同分栏重排序与跨分栏投送）
     const handleDragStart = (e, index) => {
         setDraggedIndex(index);
         e.dataTransfer.effectAllowed = 'move';
+        const tab = tabs[index];
+        const payload = {
+            id: tab?.id,
+            title: tab?.title,
+            notebookId: tab?.notebookId,
+            sourcePane: pane,
+            sourceIndex: index
+        };
+        e.dataTransfer.setData('application/json', JSON.stringify(payload));
         e.dataTransfer.setData('text/plain', String(index));
     };
 
@@ -55,6 +68,33 @@ const NoteTabBar = ({
 
     const handleDrop = (e, targetIndex) => {
         e.preventDefault();
+        e.stopPropagation();
+
+        // 尝试解析跨分栏投送数据
+        try {
+            const raw = e.dataTransfer.getData('application/json');
+            if (raw) {
+                const payload = JSON.parse(raw);
+                if (payload.sourcePane && payload.sourcePane !== pane) {
+                    if (onCrossPaneDrop) {
+                        onCrossPaneDrop({
+                            id: payload.id,
+                            title: payload.title,
+                            notebookId: payload.notebookId,
+                            sourcePane: payload.sourcePane,
+                            sourceIndex: payload.sourceIndex,
+                            targetPane: pane,
+                            targetIndex
+                        });
+                    }
+                    setDraggedIndex(null);
+                    setDragOverIndex(null);
+                    return;
+                }
+            }
+        } catch {}
+
+        // 同分栏内重排序
         if (draggedIndex !== null && draggedIndex !== targetIndex && onReorderTabs) {
             onReorderTabs(draggedIndex, targetIndex, pane);
         }
@@ -63,6 +103,37 @@ const NoteTabBar = ({
     };
 
     const handleDragEnd = () => {
+        setDraggedIndex(null);
+        setDragOverIndex(null);
+    };
+
+    const handleScrollAreaDragOver = e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    };
+
+    const handleScrollAreaDrop = e => {
+        if (e.target.closest('.note-tab-item')) {
+            return;
+        }
+        e.preventDefault();
+        try {
+            const raw = e.dataTransfer.getData('application/json');
+            if (raw) {
+                const payload = JSON.parse(raw);
+                if (payload.sourcePane && payload.sourcePane !== pane && onCrossPaneDrop) {
+                    onCrossPaneDrop({
+                        id: payload.id,
+                        title: payload.title,
+                        notebookId: payload.notebookId,
+                        sourcePane: payload.sourcePane,
+                        sourceIndex: payload.sourceIndex,
+                        targetPane: pane,
+                        targetIndex: tabs.length
+                    });
+                }
+            }
+        } catch {}
         setDraggedIndex(null);
         setDragOverIndex(null);
     };
@@ -86,6 +157,8 @@ const NoteTabBar = ({
                 className="note-tab-bar-scroll-area"
                 ref={tabsListRef}
                 onWheel={handleWheel}
+                onDragOver={handleScrollAreaDragOver}
+                onDrop={handleScrollAreaDrop}
             >
                 {tabs.map((tab, index) => {
                     const isActive = tab.id === activeTabId;
@@ -174,6 +247,22 @@ const NoteTabBar = ({
                     </Dropdown>
                 </div>
             )}
+
+            {/* 标签栏快捷操作区 (双栏分屏控制) */}
+            <div className="note-tab-bar-actions">
+                {onToggleSplitView && (
+                    <Tooltip title={isSplitViewOpen ? '收起双栏分屏 (Ctrl+\\)' : '开启双栏分屏 (Ctrl+\\)'}>
+                        <button
+                            type="button"
+                            className={`tab-action-btn split-action-btn ${isSplitViewOpen ? 'is-active' : ''}`}
+                            onClick={onToggleSplitView}
+                            aria-label="双栏分屏"
+                        >
+                            <SplitCellsOutlined />
+                        </button>
+                    </Tooltip>
+                )}
+            </div>
         </div>
     );
 };

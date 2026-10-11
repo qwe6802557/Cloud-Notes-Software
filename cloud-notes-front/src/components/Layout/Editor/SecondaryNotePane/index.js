@@ -62,6 +62,7 @@ const SecondaryNotePane = ({
     onMakeTabPermanent,
     onOpenInOppositePane,
     onReorderTabs,
+    onCrossPaneDrop,
     onCreateTab
 }) => {
     const [loading, setLoading] = useState(false);
@@ -223,25 +224,58 @@ const SecondaryNotePane = ({
         }
     };
 
+    // 接收从主栏直接拖拽投送到副屏正文空白区域的标签
+    const handlePaneDrop = e => {
+        if (e.target.closest('.note-tab-bar')) return;
+        try {
+            const raw = e.dataTransfer.getData('application/json');
+            if (raw) {
+                const payload = JSON.parse(raw);
+                if (payload.sourcePane === 'primary' && onCrossPaneDrop) {
+                    e.preventDefault();
+                    onCrossPaneDrop({
+                        id: payload.id,
+                        title: payload.title,
+                        notebookId: payload.notebookId,
+                        sourcePane: 'primary',
+                        sourceIndex: payload.sourceIndex,
+                        targetPane: 'secondary',
+                        targetIndex: tabs.length
+                    });
+                }
+            }
+        } catch {}
+    };
+
+    const handlePaneDragOver = e => {
+        if (e.target.closest('.note-tab-bar')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+    };
+
     return (
-        <div className="secondary-note-pane">
-            {tabs && tabs.length > 0 && (
-                <NoteTabBar
-                    tabs={tabs}
-                    activeTabId={activeTabId}
-                    pane="secondary"
-                    isSplitViewOpen={true}
-                    onSelectTab={onSelectTab}
-                    onCloseTab={onCloseTab}
-                    onCloseOtherTabs={onCloseOtherTabs}
-                    onCloseTabsToRight={onCloseTabsToRight}
-                    onTogglePinTab={onTogglePin}
-                    onMakeTabPermanent={onMakeTabPermanent}
-                    onOpenInOppositePane={onOpenInOppositePane}
-                    onReorderTabs={onReorderTabs}
-                    onCreateTab={onCreateTab}
-                />
-            )}
+        <div
+            className="secondary-note-pane"
+            onDragOver={handlePaneDragOver}
+            onDrop={handlePaneDrop}
+        >
+            <NoteTabBar
+                tabs={tabs}
+                activeTabId={activeTabId}
+                pane="secondary"
+                isSplitViewOpen={true}
+                onToggleSplitView={onClose}
+                onSelectTab={onSelectTab}
+                onCloseTab={onCloseTab}
+                onCloseOtherTabs={onCloseOtherTabs}
+                onCloseTabsToRight={onCloseTabsToRight}
+                onTogglePinTab={onTogglePin}
+                onMakeTabPermanent={onMakeTabPermanent}
+                onOpenInOppositePane={onOpenInOppositePane}
+                onReorderTabs={onReorderTabs}
+                onCrossPaneDrop={onCrossPaneDrop}
+                onCreateTab={onCreateTab}
+            />
             {/* 顶部控制栏 */}
             <div className="pane-header">
                 <div className="pane-header-left">
