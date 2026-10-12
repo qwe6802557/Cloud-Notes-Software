@@ -1,7 +1,12 @@
+const fs = require('fs');
+const path = require('path');
+const { ZipArchive } = require('archiver');
 const Note = require('../models/Note');
 const Tag = require('../models/Tag');
 const NoteHistory = require('../models/NoteHistory');
 const noteLinkService = require('../services/noteLinkService');
+const { indexSingleNote, clearNoteIndex } = require('../services/ragIndexService');
+const config = require('../config');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
 
@@ -385,6 +390,10 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
             note
         }
     });
+
+    if (note.type === 'note' && (updateData.content !== undefined || updateData.title !== undefined)) {
+        indexSingleNote(note._id, req.user).catch(() => {});
+    }
 });
 
 exports.toggleStarred = asyncHandler(async (req, res, next) => {
@@ -457,6 +466,12 @@ exports.deleteNote = asyncHandler(async (req, res, next) => {
         for (const dn of deletedNotes) {
             await noteLinkService.handleNoteDeletion(userId, dn.outlinks);
         }
+    }
+
+    if (note.type === 'note') {
+        clearNoteIndex(noteId, userId).catch(() => {});
+    } else {
+        idsToDelete.forEach(id => clearNoteIndex(id, userId).catch(() => {}));
     }
 
     res.status(200).json({
@@ -888,5 +903,60 @@ exports.suggestNoteLinks = asyncHandler(async (req, res) => {
             }))
         }
     });
+});
+
+// 导出笔记为独立离线 Zip 归档包（含相对路径重写与本地媒体资产打包）
+exports.exportNoteZip = asyncHandler(async (req, res, next) => {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    const note = await Note.findOne({ _id: id, userId, isDeleted: false })
+        .populate('notebookId', 'name');
+
+    if (!note) {
+        return next(new AppError('笔记不存在或已被删除', 404));
+    }
+
+    const archive = new ZipArchive({
+        zlib: { level: 9 }
+    });
+
+    const safeTitle = (note.title || '无标题笔记').replace(/[\\/:*?"<>|]/g, '_').trim() || '笔记';
+    const zipFilename = `${safeTitle}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(zipFilename)}"; filename*=UTF-8''${encodeURIComponent(zipFilename)}`);
+
+    archive.on('error', err => {
+        if (!res.headersSent) {
+            next(err);
+        }
+    });
+
+    archive.pipe(res);
+
+    const content = note.content || '';
+    const uploadsRoot = path.resolve(config.uploads.path);
+    const addedFiles = new Set();
+
+    const imageRegex = /(?:https?:\/\/[^\/\s\)]+)?\/uploads\/(notes|stash)\/([a-zA-Z0-9_\-\.]+)/g;
+    let match;
+
+    while ((match = imageRegex.exec(content)) !== null) {
+        const subDir = match[1];
+        const filename = match[2];
+        const diskPath = path.join(uploadsRoot, subDir, filename);
+
+        if (!addedFiles.has(filename) && fs.existsSync(diskPath)) {
+            archive.file(diskPath, { name: `assets/${filename}` });
+            addedFiles.add(filename);
+        }
+    }
+
+    const rewrittenContent = content.replace(imageRegex, './assets/$2');
+
+    archive.append(rewrittenContent, { name: `${safeTitle}.md` });
+
+    await archive.finalize();
 });
 

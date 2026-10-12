@@ -25,6 +25,7 @@ import VersionHistoryModal from '../../components/VersionHistoryModal';
 import ImageViewerModal from '../../components/ImageViewerModal';
 import LocalRadarModal from '../../components/LocalRadarModal';
 import NotePeekBottomSheet from '../../components/NotePeekBottomSheet';
+import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 
 interface TocItem {
   level: number;
@@ -197,6 +198,7 @@ export default function NoteDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [showTocModal, setShowTocModal] = useState(false);
   const [showAIModal, setShowAIModal] = useState(false);
+  const [showRAGModal, setShowRAGModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showImageViewer, setShowImageViewer] = useState(false);
   const [showRadarModal, setShowRadarModal] = useState(false);
@@ -644,6 +646,14 @@ export default function NoteDetailScreen() {
                 <Ionicons name="sparkles" size={20} color="#7c3aed" />
               </TouchableOpacity>
 
+              {/* 知识库智能问答 */}
+              <TouchableOpacity
+                style={styles.headerActionBtn}
+                onPress={() => setShowRAGModal(true)}
+              >
+                <Ionicons name="hardware-chip-outline" size={20} color="#2563eb" />
+              </TouchableOpacity>
+
               {/* 编辑按钮 */}
               <TouchableOpacity
                 style={styles.headerActionBtn}
@@ -816,6 +826,15 @@ export default function NoteDetailScreen() {
         noteTitle={note?.title || ''}
         noteContent={note?.content || ''}
         isEditable={false}
+      />
+
+      {/* 全库/当前篇 RAG 知识库智能问答 */}
+      <RAGKnowledgeModal
+        visible={showRAGModal}
+        onClose={() => setShowRAGModal(false)}
+        currentNoteId={note?._id}
+        currentNoteTitle={note?.title}
+        currentNotebookId={note?.notebookId}
       />
 
       {/* 历史版本快照与 Diff 对比 */}

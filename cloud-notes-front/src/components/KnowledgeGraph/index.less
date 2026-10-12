@@ -70,6 +70,49 @@
                     border-color: #2563eb;
                 }
             }
+
+            .semantic-gravity-btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                color: #64748b;
+                border-color: #cbd5e1;
+                background: #ffffff;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+                .gravity-icon {
+                    font-size: 13px;
+                    line-height: 1;
+                }
+
+                .gravity-label {
+                    font-weight: 500;
+                    font-size: 12px;
+                }
+
+                .gravity-count {
+                    font-size: 11px;
+                    opacity: 0.85;
+                    font-feature-settings: 'tnum';
+                }
+
+                &:hover {
+                    color: #7c3aed;
+                    border-color: #c4b5fd;
+                    background: #fbfbfe;
+                }
+
+                &.is-active {
+                    color: #6d28d9;
+                    border-color: #8b5cf6;
+                    background: #f5f3ff;
+                    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
+
+                    .gravity-icon {
+                        animation: pulseSparkle 2s ease-in-out infinite;
+                    }
+                }
+            }
         }
     }
 
@@ -257,6 +300,24 @@
             .name {
                 white-space: nowrap;
             }
+
+            &.semantic-legend-item {
+                margin-left: 4px;
+                padding-left: 8px;
+                border-left: 1px solid #e2e8f0;
+
+                .dashed-indicator {
+                    width: 14px;
+                    height: 0;
+                    border-top: 2px dashed #8b5cf6;
+                    display: inline-block;
+                }
+
+                .name {
+                    color: #7c3aed;
+                    font-weight: 500;
+                }
+            }
         }
     }
 
@@ -288,5 +349,16 @@
     to {
         opacity: 1;
         transform: translateY(0);
+    }
+}
+
+@keyframes pulseSparkle {
+    0%, 100% {
+        transform: scale(1);
+        filter: brightness(1);
+    }
+    50% {
+        transform: scale(1.18);
+        filter: brightness(1.25);
     }
 }

@@ -17,6 +17,9 @@ import {
     FileImageOutlined,
     DownloadOutlined,
     ExportOutlined,
+    FilePdfOutlined,
+    PictureOutlined,
+    FileZipOutlined,
     CompassOutlined,
     HistoryOutlined,
     FullscreenOutlined,
@@ -33,7 +36,8 @@ import {
     CloseCircleOutlined,
     SyncOutlined,
     ApartmentOutlined,
-    SplitCellsOutlined
+    SplitCellsOutlined,
+    PushpinOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -45,13 +49,16 @@ import 'bytemd/dist/index.css';
 import 'highlight.js/styles/github.css';
 import 'katex/dist/katex.css';
 import './index.less';
-import { getNoteDetail, suggestNoteLinks, createNote } from '@/api/notes';
+import { getNoteDetail, suggestNoteLinks, createNote, exportNoteZip } from '@/api/notes';
+import { executePrintPdfExport } from '@/utils/export/printPdfExport';
+import { executeLongImageExport } from '@/utils/export/longImageExport';
 import { uploadNoteImage } from '@/api/upload';
 import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences';
 import TOCDrawer from './TOCDrawer';
 import VersionHistoryModal from './VersionHistoryModal';
 import SelectionCopyBubble from './SelectionCopyBubble';
 import AIFullNoteModal from './AIFullNoteModal';
+import RAGChatDrawer from '../RAGChat/RAGChatDrawer';
 import lazyImagePlugin from './plugins/lazyImagePlugin';
 import wikiLinkPlugin from './plugins/wikiLinkPlugin';
 import LinkSuggestPopup from './LinkSuggestPopup';
@@ -419,6 +426,8 @@ const NoteEditor = ({
     const [localGraphVisible, setLocalGraphVisible] = useState(false);
     const [aiModalVisible, setAiModalVisible] = useState(false);
     const [aiModalAction, setAiModalAction] = useState('full_summary');
+    const [ragDrawerVisible, setRagDrawerVisible] = useState(false);
+    const [isCompanionPinned, setIsCompanionPinned] = useState(false);
     const [imagePreview, setImagePreview] = useState({
         visible: false,
         current: 0,
@@ -466,6 +475,11 @@ const NoteEditor = ({
     } = useNoteTabs({
         onActiveNoteChange: onSelectNote
     });
+
+    const primaryTabsRef = useRef(primaryTabs);
+    useEffect(() => {
+        primaryTabsRef.current = primaryTabs;
+    }, [primaryTabs]);
 
     const secondaryNoteId = secondaryActiveId;
     const secondaryPinned = Boolean(secondaryTabs.find(t => t.id === secondaryActiveId)?.isPinned);
@@ -864,7 +878,7 @@ const NoteEditor = ({
             clearTimeout(timer);
             observer.disconnect();
         };
-    }, [mode, selectedNote]);
+    }, [mode, selectedNote, loading]);
 
     useEffect(() => {
         if (zenMode) {
@@ -1365,6 +1379,94 @@ const NoteEditor = ({
         }
     };
 
+    // 导出高保真分页 PDF 文档
+    const handleExportPdf = async () => {
+        if (!selectedNote) {
+            message.warning('请选择一篇笔记');
+            return;
+        }
+
+        const previewContainer = document.querySelector('.preview-only .markdown-body, .bytemd-preview .markdown-body');
+        const htmlContent = previewContainer?.innerHTML || '';
+        if (!htmlContent) {
+            message.warning('当前预览尚未准备好，请稍后重试');
+            return;
+        }
+
+        const hideLoading = message.loading('正在排版并准备导出 PDF...', 0);
+        try {
+            await executePrintPdfExport({
+                title: noteTitle,
+                notebookName: selectedNotebook?.name,
+                contentHtml: htmlContent
+            });
+        } catch (error) {
+            message.error(error.message || 'PDF 导出失败');
+        } finally {
+            hideLoading();
+        }
+    };
+
+    // 导出 2x Retina 高清长图便签
+    const handleExportLongImage = async () => {
+        if (!selectedNote) {
+            message.warning('请选择一篇笔记');
+            return;
+        }
+
+        const previewContainer = document.querySelector('.preview-only .markdown-body, .bytemd-preview .markdown-body');
+        const htmlContent = previewContainer?.innerHTML || '';
+        if (!htmlContent) {
+            message.warning('当前预览尚未准备好，请稍后重试');
+            return;
+        }
+
+        const hideLoading = message.loading('正在渲染高清长图，请稍候...', 0);
+        try {
+            await executeLongImageExport({
+                title: noteTitle,
+                notebookName: selectedNotebook?.name,
+                contentHtml: htmlContent
+            });
+            message.success('高清长图导出成功');
+        } catch (error) {
+            message.error(error.message || '长图导出失败');
+        } finally {
+            hideLoading();
+        }
+    };
+
+    // 导出独立离线 Zip 归档包
+    const handleExportZip = async () => {
+        if (!selectedNote) {
+            message.warning('请选择一篇笔记');
+            return;
+        }
+
+        const hideLoading = message.loading('正在打包生成独立离线 Zip 归档包...', 0);
+        try {
+            const response = await exportNoteZip(selectedNote);
+            const blob = response?.data instanceof Blob
+                ? response.data
+                : (response instanceof Blob ? response : new Blob([response], { type: 'application/zip' }));
+
+            const safeFilename = `${(noteTitle || '无标题文档').replace(/[\\/:*?"<>|]/g, '_').trim() || '笔记'}.zip`;
+            const downloadUrl = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = downloadUrl;
+            anchor.download = safeFilename;
+            document.body.appendChild(anchor);
+            anchor.click();
+            document.body.removeChild(anchor);
+            URL.revokeObjectURL(downloadUrl);
+            message.success('离线归档包导出成功');
+        } catch (error) {
+            message.error(error.message || '归档包导出失败');
+        } finally {
+            hideLoading();
+        }
+    };
+
     useEffect(() => {
         if (onDirtyChange) {
             onDirtyChange(isDirty);
@@ -1385,21 +1487,25 @@ const NoteEditor = ({
         }
 
         if (selectedNote) {
+            // 当前笔记已处于加载就绪状态时直接跳过，防止标签脏状态同步重刷破坏正在编辑的光标与正文
+            if (currentLoadedNoteIdRef.current === selectedNote) {
+                return;
+            }
+            currentLoadedNoteIdRef.current = selectedNote;
+
             loadingNoteRef.current = true;
             setSaveError('');
 
-            // 1. 优先从内存缓存中秒级呈现正文与标题，消除切换标签时的白屏清空与文字闪烁
+            // 优先从内存缓存中秒级呈现正文与标题，消除切换标签时的白屏清空与文字闪烁
             const cached = noteContentCacheRef.current.get(selectedNote);
             if (cached) {
                 contentRef.current = cached.content || '';
                 setContent(cached.content || '');
                 lastSavedContentRef.current = cached.lastSavedContent || cached.content || '';
                 setNoteTitle(cached.title || '');
-                currentLoadedNoteIdRef.current = selectedNote;
                 setLoading(false);
             } else {
-                // 若未在内存缓存中，预填已有标签已知标题，杜绝标题瞬时空白
-                const existingTab = primaryTabs.find(t => t.id === selectedNote);
+                const existingTab = primaryTabsRef.current?.find(t => t.id === selectedNote);
                 if (existingTab?.title) {
                     setNoteTitle(existingTab.title);
                 }
@@ -1414,7 +1520,6 @@ const NoteEditor = ({
 
                     const noteContent = result?.note?.content || '';
                     const loadedTitle = result?.note?.title || '';
-                    currentLoadedNoteIdRef.current = selectedNote;
 
                     contentRef.current = noteContent;
                     setContent(noteContent);
@@ -1426,7 +1531,6 @@ const NoteEditor = ({
                     setLastSavedAt(result?.note?.updatedAt ? new Date(result.note.updatedAt) : null);
                     setIsDirty(false);
 
-                    // 写入/刷新内存缓存
                     noteContentCacheRef.current.set(selectedNote, {
                         content: noteContent,
                         lastSavedContent: noteContent,
@@ -1460,7 +1564,7 @@ const NoteEditor = ({
         return () => {
             mounted = false;
         };
-    }, [selectedNote, primaryTabs, updateTabTitle]);
+    }, [selectedNote, updateTabTitle]);
 
     const handleChange = value => {
         contentRef.current = value;
@@ -1606,9 +1710,19 @@ const NoteEditor = ({
     const moreMenu = {
         items: [
             {
-                key: 'share',
-                icon: <ShareAltOutlined />,
-                label: '分享当前笔记'
+                key: 'pdf',
+                icon: <FilePdfOutlined style={{ color: '#dc2626' }} />,
+                label: '导出 PDF 文档 (.pdf)'
+            },
+            {
+                key: 'image',
+                icon: <PictureOutlined style={{ color: '#2563eb' }} />,
+                label: '导出高清长图 (.png)'
+            },
+            {
+                key: 'zip',
+                icon: <FileZipOutlined style={{ color: '#d97706' }} />,
+                label: '导出离线归档包 (.zip)'
             },
             {
                 type: 'divider'
@@ -1622,15 +1736,29 @@ const NoteEditor = ({
                 key: 'html',
                 icon: <ExportOutlined />,
                 label: '导出 HTML (.html)'
+            },
+            {
+                type: 'divider'
+            },
+            {
+                key: 'share',
+                icon: <ShareAltOutlined />,
+                label: '分享当前笔记'
             }
         ],
         onClick: ({ key }) => {
-            if (key === 'share') {
-                handleShareClick();
+            if (key === 'pdf') {
+                handleExportPdf();
+            } else if (key === 'image') {
+                handleExportLongImage();
+            } else if (key === 'zip') {
+                handleExportZip();
             } else if (key === 'markdown') {
                 handleExportMarkdown();
             } else if (key === 'html') {
                 handleExportHtml();
+            } else if (key === 'share') {
+                handleShareClick();
             }
         }
     };
@@ -1816,6 +1944,15 @@ const NoteEditor = ({
                         onClick={() => setLocalGraphVisible(true)}
                     />
                 </Tooltip>
+                <Tooltip title={isCompanionPinned ? '收起语义与双链伴侣副栏' : '展开语义与双链伴侣副栏'}>
+                    <Button
+                        className="toolbar-tool-btn"
+                        type={isCompanionPinned ? 'primary' : 'text'}
+                        icon={<PushpinOutlined />}
+                        disabled={!selectedNote}
+                        onClick={() => setIsCompanionPinned(!isCompanionPinned)}
+                    />
+                </Tooltip>
                 <Tooltip title={zenMode ? '退出沉浸模式 (Esc)' : '专注沉浸模式 (Ctrl+Shift+F)'}>
                     <Button
                         className="toolbar-tool-btn"
@@ -1877,6 +2014,16 @@ const NoteEditor = ({
                         AI 创作助手
                     </Button>
                 </Dropdown>
+                <Tooltip title="全库 RAG 知识库智能问答">
+                    <Button
+                        className="rag-toolbar-btn"
+                        type="default"
+                        icon={<RobotOutlined />}
+                        onClick={() => setRagDrawerVisible(true)}
+                    >
+                        知识库问答
+                    </Button>
+                </Tooltip>
                 <Button
                     className="save-btn"
                     type="primary"
@@ -1998,6 +2145,22 @@ const NoteEditor = ({
                         <Button type="primary" onClick={onCreateNote}>新建笔记</Button>
                     </Empty>
                 </div>
+                <RAGChatDrawer
+                    visible={ragDrawerVisible}
+                    onClose={() => setRagDrawerVisible(false)}
+                    currentNoteId={selectedNote}
+                    currentNoteTitle={noteTitle}
+                    currentNotebookId={selectedNotebook?._id || selectedNotebook?.id}
+                    currentNotebookName={selectedNotebook?.name}
+                    onNavigateNote={noteId => {
+                        if (openTab) {
+                            openTab(noteId);
+                        } else if (onSelectNote) {
+                            onSelectNote(noteId);
+                        }
+                        setRagDrawerVisible(false);
+                    }}
+                />
             </div>
         );
     }
@@ -2112,6 +2275,17 @@ const NoteEditor = ({
                                                     noteTitle={noteTitle}
                                                     onNavigateNote={onSelectNote}
                                                     onOpenLocalGraph={() => setLocalGraphVisible(true)}
+                                                    onInsertText={insertTextAtCursor}
+                                                    onOpenSplitNote={targetNoteId => {
+                                                        if (secondaryPinned) {
+                                                            message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                                                            return;
+                                                        }
+                                                        setSecondaryNoteId(targetNoteId);
+                                                        setSplitActive(true);
+                                                    }}
+                                                    isPinned={false}
+                                                    onTogglePin={() => setIsCompanionPinned(true)}
                                                 />
                                             </div>
                                             <div className="bytemd-status preview-status-bar">
@@ -2199,6 +2373,26 @@ const NoteEditor = ({
                     )}
                 </div>
 
+                {isCompanionPinned && (
+                    <BacklinksPanel
+                        noteId={selectedNote}
+                        noteTitle={noteTitle}
+                        onNavigateNote={onSelectNote}
+                        onOpenLocalGraph={() => setLocalGraphVisible(true)}
+                        onInsertText={insertTextAtCursor}
+                        onOpenSplitNote={targetNoteId => {
+                            if (secondaryPinned) {
+                                message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                                return;
+                            }
+                            setSecondaryNoteId(targetNoteId);
+                            setSplitActive(true);
+                        }}
+                        isPinned={true}
+                        onTogglePin={() => setIsCompanionPinned(false)}
+                    />
+                )}
+
                 <SelectionCopyBubble
                     containerRef={editorContainerRef}
                     editorContextRef={editorContextRef}
@@ -2210,12 +2404,23 @@ const NoteEditor = ({
             </div>
 
             {statusAnchorEl && createPortal(renderSaveStatus(), statusAnchorEl)}
-            {backlinksAnchorEl && createPortal(
+            {backlinksAnchorEl && !isCompanionPinned && createPortal(
                 <BacklinksPanel
                     noteId={selectedNote}
                     noteTitle={noteTitle}
                     onNavigateNote={onSelectNote}
                     onOpenLocalGraph={() => setLocalGraphVisible(true)}
+                    onInsertText={insertTextAtCursor}
+                    onOpenSplitNote={targetNoteId => {
+                        if (secondaryPinned) {
+                            message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                            return;
+                        }
+                        setSecondaryNoteId(targetNoteId);
+                        setSplitActive(true);
+                    }}
+                    isPinned={false}
+                    onTogglePin={() => setIsCompanionPinned(true)}
                 />,
                 backlinksAnchorEl
             )}
@@ -2357,6 +2562,23 @@ const NoteEditor = ({
                     }
                     setSecondaryNoteId(targetNoteId);
                     setSplitActive(true);
+                }}
+            />
+
+            <RAGChatDrawer
+                visible={ragDrawerVisible}
+                onClose={() => setRagDrawerVisible(false)}
+                currentNoteId={selectedNote}
+                currentNoteTitle={noteTitle}
+                currentNotebookId={selectedNotebook?._id || selectedNotebook?.id}
+                currentNotebookName={selectedNotebook?.name}
+                onNavigateNote={noteId => {
+                    if (openTab) {
+                        openTab(noteId);
+                    } else if (onSelectNote) {
+                        onSelectNote(noteId);
+                    }
+                    setRagDrawerVisible(false);
                 }}
             />
         </div>

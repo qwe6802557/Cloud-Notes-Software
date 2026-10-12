@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { getKnowledgeGraph, suggestNoteLinks } from '@/api/notes';
+import { getSemanticGraph } from '@/api/rag';
 import {
     ApartmentOutlined,
     ZoomInOutlined,
@@ -37,6 +38,10 @@ const KnowledgeGraph = ({
     const [searchKeyword, setSearchKeyword] = useState('');
     const [physicsParams, setPhysicsParams] = useState(DEFAULT_SETTINGS);
     const [isFullscreen, setIsFullscreen] = useState(false);
+    const [semanticGravityEnabled, setSemanticGravityEnabled] = useState(false);
+    const [semanticThreshold, setSemanticThreshold] = useState(0.70);
+    const [semanticLinksCount, setSemanticLinksCount] = useState(0);
+    const simulationSemanticLinksRef = useRef([]);
 
     // 交互状态 Refs（避免每帧重触发 React 渲染）
     const transformRef = useRef({ x: 0, y: 0, scale: 1 });
@@ -52,6 +57,47 @@ const KnowledgeGraph = ({
     const [tooltipInfo, setTooltipInfo] = useState(null);
     const [nodeSnippets, setNodeSnippets] = useState({});
     const snippetCacheRef = useRef(new Map());
+
+    // 拉取全库语义连线并映射到模拟节点
+    const fetchSemanticEdges = useCallback(async (currentNodes = simulationNodesRef.current) => {
+        if (!semanticGravityEnabled) {
+            simulationSemanticLinksRef.current = [];
+            setSemanticLinksCount(0);
+            return;
+        }
+        try {
+            const res = await getSemanticGraph({ threshold: semanticThreshold });
+            const rawEdges = res?.data || res || [];
+            const nodeById = new Map();
+            currentNodes.forEach(n => nodeById.set(n.id, n));
+
+            const validLinks = rawEdges
+                .map(edge => {
+                    const sourceNode = nodeById.get(edge.source);
+                    const targetNode = nodeById.get(edge.target);
+                    if (!sourceNode || !targetNode) return null;
+                    return {
+                        source: sourceNode,
+                        target: targetNode,
+                        similarity: edge.similarity
+                    };
+                })
+                .filter(Boolean);
+
+            simulationSemanticLinksRef.current = validLinks;
+            setSemanticLinksCount(validLinks.length);
+            alphaRef.current = Math.max(alphaRef.current, 0.45);
+        } catch {
+            simulationSemanticLinksRef.current = [];
+            setSemanticLinksCount(0);
+        }
+    }, [semanticGravityEnabled, semanticThreshold]);
+
+    useEffect(() => {
+        if (simulationNodesRef.current.length > 0) {
+            fetchSemanticEdges(simulationNodesRef.current);
+        }
+    }, [fetchSemanticEdges]);
 
     // 拉取图谱数据
     const fetchGraph = useCallback(async () => {
@@ -116,6 +162,13 @@ const KnowledgeGraph = ({
             setGraphData(data);
             alphaRef.current = 1.0;
 
+            if (semanticGravityEnabled) {
+                fetchSemanticEdges(nodes);
+            } else {
+                simulationSemanticLinksRef.current = [];
+                setSemanticLinksCount(0);
+            }
+
             // 居中画布视口
             transformRef.current = {
                 x: width / 2,
@@ -127,7 +180,7 @@ const KnowledgeGraph = ({
         } finally {
             setLoading(false);
         }
-    }, [selectedNotebook, focusNoteId, isLocalMode]);
+    }, [selectedNotebook, focusNoteId, isLocalMode, semanticGravityEnabled, fetchSemanticEdges]);
 
     useEffect(() => {
         fetchGraph();
@@ -225,6 +278,32 @@ const KnowledgeGraph = ({
                     }
                 }
 
+                // 语义引力弹簧 (微弱吸引使高相似度节点自然聚成星团)
+                const sLinks = simulationSemanticLinksRef.current;
+                if (semanticGravityEnabled && sLinks.length > 0) {
+                    const kSemanticSpring = 0.022;
+                    for (let i = 0; i < sLinks.length; i++) {
+                        const { source, target, similarity = 0.7 } = sLinks[i];
+                        const dx = target.x - source.x;
+                        const dy = target.y - source.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+                        const idealDist = linkDistance * (1.15 - Math.min(similarity, 0.95) * 0.45);
+                        const force = (dist - idealDist) * kSemanticSpring * alpha;
+                        const fx = (dx / dist) * force;
+                        const fy = (dy / dist) * force;
+
+                        if (source !== dragNodeRef.current) {
+                            source.vx += fx;
+                            source.vy += fy;
+                        }
+                        if (target !== dragNodeRef.current) {
+                            target.vx -= fx;
+                            target.vy -= fy;
+                        }
+                    }
+                }
+
                 // 中心微弱向心力 (保持在视野原点周围)
                 for (let i = 0; i < nodes.length; i++) {
                     const n = nodes[i];
@@ -252,15 +331,52 @@ const KnowledgeGraph = ({
             // 检查当前悬停节点及其关联边
             const hoverNode = hoverNodeRef.current;
             const connectedNodeIds = new Set();
+            const sLinks = simulationSemanticLinksRef.current;
             if (hoverNode) {
                 connectedNodeIds.add(hoverNode.id);
                 links.forEach(l => {
                     if (l.source.id === hoverNode.id) connectedNodeIds.add(l.target.id);
                     if (l.target.id === hoverNode.id) connectedNodeIds.add(l.source.id);
                 });
+                if (semanticGravityEnabled && sLinks.length > 0) {
+                    sLinks.forEach(sl => {
+                        if (sl.source.id === hoverNode.id) connectedNodeIds.add(sl.target.id);
+                        if (sl.target.id === hoverNode.id) connectedNodeIds.add(sl.source.id);
+                    });
+                }
             }
 
-            // 3. 绘制连线
+            // 3.1 绘制语义微光虚线
+            if (semanticGravityEnabled && sLinks.length > 0) {
+                ctx.save();
+                ctx.setLineDash([4 / t.scale, 4 / t.scale]);
+                for (let i = 0; i < sLinks.length; i++) {
+                    const { source, target, similarity = 0.7 } = sLinks[i];
+                    const isHighlighted = hoverNode && (source.id === hoverNode.id || target.id === hoverNode.id);
+
+                    ctx.beginPath();
+                    ctx.moveTo(source.x, source.y);
+                    ctx.lineTo(target.x, target.y);
+
+                    if (isHighlighted) {
+                        ctx.strokeStyle = '#8b5cf6';
+                        ctx.lineWidth = 2.0 / t.scale;
+                        ctx.globalAlpha = 0.95;
+                    } else if (hoverNode) {
+                        ctx.strokeStyle = '#c4b5fd';
+                        ctx.lineWidth = 1.0 / t.scale;
+                        ctx.globalAlpha = 0.12;
+                    } else {
+                        ctx.strokeStyle = '#8b5cf6';
+                        ctx.lineWidth = 1.2 / t.scale;
+                        ctx.globalAlpha = Math.min(0.65, Math.max(0.18, (similarity - 0.5) * 1.2));
+                    }
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            // 3.2 绘制显式双向连线
             for (let i = 0; i < links.length; i++) {
                 const { source, target } = links[i];
                 const isHighlighted =
@@ -425,7 +541,7 @@ const KnowledgeGraph = ({
                 cancelAnimationFrame(animFrameRef.current);
             }
         };
-    }, [physicsParams, focusNoteId]);
+    }, [physicsParams, focusNoteId, semanticGravityEnabled]);
 
     // 命中测试：寻找鼠标指针下的节点
     const findNodeUnderMouse = useCallback(
@@ -691,7 +807,8 @@ const KnowledgeGraph = ({
                         <ApartmentOutlined className="icon" />
                         <span>{isLocalMode ? '局部关系雷达' : '知识网络图谱'}</span>
                         <Tag className="stats-tag" color="blue">
-                            {totalNodesCount} 节点 · {totalLinksCount} 关联
+                            {totalNodesCount} 节点 · {totalLinksCount} 显式双链
+                            {semanticGravityEnabled && ` · ${semanticLinksCount} 语义引力`}
                         </Tag>
                     </div>
 
@@ -714,6 +831,23 @@ const KnowledgeGraph = ({
                 </div>
 
                 <div className="toolbar-right">
+                    <Tooltip title={semanticGravityEnabled ? '关闭语义引力聚类' : '开启语义引力聚类（基于切片向量自动聚类并绘制微光虚线）'}>
+                        <Button
+                            className={`tool-btn semantic-gravity-btn ${semanticGravityEnabled ? 'is-active' : ''}`}
+                            size="small"
+                            onClick={() => {
+                                setSemanticGravityEnabled(prev => !prev);
+                                alphaRef.current = 0.6;
+                            }}
+                        >
+                            <span className="gravity-icon">✨</span>
+                            <span className="gravity-label">语义引力</span>
+                            {semanticGravityEnabled && semanticLinksCount > 0 && (
+                                <span className="gravity-count">({semanticLinksCount})</span>
+                            )}
+                        </Button>
+                    </Tooltip>
+
                     <Input
                         className="search-input"
                         placeholder="检索节点定位..."
@@ -801,6 +935,36 @@ const KnowledgeGraph = ({
                                         checked={physicsParams.hideOrphans}
                                         onChange={v => setPhysicsParams(prev => ({ ...prev, hideOrphans: v }))}
                                     />
+                                </div>
+                                <div className="param-item" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #e2e8f0' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <span style={{ fontSize: 13, fontWeight: 500, color: '#475569' }}>✨ 语义引力聚类</span>
+                                        <Switch
+                                            size="small"
+                                            checked={semanticGravityEnabled}
+                                            onChange={v => {
+                                                setSemanticGravityEnabled(v);
+                                                alphaRef.current = 0.6;
+                                            }}
+                                        />
+                                    </div>
+                                    {semanticGravityEnabled && (
+                                        <div style={{ marginTop: 8 }}>
+                                            <div className="label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                <span>相似度阈值</span>
+                                                <span style={{ color: '#8b5cf6', fontWeight: 600 }}>{Math.round(semanticThreshold * 100)}%</span>
+                                            </div>
+                                            <Slider
+                                                min={50}
+                                                max={90}
+                                                value={Math.round(semanticThreshold * 100)}
+                                                onChange={v => setSemanticThreshold(v / 100)}
+                                            />
+                                            <div style={{ fontSize: 11, color: '#94a3b8', textAlign: 'right' }}>
+                                                发现 {semanticLinksCount} 条语义共鸣虚线
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         }
@@ -900,10 +1064,10 @@ const KnowledgeGraph = ({
             )}
 
             {/* 笔记本分类色彩图例 */}
-            {!isLocalMode && graphData.notebooks?.length > 0 && (
+            {!isLocalMode && (graphData.notebooks?.length > 0 || semanticGravityEnabled) && (
                 <div className="notebook-legend">
                     <span className="legend-label">图例:</span>
-                    {graphData.notebooks.slice(0, 8).map(nb => (
+                    {(graphData.notebooks || []).slice(0, 8).map(nb => (
                         <div key={nb.id} className="legend-item">
                             <span
                                 className="color-dot"
@@ -912,6 +1076,12 @@ const KnowledgeGraph = ({
                             <span className="name">{nb.name}</span>
                         </div>
                     ))}
+                    {semanticGravityEnabled && (
+                        <div className="legend-item semantic-legend-item">
+                            <span className="dashed-indicator" />
+                            <span className="name">语义微光 ({semanticLinksCount})</span>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

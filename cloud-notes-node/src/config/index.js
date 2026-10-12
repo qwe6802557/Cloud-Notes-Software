@@ -171,6 +171,7 @@ module.exports = {
     ai: {
         defaultApiKey: process.env.AI_API_KEY || 'g2a_7825305fb3e4_DceMuKxe9NK1FPGTfF9qi7KSPpoMLCio',
         defaultBaseUrl: process.env.AI_BASE_URL || 'http://127.0.0.1:8000/v1',
-        defaultModel: process.env.AI_MODEL || 'grok-chat-fast'
+        defaultModel: process.env.AI_MODEL || 'grok-chat-fast',
+        defaultEmbeddingModel: process.env.AI_EMBEDDING_MODEL || 'text-embedding-3-small'
     }
 };

@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as notesApi from '../../api/notesApi';
 import { Note, Notebook } from '../../api/types';
 import { Config } from '../../constants/Config';
+import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 
 export default function NotesScreen() {
   const router = useRouter();
@@ -27,6 +28,7 @@ export default function NotesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showRAGModal, setShowRAGModal] = useState(false);
 
   // 加载数据
   const loadData = useCallback(async (isRefresh = false, overrideNbId?: string | null) => {
@@ -237,22 +239,32 @@ export default function NotesScreen() {
 
   return (
     <View style={styles.container}>
-      {/* 顶部搜索栏 */}
-      <View style={styles.searchBar}>
-        <Ionicons name="search" size={18} color="#94a3b8" style={styles.searchIcon} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="搜索笔记标题或内容..."
-          placeholderTextColor="#94a3b8"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          clearButtonMode="while-editing"
-        />
-        {searchQuery.length > 0 && (
-          <TouchableOpacity onPress={() => setSearchQuery('')}>
-            <Ionicons name="close-circle" size={18} color="#94a3b8" />
-          </TouchableOpacity>
-        )}
+      {/* 顶部搜索与知识库问答栏 */}
+      <View style={styles.searchRow}>
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={18} color="#94a3b8" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="搜索笔记标题或内容..."
+            placeholderTextColor="#94a3b8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            clearButtonMode="while-editing"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={18} color="#94a3b8" />
+            </TouchableOpacity>
+          )}
+        </View>
+        <TouchableOpacity
+          style={styles.ragAskBtn}
+          onPress={() => setShowRAGModal(true)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="hardware-chip-outline" size={16} color="#2563eb" />
+          <Text style={styles.ragAskBtnText}>知识库</Text>
+        </TouchableOpacity>
       </View>
 
       {/* 分类过滤器条 */}
@@ -319,6 +331,13 @@ export default function NotesScreen() {
       >
         <Ionicons name="add" size={30} color="#ffffff" />
       </TouchableOpacity>
+
+      <RAGKnowledgeModal
+        visible={showRAGModal}
+        onClose={() => setShowRAGModal(false)}
+        currentNotebookId={activeNotebookId || undefined}
+        currentNotebookName={notebooks.find(n => n._id === activeNotebookId)?.title}
+      />
     </View>
   );
 }
@@ -328,13 +347,19 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8fafc',
   },
-  searchBar: {
+  searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffffff',
     marginHorizontal: 16,
     marginTop: 12,
     marginBottom: 8,
+    gap: 8,
+  },
+  searchBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
     paddingHorizontal: 14,
     height: 42,
     borderRadius: 12,
@@ -345,6 +370,27 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.03,
     shadowRadius: 8,
     elevation: 2,
+  },
+  ragAskBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    height: 42,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    gap: 4,
+    shadowColor: '#2563eb',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  ragAskBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1d4ed8',
   },
   searchIcon: {
     marginRight: 8,

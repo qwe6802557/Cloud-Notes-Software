@@ -1,0 +1,138 @@
+// 离屏渲染包装层，挂载到最底层以保障 html2canvas 准确捕获排版尺寸
+.cloud-note-long-image-export-wrapper {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 900px;
+    background: #f1f5f9;
+    padding: 32px 24px;
+    z-index: -9999;
+    pointer-events: none;
+    box-sizing: border-box;
+}
+
+// 便签卡片主体
+.cloud-note-long-image-card {
+    width: 850px;
+    margin: 0 auto;
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 36px 40px;
+    box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+    .long-image-card-header {
+        margin-bottom: 24px;
+
+        .long-image-title {
+            font-size: 26px;
+            font-weight: 700;
+            color: #0f172a;
+            margin: 0 0 12px 0;
+            line-height: 1.35;
+            word-break: break-word;
+        }
+
+        .long-image-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 13px;
+
+            .long-image-notebook {
+                background: #eff6ff;
+                color: #2563eb;
+                padding: 3px 10px;
+                border-radius: 9999px;
+                font-weight: 600;
+            }
+
+            .long-image-time {
+                color: #64748b;
+            }
+        }
+
+        .long-image-divider {
+            height: 1px;
+            background: #e2e8f0;
+            margin-top: 18px;
+        }
+    }
+
+    .long-image-body {
+        font-size: 14.5px;
+        line-height: 1.75;
+        color: #1e293b;
+
+        h1, h2, h3, h4, h5, h6 {
+            color: #0f172a;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+
+        pre {
+            background: #f8fafc !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 8px !important;
+            padding: 14px !important;
+            overflow: hidden !important;
+            white-space: pre-wrap !important;
+            word-break: break-all !important;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 14px 0;
+
+            th, td {
+                border: 1px solid #cbd5e1;
+                padding: 8px 12px;
+            }
+
+            th {
+                background: #f8fafc;
+            }
+        }
+
+        blockquote {
+            border-left: 4px solid #3b82f6;
+            background: #f8fafc;
+            padding: 8px 16px;
+            color: #475569;
+            margin: 14px 0;
+            border-radius: 0 6px 6px 0;
+        }
+
+        img {
+            max-width: 100% !important;
+            height: auto !important;
+            border-radius: 6px;
+        }
+    }
+
+    .long-image-footer {
+        margin-top: 36px;
+        padding-top: 18px;
+        border-top: 1px dashed #cbd5e1;
+
+        .long-image-brand {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+
+            .brand-logo {
+                font-weight: 700;
+                color: #2563eb;
+                font-size: 14px;
+                letter-spacing: 0.5px;
+            }
+
+            .brand-tagline {
+                font-size: 12px;
+                color: #94a3b8;
+            }
+        }
+    }
+}

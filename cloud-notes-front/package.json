@@ -24,6 +24,7 @@
     "cross-env": "^7.0.3",
     "diff": "^4.0.2",
     "highlight.js": "^11.8.0",
+    "html2canvas": "^1.4.1",
     "katex": "^0.16.8",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -98,9 +99,9 @@
   "devDependencies": {
     "@babel/plugin-proposal-private-property-in-object": "^7.21.11",
     "@craco/craco": "^7.1.0",
+    "craco-less": "^3.0.1",
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
-    "craco-less": "^3.0.1",
     "less": "^4.3.0",
     "less-loader": "^12.2.0"
   }

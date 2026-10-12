@@ -187,3 +187,13 @@ export const getNoteBacklinks = noteId => {
     });
 };
 
+// 导出笔记为独立离线 Zip 归档包
+export const exportNoteZip = noteId => {
+    return request({
+        url: `/notes/${noteId}/export-zip`,
+        method: 'get',
+        responseType: 'blob'
+    });
+};
+
+

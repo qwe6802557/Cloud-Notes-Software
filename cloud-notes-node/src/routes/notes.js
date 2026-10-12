@@ -17,6 +17,7 @@ router.get('/notebook/:notebookId', noteController.getNotebookNotes);
 router.post('/', validate(schemas.noteCreate, 'body'), noteController.createNote);
 router.get('/:id', noteController.getNote);
 router.get('/:id/backlinks', noteController.getNoteBacklinks);
+router.get('/:id/export-zip', noteController.exportNoteZip);
 router.put('/:id', noteController.updateNote);
 router.put('/:id/starred', noteController.toggleStarred);
 router.put('/:id/restore', noteController.restoreNote);

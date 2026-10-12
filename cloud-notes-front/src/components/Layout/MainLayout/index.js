@@ -11,11 +11,18 @@ import { clearAuth } from '@/utils/auth';
 import { getLoginPath } from '@/utils/request';
 import './index.less';
 
+const LAST_NOTE_KEY = 'cloud_notes_last_active_note_id';
+const LAST_NOTEBOOK_KEY = 'cloud_notes_last_active_notebook_id';
+
 const MainLayout = () => {
     const navTreeRef = useRef(null);
     const [collapsed, setCollapsed] = useState(false);
-    const [selectedNotebook, setSelectedNotebook] = useState(null);
-    const [selectedNote, setSelectedNote] = useState(null);
+    const [selectedNotebook, setSelectedNotebook] = useState(() => {
+        return localStorage.getItem(LAST_NOTEBOOK_KEY) || null;
+    });
+    const [selectedNote, setSelectedNote] = useState(() => {
+        return localStorage.getItem(LAST_NOTE_KEY) || null;
+    });
     const [editorDirty, setEditorDirty] = useState(false);
     const [editorSaving, setEditorSaving] = useState(false);
     const [savedNote, setSavedNote] = useState(null);
@@ -69,6 +76,12 @@ const MainLayout = () => {
         setSelectedNotebook(notebookId);
         setSelectedNote(null);
         setEditorDirty(false);
+        if (notebookId) {
+            localStorage.setItem(LAST_NOTEBOOK_KEY, notebookId);
+        } else {
+            localStorage.removeItem(LAST_NOTEBOOK_KEY);
+        }
+        localStorage.removeItem(LAST_NOTE_KEY);
         return true;
     }, [confirmLeaveUnsavedNote, selectedNotebook]);
 
@@ -85,6 +98,11 @@ const MainLayout = () => {
 
         setSelectedNote(noteId);
         setEditorDirty(false);
+        if (noteId) {
+            localStorage.setItem(LAST_NOTE_KEY, noteId);
+        } else {
+            localStorage.removeItem(LAST_NOTE_KEY);
+        }
         return true;
     }, [confirmLeaveUnsavedNote, editorDirty, selectedNote]);
 
