@@ -407,7 +407,8 @@ const NoteEditor = ({
     onSaveStateChange,
     onCreateNote,
     zenMode = false,
-    onToggleZenMode
+    onToggleZenMode,
+    activeView = 'notes'
 }) => {
     const [noteTitle, setNoteTitle] = useState('');
     const [content, setContent] = useState('');
@@ -1565,6 +1566,33 @@ const NoteEditor = ({
             mounted = false;
         };
     }, [selectedNote, updateTabTitle]);
+
+    // 切回全部笔记卡片时的 SWR 静默拉取与安全保稿策略
+    const prevActiveViewRef = useRef(activeView);
+    useEffect(() => {
+        if (prevActiveViewRef.current !== 'notes' && activeView === 'notes' && selectedNote) {
+            if (!isDirty) {
+                getNoteDetail(selectedNote).then(result => {
+                    const note = result?.note;
+                    if (note && note.content !== undefined) {
+                        const newContent = note.content || '';
+                        const newTitle = note.title || '';
+                        if (newContent !== contentRef.current || newTitle !== noteTitle) {
+                            contentRef.current = newContent;
+                            setContent(newContent);
+                            lastSavedContentRef.current = newContent;
+                            setNoteTitle(newTitle);
+                            if (newTitle) {
+                                updateTabTitle(selectedNote, newTitle);
+                            }
+                            setLastSavedAt(note.updatedAt ? new Date(note.updatedAt) : null);
+                        }
+                    }
+                }).catch(() => {});
+            }
+        }
+        prevActiveViewRef.current = activeView;
+    }, [activeView, isDirty, selectedNote, noteTitle, updateTabTitle]);
 
     const handleChange = value => {
         contentRef.current = value;

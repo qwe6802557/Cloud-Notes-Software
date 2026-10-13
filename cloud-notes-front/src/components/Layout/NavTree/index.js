@@ -186,6 +186,17 @@ const cloneTreeData = data => {
     }));
 };
 
+// 读取指定笔记本在本地持久化的目录展开状态
+const getInitialExpandedKeys = notebookId => {
+    if (!notebookId) return [];
+    try {
+        const raw = localStorage.getItem(`cloud_notes_expanded_folders_${notebookId}`);
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+};
+
 const NavTree = forwardRef(({
     collapsed,
     setCollapsed,
@@ -205,13 +216,36 @@ const NavTree = forwardRef(({
     const [viewType, setViewType] = useState('all');
     const [treeData, setTreeData] = useState([]);
     const [flatListNotes, setFlatListNotes] = useState([]);
-    const [expandedKeys, setExpandedKeys] = useState([]);
+    const [expandedKeys, setExpandedKeys] = useState(() => getInitialExpandedKeys(selectedNotebook));
     const [autoExpandParent, setAutoExpandParent] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [searchLoading, setSearchLoading] = useState(false);
     const [loading, setLoading] = useState(false);
     const [syncing, setSyncing] = useState(false);
+
+    // 树与各列表滚动容器引用及各卡片状态记忆
+    const treeScrollContainerRef = useRef(null);
+    const cardStateMapRef = useRef({
+        all: { expandedKeys: getInitialExpandedKeys(selectedNotebook), scrollTop: 0, treeData: null },
+        recent: { scrollTop: 0, list: null },
+        starred: { scrollTop: 0, list: null },
+        trash: { scrollTop: 0, list: null },
+        stash: { scrollTop: 0 },
+        graph: { scrollTop: 0 }
+    });
+
+    // 目录树展开节点持久化与卡片内存同步
+    useEffect(() => {
+        if (selectedNotebook && viewType === 'all' && Array.isArray(expandedKeys)) {
+            try {
+                localStorage.setItem(`cloud_notes_expanded_folders_${selectedNotebook}`, JSON.stringify(expandedKeys));
+            } catch {}
+            if (cardStateMapRef.current.all) {
+                cardStateMapRef.current.all.expandedKeys = expandedKeys;
+            }
+        }
+    }, [expandedKeys, selectedNotebook, viewType]);
 
     // 当父级视图与侧边栏激活标签双向联动
     useEffect(() => {
@@ -325,22 +359,35 @@ const NavTree = forwardRef(({
         }
     }, [selectedNotebook, formatTreeData]);
 
-    // 加载顶级树形笔记（仅拉取 parentId 为 null 的一级数据）
-    const loadNotebookTree = useCallback(async notebookId => {
+    // 加载笔记本树形数据（支持 SWR 静默拉取与展开状态保持）
+    const loadNotebookTree = useCallback(async (notebookId, isSilent = false) => {
         if (!notebookId) {
             return;
         }
-        setLoading(true);
+        if (!isSilent) {
+            setLoading(true);
+        }
         try {
-            const result = await getNotebookNotes(notebookId, { parentId: 'null' });
-            const rawNotes = result?.notes || [];
-            const formatted = formatTreeData(rawNotes);
+            const result = await getNotebookNotes(notebookId, { all: 'true' });
+            const rawTree = result?.tree || result?.notes || [];
+            const formatted = formatTreeData(rawTree);
             setTreeData(formatted);
-            setExpandedKeys([]); // 默认全部收起，提高初次加载与渲染性能
+            if (cardStateMapRef.current.all) {
+                cardStateMapRef.current.all.treeData = formatted;
+            }
+            // 恢复之前展开状态，若当前无展开记录则尝试读取持久化，绝不直接折叠
+            setExpandedKeys(prev => {
+                if (prev && prev.length > 0) return prev;
+                return getInitialExpandedKeys(notebookId);
+            });
         } catch {
-            message.error('加载目录树失败');
+            if (!isSilent) {
+                message.error('加载目录树失败');
+            }
         } finally {
-            setLoading(false);
+            if (!isSilent) {
+                setLoading(false);
+            }
         }
     }, [formatTreeData]);
 
@@ -352,6 +399,9 @@ const NavTree = forwardRef(({
             const rawTree = result?.tree || result?.notes || [];
             const formatted = formatTreeData(rawTree);
             setTreeData(formatted);
+            if (cardStateMapRef.current.all) {
+                cardStateMapRef.current.all.treeData = formatted;
+            }
             if (targetParentToExpand) {
                 setExpandedKeys(prev => Array.from(new Set([...prev, targetParentToExpand])));
             }
@@ -637,8 +687,10 @@ const NavTree = forwardRef(({
     }, [treeData, executeMoveNode]);
 
     // 加载系统辅助视图（最近/收藏/回收站）
-    const loadSystemListView = useCallback(async type => {
-        setLoading(true);
+    const loadSystemListView = useCallback(async (type, isSilent = false) => {
+        if (!isSilent) {
+            setLoading(true);
+        }
         try {
             let result;
             if (type === 'recent') {
@@ -648,11 +700,15 @@ const NavTree = forwardRef(({
             } else if (type === 'trash') {
                 result = await getDeletedNotes({ limit: 50 });
             }
-            setFlatListNotes(result?.notes || []);
+            const list = result?.notes || [];
+            setFlatListNotes(list);
+            if (cardStateMapRef.current[type]) {
+                cardStateMapRef.current[type].list = list;
+            }
         } catch {
-            message.error('加载列表失败');
+            if (!isSilent) message.error('加载列表失败');
         } finally {
-            setLoading(false);
+            if (!isSilent) setLoading(false);
         }
     }, []);
 
@@ -661,13 +717,42 @@ const NavTree = forwardRef(({
         loadNotebooks();
     }, [loadNotebooks, syncVersion]);
 
+    const prevViewTypeRef = useRef(viewType);
+    const prevNotebookRef = useRef(selectedNotebook);
+
     useEffect(() => {
+        const isSwitchingBackToAll = prevViewTypeRef.current !== 'all' && viewType === 'all';
+        const isSameNotebook = prevNotebookRef.current === selectedNotebook;
+
         if (viewType === 'all' && selectedNotebook) {
-            loadNotebookTree(selectedNotebook);
-        } else if (viewType !== 'all' && viewType !== 'stash') {
-            loadSystemListView(viewType);
+            if (isSwitchingBackToAll && isSameNotebook && treeData.length > 0) {
+                // SWR: 从其他卡片切回全部笔记时，静默后台探活拉取最新数据，绝不闪屏或重置已展开节点
+                loadNotebookTree(selectedNotebook, true);
+                if (cardStateMapRef.current.all?.scrollTop !== undefined && treeScrollContainerRef.current) {
+                    requestAnimationFrame(() => {
+                        treeScrollContainerRef.current.scrollTop = cardStateMapRef.current.all.scrollTop;
+                    });
+                }
+            } else {
+                loadNotebookTree(selectedNotebook, false);
+            }
+        } else if (viewType !== 'all' && viewType !== 'stash' && viewType !== 'graph') {
+            const hasCachedList = Array.isArray(cardStateMapRef.current[viewType]?.list);
+            if (hasCachedList) {
+                loadSystemListView(viewType, true);
+                if (cardStateMapRef.current[viewType]?.scrollTop !== undefined && treeScrollContainerRef.current) {
+                    requestAnimationFrame(() => {
+                        treeScrollContainerRef.current.scrollTop = cardStateMapRef.current[viewType].scrollTop;
+                    });
+                }
+            } else {
+                loadSystemListView(viewType, false);
+            }
         }
-    }, [viewType, selectedNotebook, loadNotebookTree, loadSystemListView, syncVersion]);
+
+        prevViewTypeRef.current = viewType;
+        prevNotebookRef.current = selectedNotebook;
+    }, [viewType, selectedNotebook, loadNotebookTree, loadSystemListView, syncVersion, treeData.length]);
 
     // 笔记本内全局服务端关键词搜索与防抖联动
     useEffect(() => {
@@ -821,10 +906,30 @@ const NavTree = forwardRef(({
                 return;
             }
         }
+
+        // 记忆离开前卡片的滚动高度与状态
+        if (treeScrollContainerRef.current) {
+            if (!cardStateMapRef.current[viewType]) {
+                cardStateMapRef.current[viewType] = {};
+            }
+            cardStateMapRef.current[viewType].scrollTop = treeScrollContainerRef.current.scrollTop;
+            if (viewType === 'all') {
+                cardStateMapRef.current.all.expandedKeys = expandedKeys;
+                cardStateMapRef.current.all.treeData = treeData;
+            }
+        }
+
         setViewType(key);
         if (onViewChange) {
             onViewChange(key === 'stash' ? 'stash' : key === 'graph' ? 'graph' : 'notes');
         }
+
+        // 恢复切入卡片的滚动位置
+        requestAnimationFrame(() => {
+            if (treeScrollContainerRef.current && cardStateMapRef.current[key]?.scrollTop !== undefined) {
+                treeScrollContainerRef.current.scrollTop = cardStateMapRef.current[key].scrollTop;
+            }
+        });
     };
 
     // 触发创建笔记对话框
@@ -1339,7 +1444,7 @@ const NavTree = forwardRef(({
                     </div>
 
                     {/* 树核心滚动区 */}
-                    <div className="tree-scroll-container">
+                    <div className="tree-scroll-container" ref={treeScrollContainerRef}>
                         {viewType === 'stash' ? (
                             <div style={{ padding: '36px 16px', textAlign: 'center' }}>
                                 <div style={{

@@ -4,30 +4,59 @@ import { useState, useEffect, useCallback, useRef } from 'react';
  * 多标签页工作区管理 Hook (支持主栏/副栏双独立标签栈、VS Code预览态、常驻态、脏数据提示)
  * 默认进入为空白态，用户点击或新建笔记时按需添加标签
  */
+const WORKSPACE_STORAGE_KEY = 'cloud_notes_tabs_workspace_v2';
+
+const loadSavedWorkspace = () => {
+    try {
+        const raw = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed?.primaryTabs)) {
+            return parsed;
+        }
+        return null;
+    } catch {
+        return null;
+    }
+};
+
 export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
     // 正在关闭的标签白名单，防止在 React 异步渲染间隙被再次意外创建
     const closingNoteIdsRef = useRef(new Set());
+    const initialWorkspace = useRef(loadSavedWorkspace()).current;
 
-    // 主屏与副屏标签数组: NoteTabItem[]，默认初始空白
-    const [primaryTabs, setPrimaryTabs] = useState([]);
-    const [primaryActiveId, setPrimaryActiveId] = useState(null);
+    // 主屏与副屏标签数组: NoteTabItem[]，支持本地持久化恢复
+    const [primaryTabs, setPrimaryTabs] = useState(() => initialWorkspace?.primaryTabs || []);
+    const [primaryActiveId, setPrimaryActiveId] = useState(() => initialWorkspace?.primaryActiveId || null);
 
-    const [secondaryTabs, setSecondaryTabs] = useState([]);
-    const [secondaryActiveId, setSecondaryActiveId] = useState(null);
+    const [secondaryTabs, setSecondaryTabs] = useState(() => initialWorkspace?.secondaryTabs || []);
+    const [secondaryActiveId, setSecondaryActiveId] = useState(() => initialWorkspace?.secondaryActiveId || null);
 
     // 当前获得焦点/活跃的分栏: 'primary' | 'secondary'
-    const [activePane, setActivePane] = useState('primary');
+    const [activePane, setActivePane] = useState(() => initialWorkspace?.activePane || 'primary');
 
     // 双栏分屏开关与比例
-    const [isSplitViewOpen, setIsSplitViewOpen] = useState(false);
-    const [splitPaneRatio, setSplitPaneRatio] = useState(50);
+    const [isSplitViewOpen, setIsSplitViewOpen] = useState(() => Boolean(initialWorkspace?.isSplitViewOpen));
+    const [splitPaneRatio, setSplitPaneRatio] = useState(() => initialWorkspace?.splitPaneRatio ?? 50);
 
-    // 清理历史残留的自动强行开启缓存
+    // 工作区标签栈持久化存储，保障 F5 刷新后无缝恢复
     useEffect(() => {
         try {
-            localStorage.removeItem('cloud_notes_tabs_workspace_v1');
+            if (primaryTabs.length > 0 || secondaryTabs.length > 0) {
+                localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify({
+                    primaryTabs,
+                    primaryActiveId,
+                    secondaryTabs,
+                    secondaryActiveId,
+                    activePane,
+                    isSplitViewOpen,
+                    splitPaneRatio
+                }));
+            } else {
+                localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+            }
         } catch {}
-    }, []);
+    }, [primaryTabs, primaryActiveId, secondaryTabs, secondaryActiveId, activePane, isSplitViewOpen, splitPaneRatio]);
 
     /**
      * 打开或激活一个笔记标签页

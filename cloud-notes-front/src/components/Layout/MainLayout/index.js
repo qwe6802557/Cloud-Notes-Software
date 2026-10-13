@@ -28,9 +28,16 @@ const MainLayout = () => {
     const [savedNote, setSavedNote] = useState(null);
     const [syncVersion, setSyncVersion] = useState(0);
     const [zenMode, setZenMode] = useState(false);
-    const [activeView, setActiveView] = useState('notes'); // 'notes' | 'stash'
+    const [activeView, setActiveView] = useState('notes'); // 'notes' | 'stash' | 'graph'
+    const [stashMounted, setStashMounted] = useState(false);
+    const [graphMounted, setGraphMounted] = useState(false);
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
     const [modal, contextHolder] = Modal.useModal();
+
+    useEffect(() => {
+        if (activeView === 'stash') setStashMounted(true);
+        if (activeView === 'graph') setGraphMounted(true);
+    }, [activeView]);
 
     const handleSaveNote = useCallback(async (noteId, content, meta = {}) => {
         const result = await updateNote(noteId, {
@@ -212,16 +219,18 @@ const MainLayout = () => {
                     onViewChange={setActiveView}
                 />
                 <Layout.Content className="main-content">
-                    {activeView === 'stash' ? (
-                        <FileStashBoard />
-                    ) : activeView === 'graph' ? (
-                        <KnowledgeGraph
-                            onSelectNote={noteId => {
-                                setActiveView('notes');
-                                handleNoteChange(noteId);
-                            }}
-                        />
-                    ) : (
+                    <div
+                        className="main-view-pane"
+                        style={{
+                            display: activeView === 'notes' ? 'flex' : 'none',
+                            flex: 1,
+                            height: '100%',
+                            width: '100%',
+                            flexDirection: 'column',
+                            minWidth: 0,
+                            overflow: 'hidden'
+                        }}
+                    >
                         <NoteEditor
                             selectedNote={selectedNote}
                             selectedNotebook={selectedNotebook}
@@ -232,8 +241,46 @@ const MainLayout = () => {
                             onCreateNote={handleCreateNote}
                             zenMode={zenMode}
                             onToggleZenMode={setZenMode}
+                            activeView={activeView}
                         />
-                    )}
+                    </div>
+                    <div
+                        className="main-view-pane"
+                        style={{
+                            display: activeView === 'stash' ? 'flex' : 'none',
+                            flex: 1,
+                            height: '100%',
+                            width: '100%',
+                            flexDirection: 'column',
+                            minWidth: 0,
+                            overflow: 'hidden'
+                        }}
+                    >
+                        {(activeView === 'stash' || stashMounted) && (
+                            <FileStashBoard />
+                        )}
+                    </div>
+                    <div
+                        className="main-view-pane"
+                        style={{
+                            display: activeView === 'graph' ? 'flex' : 'none',
+                            flex: 1,
+                            height: '100%',
+                            width: '100%',
+                            flexDirection: 'column',
+                            minWidth: 0,
+                            overflow: 'hidden'
+                        }}
+                    >
+                        {(activeView === 'graph' || graphMounted) && (
+                            <KnowledgeGraph
+                                onSelectNote={noteId => {
+                                    setActiveView('notes');
+                                    handleNoteChange(noteId);
+                                }}
+                            />
+                        )}
+                    </div>
                 </Layout.Content>
             </Layout>
 
