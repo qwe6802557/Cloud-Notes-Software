@@ -905,6 +905,36 @@ exports.suggestNoteLinks = asyncHandler(async (req, res) => {
     });
 });
 
+// 获取知识库轻量词典（供前端 Ghost Link 主动式概念感知毫秒级匹配）
+exports.getNoteDictionary = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+
+    const notes = await Note.find({
+        userId,
+        isDeleted: false,
+        type: 'note'
+    })
+        .select('_id title notebookId updatedAt')
+        .populate('notebookId', 'name color')
+        .sort({ updatedAt: -1 });
+
+    res.status(200).json({
+        code: 200,
+        message: '获取知识库词典成功',
+        data: {
+            dictionary: notes
+                .filter(n => n.title && n.title.trim().length >= 2)
+                .map(n => ({
+                    _id: n._id,
+                    title: n.title.trim(),
+                    notebookName: n.notebookId?.name || '默认笔记本',
+                    notebookColor: n.notebookId?.color || '#3b82f6',
+                    updatedAt: n.updatedAt
+                }))
+        }
+    });
+});
+
 // 导出笔记为独立离线 Zip 归档包（含相对路径重写与本地媒体资产打包）
 exports.exportNoteZip = asyncHandler(async (req, res, next) => {
     const { id } = req.params;

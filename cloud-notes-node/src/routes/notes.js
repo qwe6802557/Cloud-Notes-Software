@@ -13,6 +13,7 @@ router.get('/starred', noteController.getStarredNotes);
 router.get('/deleted', noteController.getDeletedNotes);
 router.get('/graph', noteController.getKnowledgeGraph);
 router.get('/suggest-links', noteController.suggestNoteLinks);
+router.get('/dictionary', noteController.getNoteDictionary);
 router.get('/notebook/:notebookId', noteController.getNotebookNotes);
 router.post('/', validate(schemas.noteCreate, 'body'), noteController.createNote);
 router.get('/:id', noteController.getNote);

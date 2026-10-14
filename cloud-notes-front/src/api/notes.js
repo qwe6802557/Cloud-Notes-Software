@@ -179,6 +179,14 @@ export const suggestNoteLinks = keyword => {
     });
 };
 
+// 获取知识库轻量词典（供 Ghost Link 主动概念感知毫秒级离线匹配）
+export const getNoteDictionary = () => {
+    return request({
+        url: '/notes/dictionary',
+        method: 'get'
+    });
+};
+
 // 获取单篇笔记的反向链接 (Backlinks)
 export const getNoteBacklinks = noteId => {
     return request({

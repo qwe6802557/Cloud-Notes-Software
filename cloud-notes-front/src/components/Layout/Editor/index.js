@@ -37,7 +37,8 @@ import {
     SyncOutlined,
     ApartmentOutlined,
     SplitCellsOutlined,
-    PushpinOutlined
+    PushpinOutlined,
+    LinkOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -63,6 +64,7 @@ import lazyImagePlugin from './plugins/lazyImagePlugin';
 import wikiLinkPlugin from './plugins/wikiLinkPlugin';
 import LinkSuggestPopup from './LinkSuggestPopup';
 import SlashCommandPopup from './SlashCommandPopup';
+import GhostLink from './GhostLink';
 import BacklinksPanel from './BacklinksPanel';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import WikiLinkHoverCard from './WikiLinkHoverCard';
@@ -430,6 +432,7 @@ const NoteEditor = ({
     const [aiModalAction, setAiModalAction] = useState('full_summary');
     const [ragDrawerVisible, setRagDrawerVisible] = useState(false);
     const [isCompanionPinned, setIsCompanionPinned] = useState(false);
+    const [ghostLinkEnabled, setGhostLinkEnabled] = useState(true);
     const [imagePreview, setImagePreview] = useState({
         visible: false,
         current: 0,
@@ -2073,6 +2076,16 @@ const NoteEditor = ({
                         />
                     </Tooltip>
                 </Dropdown>
+                <Tooltip title={ghostLinkEnabled ? '幽灵双链感知 (已开启，点击可关闭)' : '幽灵双链感知 (已关闭，点击开启)'}>
+                    <Button
+                        className="toolbar-tool-btn"
+                        type="text"
+                        style={{ color: ghostLinkEnabled ? '#7c3aed' : '#94a3b8' }}
+                        icon={<LinkOutlined />}
+                        onClick={() => setGhostLinkEnabled(prev => !prev)}
+                        disabled={!selectedNote}
+                    />
+                </Tooltip>
                 <Tooltip title="插入本地图片">
                     <Button
                         className="toolbar-tool-btn"
@@ -2434,6 +2447,13 @@ const NoteEditor = ({
                     containerRef={editorContainerRef}
                     editorContextRef={editorContextRef}
                     noteTitle={noteTitle}
+                />
+                <GhostLink
+                    containerRef={editorContainerRef}
+                    editorContextRef={editorContextRef}
+                    noteTitle={noteTitle}
+                    noteId={selectedNote}
+                    enabled={ghostLinkEnabled}
                 />
             </div>
 
