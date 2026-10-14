@@ -553,9 +553,13 @@
         padding: 16px 24px;
         background-color: #fff;
         overflow: auto;
+        display: flex !important;
+        flex-direction: column !important;
+        box-sizing: border-box !important;
 
         .markdown-body {
-          padding-bottom: 200px; // 添加底部填充
+          flex-shrink: 0;
+          padding-bottom: 24px;
           font-family: var(--active-editor-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif);
           font-size: var(--active-editor-font-size, 16px);
           color: #262626;
@@ -640,6 +644,17 @@
             margin-right: 6px;
             position: relative;
             top: 2px;
+          }
+        }
+
+        .bytemd-backlinks-anchor {
+          margin-top: auto !important;
+          width: 100%;
+          flex-shrink: 0;
+          padding-top: 16px;
+
+          .backlinks-panel {
+            margin-top: 0;
           }
         }
       }
@@ -665,10 +680,16 @@
         overflow: auto;
         padding: 16px 24px;
         background-color: #fff;
+        display: flex !important;
+        flex-direction: column !important;
+        box-sizing: border-box !important;
 
         .markdown-body {
+          flex-shrink: 0;
+          width: 100%;
           max-width: 900px;
           margin: 0 auto;
+          padding-bottom: 24px;
           
           font-family: var(--active-editor-font, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif);
           font-size: var(--active-editor-font-size, 16px);
@@ -755,6 +776,15 @@
             position: relative;
             top: 2px;
           }
+        }
+
+        .backlinks-panel {
+          margin-top: auto !important;
+          width: 100%;
+          max-width: 900px;
+          margin-left: auto;
+          margin-right: auto;
+          flex-shrink: 0;
         }
       }
 
@@ -1478,14 +1508,18 @@
               overflow-y: auto !important;
               background: #fcfdfd;
               padding: 20px 28px;
+              display: flex !important;
+              flex-direction: column !important;
+              box-sizing: border-box !important;
 
               .markdown-body {
+                flex-shrink: 0;
                 font-family: var(--active-editor-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
                 font-size: var(--active-editor-font-size, 15px);
                 line-height: var(--editor-line-height, 1.75);
                 letter-spacing: var(--editor-letter-spacing, 0.015em);
                 color: #262626;
-                padding-bottom: 160px;
+                padding-bottom: 24px;
 
                 img {
                   max-width: 100%;
@@ -1494,6 +1528,17 @@
                   margin: 16px auto;
                   display: block;
                   cursor: zoom-in;
+                }
+              }
+
+              .bytemd-backlinks-anchor {
+                margin-top: auto !important;
+                width: 100%;
+                flex-shrink: 0;
+                padding-top: 16px;
+
+                .backlinks-panel {
+                  margin-top: 0;
                 }
               }
             }
