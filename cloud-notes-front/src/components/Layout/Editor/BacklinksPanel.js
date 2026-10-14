@@ -186,44 +186,6 @@ const BacklinksPanel = ({
                         <ThunderboltOutlined />
                     </span>
                     <span className="panel-title">{isPinned ? '智能知识伴侣' : '双链与智能知识网络'}</span>
-                    <div className="companion-tabs" onClick={e => e.stopPropagation()}>
-                        <button
-                            type="button"
-                            className={`tab-pill-btn ${activeTab === 'semantic' ? 'active' : ''}`}
-                            onClick={() => {
-                                setActiveTab('semantic');
-                                if (!expanded) setExpanded(true);
-                            }}
-                        >
-                            <ClusterOutlined className="tab-icon" style={{ color: '#7c3aed' }} />
-                            <span>语义推荐</span>
-                            {totalSemanticCount > 0 && <span className="tab-badge">{totalSemanticCount}</span>}
-                        </button>
-                        <button
-                            type="button"
-                            className={`tab-pill-btn ${activeTab === 'links' ? 'active' : ''}`}
-                            onClick={() => {
-                                setActiveTab('links');
-                                if (!expanded) setExpanded(true);
-                            }}
-                        >
-                            <LinkOutlined className="tab-icon" style={{ color: '#0284c7' }} />
-                            <span>引用本文</span>
-                            {totalExplicitCount > 0 && <span className="tab-badge">{totalExplicitCount}</span>}
-                        </button>
-                        <button
-                            type="button"
-                            className={`tab-pill-btn ${activeTab === 'mentions' ? 'active' : ''}`}
-                            onClick={() => {
-                                setActiveTab('mentions');
-                                if (!expanded) setExpanded(true);
-                            }}
-                        >
-                            <SearchOutlined className="tab-icon" style={{ color: '#d97706' }} />
-                            <span>文本提及</span>
-                            {totalMentionsCount > 0 && <span className="tab-badge">{totalMentionsCount}</span>}
-                        </button>
-                    </div>
                 </div>
 
                 <div className="header-actions" onClick={e => e.stopPropagation()}>
@@ -276,7 +238,40 @@ const BacklinksPanel = ({
             </div>
 
             {(expanded || isPinned) && (
-                <div className="panel-body">
+                <>
+                    <div className="companion-tabs-bar" onClick={e => e.stopPropagation()}>
+                        <div className="companion-tabs">
+                            <button
+                                type="button"
+                                className={`tab-pill-btn ${activeTab === 'semantic' ? 'active' : ''}`}
+                                onClick={() => setActiveTab('semantic')}
+                            >
+                                <ClusterOutlined className="tab-icon" style={{ color: '#7c3aed' }} />
+                                <span>语义推荐</span>
+                                {totalSemanticCount > 0 && <span className="tab-badge">{totalSemanticCount}</span>}
+                            </button>
+                            <button
+                                type="button"
+                                className={`tab-pill-btn ${activeTab === 'links' ? 'active' : ''}`}
+                                onClick={() => setActiveTab('links')}
+                            >
+                                <LinkOutlined className="tab-icon" style={{ color: '#0284c7' }} />
+                                <span>引用本文</span>
+                                {totalExplicitCount > 0 && <span className="tab-badge">{totalExplicitCount}</span>}
+                            </button>
+                            <button
+                                type="button"
+                                className={`tab-pill-btn ${activeTab === 'mentions' ? 'active' : ''}`}
+                                onClick={() => setActiveTab('mentions')}
+                            >
+                                <SearchOutlined className="tab-icon" style={{ color: '#d97706' }} />
+                                <span>文本提及</span>
+                                {totalMentionsCount > 0 && <span className="tab-badge">{totalMentionsCount}</span>}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="panel-body">
                     <Spin spinning={loading || semanticLoading} size="small">
                         {activeTab === 'semantic' && (
                             <div className="semantic-tab-content">
@@ -545,6 +540,7 @@ const BacklinksPanel = ({
                         )}
                     </Spin>
                 </div>
+                </>
             )}
         </div>
     );
