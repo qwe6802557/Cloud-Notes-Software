@@ -2,9 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
   FlatList,
-  KeyboardAvoidingView,
+  Keyboard,
   Modal,
   Platform,
   ScrollView,
@@ -12,6 +11,8 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -67,6 +68,42 @@ export default function RAGKnowledgeModal({
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const listRef = useRef<FlatList>(null);
+
+  const { height: windowHeight } = useWindowDimensions();
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      const h = e?.endCoordinates?.height || 0;
+      setKeyboardHeight(h);
+      setTimeout(() => {
+        listRef.current?.scrollToEnd({ animated: true });
+      }, 50);
+    });
+
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) {
+      setKeyboardHeight(0);
+    }
+  }, [visible]);
+
+  const topMargin = Platform.OS === 'ios' ? 44 : 36;
+  const currentSheetHeight = keyboardHeight > 0
+    ? Math.min(windowHeight * 0.88, windowHeight - keyboardHeight - topMargin)
+    : windowHeight * 0.88;
 
   const loadStats = useCallback(async () => {
     try {
@@ -379,9 +416,25 @@ export default function RAGKnowledgeModal({
       onRequestClose={onClose}
     >
       <View style={styles.backdrop}>
-        <KeyboardAvoidingView
-          style={styles.sheetContainer}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        <TouchableWithoutFeedback
+          onPress={() => {
+            if (keyboardHeight > 0) {
+              Keyboard.dismiss();
+            } else {
+              onClose();
+            }
+          }}
+        >
+          <View style={StyleSheet.absoluteFill} />
+        </TouchableWithoutFeedback>
+        <View
+          style={[
+            styles.sheetContainer,
+            {
+              height: currentSheetHeight,
+              marginBottom: keyboardHeight,
+            },
+          ]}
         >
           {/* 顶部标题栏 */}
           <View style={styles.header}>
@@ -480,6 +533,8 @@ export default function RAGKnowledgeModal({
             renderItem={renderMessageItem}
             contentContainerStyle={styles.listContent}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             ListEmptyComponent={
               <View style={styles.emptyBox}>
                 <Ionicons name="bulb-outline" size={40} color="#cbd5e1" />
@@ -526,13 +581,11 @@ export default function RAGKnowledgeModal({
               </TouchableOpacity>
             )}
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </View>
     </Modal>
   );
 }
-
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const styles = StyleSheet.create({
   backdrop: {
@@ -541,7 +594,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheetContainer: {
-    height: SCREEN_HEIGHT * 0.88,
     backgroundColor: '#ffffff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
