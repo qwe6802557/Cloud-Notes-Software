@@ -1048,6 +1048,90 @@ const NoteEditor = ({
         syncContentState(`${contentRef.current}${separator}${text}`);
     }, [syncContentFromEditor, syncContentState]);
 
+    const weaveBacklinksToDocument = useCallback(
+        items => {
+            if (!Array.isArray(items) || items.length === 0) return;
+
+            const editorInstance = editorContextRef.current?.editor;
+            const currentDoc = editorInstance?.getValue ? editorInstance.getValue() : contentRef.current || '';
+
+            const unweavedItems = items.filter(item => {
+                if (!item?.title) return false;
+                return !currentDoc.includes(`[[${item.title}]]`);
+            });
+
+            if (unweavedItems.length === 0) {
+                message.info('所选笔记的反向双链已全部存在于当前正文中');
+                return;
+            }
+
+            const linesToInsert = unweavedItems
+                .map(item => {
+                    const cleanSnippet = (item.contextSnippet || '')
+                        .replace(/==([^=]+)==/g, '$1')
+                        .replace(/[\r\n]+/g, ' ')
+                        .trim();
+                    const snippetText = cleanSnippet ? ` - ${cleanSnippet}` : '';
+                    return `- [[${item.title}]]${snippetText}`;
+                })
+                .join('\n');
+
+            const sectionHeader = '### 🔗 反向回织';
+            const sectionIndex = currentDoc.indexOf(sectionHeader);
+
+            if (editorInstance?.posFromIndex && editorInstance?.replaceRange) {
+                if (sectionIndex !== -1) {
+                    const afterSection = currentDoc.slice(sectionIndex + sectionHeader.length);
+                    const nextSectionMatch = afterSection.search(/\n(?=#{1,3}\s|---\s*$)/);
+
+                    let insertIndex;
+                    let textToInsert;
+                    if (nextSectionMatch !== -1) {
+                        insertIndex = sectionIndex + sectionHeader.length + nextSectionMatch;
+                        textToInsert = `\n${linesToInsert}`;
+                    } else {
+                        insertIndex = currentDoc.length;
+                        const needsLeadingNewline = !currentDoc.endsWith('\n');
+                        textToInsert = `${needsLeadingNewline ? '\n' : ''}${linesToInsert}\n`;
+                    }
+                    const insertPos = editorInstance.posFromIndex(insertIndex);
+                    editorInstance.replaceRange(textToInsert, insertPos);
+                } else {
+                    const insertPos = editorInstance.posFromIndex(currentDoc.length);
+                    const padding = currentDoc.endsWith('\n\n') ? '' : currentDoc.endsWith('\n') ? '\n' : '\n\n';
+                    const textToInsert = `${padding}---\n${sectionHeader}\n${linesToInsert}\n`;
+                    editorInstance.replaceRange(textToInsert, insertPos);
+                }
+                syncContentFromEditor(editorInstance);
+                editorInstance.focus();
+            } else {
+                let nextContent = '';
+                if (sectionIndex !== -1) {
+                    const afterSection = currentDoc.slice(sectionIndex + sectionHeader.length);
+                    const nextSectionMatch = afterSection.search(/\n(?=#{1,3}\s|---\s*$)/);
+                    if (nextSectionMatch !== -1) {
+                        const insertIndex = sectionIndex + sectionHeader.length + nextSectionMatch;
+                        nextContent = currentDoc.slice(0, insertIndex) + `\n${linesToInsert}` + currentDoc.slice(insertIndex);
+                    } else {
+                        const needsLeadingNewline = !currentDoc.endsWith('\n');
+                        nextContent = `${currentDoc}${needsLeadingNewline ? '\n' : ''}${linesToInsert}\n`;
+                    }
+                } else {
+                    const padding = currentDoc.endsWith('\n\n') ? '' : currentDoc.endsWith('\n') ? '\n' : '\n\n';
+                    nextContent = `${currentDoc}${padding}---\n${sectionHeader}\n${linesToInsert}\n`;
+                }
+                syncContentState(nextContent);
+            }
+
+            message.success(
+                unweavedItems.length === 1
+                    ? `已成功回织《${unweavedItems[0].title}》`
+                    : `已批量回织 ${unweavedItems.length} 篇反向链接`
+            );
+        },
+        [syncContentFromEditor, syncContentState]
+    );
+
     const validateImageFiles = useCallback(async files => {
         const validFiles = [];
         const invalidTypeFiles = [];
@@ -2315,9 +2399,12 @@ const NoteEditor = ({
                                                 <BacklinksPanel
                                                     noteId={selectedNote}
                                                     noteTitle={noteTitle}
+                                                    content={content}
                                                     onNavigateNote={onSelectNote}
                                                     onOpenLocalGraph={() => setLocalGraphVisible(true)}
                                                     onInsertText={insertTextAtCursor}
+                                                    onWeaveBacklink={item => weaveBacklinksToDocument([item])}
+                                                    onWeaveAllBacklinks={items => weaveBacklinksToDocument(items)}
                                                     onOpenSplitNote={targetNoteId => {
                                                         if (secondaryPinned) {
                                                             message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
@@ -2419,9 +2506,12 @@ const NoteEditor = ({
                     <BacklinksPanel
                         noteId={selectedNote}
                         noteTitle={noteTitle}
+                        content={content}
                         onNavigateNote={onSelectNote}
                         onOpenLocalGraph={() => setLocalGraphVisible(true)}
                         onInsertText={insertTextAtCursor}
+                        onWeaveBacklink={item => weaveBacklinksToDocument([item])}
+                        onWeaveAllBacklinks={items => weaveBacklinksToDocument(items)}
                         onOpenSplitNote={targetNoteId => {
                             if (secondaryPinned) {
                                 message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
@@ -2462,9 +2552,12 @@ const NoteEditor = ({
                 <BacklinksPanel
                     noteId={selectedNote}
                     noteTitle={noteTitle}
+                    content={content}
                     onNavigateNote={onSelectNote}
                     onOpenLocalGraph={() => setLocalGraphVisible(true)}
                     onInsertText={insertTextAtCursor}
+                    onWeaveBacklink={item => weaveBacklinksToDocument([item])}
+                    onWeaveAllBacklinks={items => weaveBacklinksToDocument(items)}
                     onOpenSplitNote={targetNoteId => {
                         if (secondaryPinned) {
                             message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');

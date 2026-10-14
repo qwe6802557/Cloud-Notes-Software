@@ -16,7 +16,8 @@ import {
     ThunderboltOutlined,
     ClusterOutlined,
     LinkOutlined,
-    SearchOutlined
+    SearchOutlined,
+    CheckOutlined
 } from '@ant-design/icons';
 import { Spin, Tooltip, Tag, message } from 'antd';
 import './BacklinksPanel.less';
@@ -37,9 +38,12 @@ const formatTime = isoStr => {
 const BacklinksPanel = ({
     noteId,
     noteTitle,
+    content = '',
     onNavigateNote,
     onOpenLocalGraph,
     onInsertText,
+    onWeaveBacklink,
+    onWeaveAllBacklinks,
     onOpenSplitNote,
     isPinned = false,
     onTogglePin
@@ -54,6 +58,14 @@ const BacklinksPanel = ({
         totalCount: 0
     });
     const [semanticNotes, setSemanticNotes] = useState([]);
+
+    const isItemWeaved = useCallback(
+        title => {
+            if (!content || !title) return false;
+            return content.includes(`[[${title}]]`);
+        },
+        [content]
+    );
 
     // 切换笔记时若未置顶侧栏则默认收起
     useEffect(() => {
@@ -367,49 +379,118 @@ const BacklinksPanel = ({
                                     </div>
                                 ) : (
                                     <div className="links-group">
-                                        <div className="group-title">显式引用本文的笔记 ({data.backlinks.length})</div>
+                                        {(() => {
+                                            const unweavedBacklinks = data.backlinks.filter(item => !isItemWeaved(item.title));
+                                            return (
+                                                <div className="group-title-bar">
+                                                    <div className="group-title">
+                                                        <span>显式引用本文的笔记 ({data.backlinks.length})</span>
+                                                    </div>
+                                                    {onWeaveAllBacklinks && data.backlinks.length > 0 && (
+                                                        <button
+                                                            type="button"
+                                                            className={`weave-all-btn ${unweavedBacklinks.length > 0 ? 'is-active' : 'is-disabled'}`}
+                                                            disabled={unweavedBacklinks.length === 0}
+                                                            onClick={e => {
+                                                                e.stopPropagation();
+                                                                if (unweavedBacklinks.length > 0) {
+                                                                    onWeaveAllBacklinks(unweavedBacklinks, e);
+                                                                }
+                                                            }}
+                                                        >
+                                                            {unweavedBacklinks.length > 0 ? (
+                                                                <>
+                                                                    <LinkOutlined /> 一键全部回织 ({unweavedBacklinks.length})
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <CheckOutlined /> 已全部回织
+                                                                </>
+                                                            )}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
                                         <div className="links-grid">
-                                            {data.backlinks.map(item => (
-                                                <div
-                                                    key={item._id}
-                                                    className="backlink-card"
-                                                    onClick={() => onNavigateNote?.(item._id)}
-                                                >
-                                                    <div className="card-top">
-                                                        <div className="note-name">
-                                                            <FileTextOutlined className="icon" />
-                                                            <span className="name-text">{item.title}</span>
+                                            {data.backlinks.map(item => {
+                                                const isWeaved = isItemWeaved(item.title);
+                                                return (
+                                                    <div
+                                                        key={item._id}
+                                                        className={`backlink-card ${isWeaved ? 'card-weaved' : ''}`}
+                                                        onClick={() => onNavigateNote?.(item._id)}
+                                                    >
+                                                        <div className="card-top">
+                                                            <div className="note-name">
+                                                                <FileTextOutlined className="icon" />
+                                                                <span className="name-text">{item.title}</span>
+                                                            </div>
+                                                            <div className="meta-right">
+                                                                {item.notebookId && (
+                                                                    <Tag className="notebook-tag" color="blue">
+                                                                        <BookOutlined style={{ marginRight: 3 }} />
+                                                                        {item.notebookId.name}
+                                                                    </Tag>
+                                                                )}
+                                                                <span className="update-time">
+                                                                    <ClockCircleOutlined style={{ marginRight: 3 }} />
+                                                                    {formatTime(item.updatedAt)}
+                                                                </span>
+                                                            </div>
                                                         </div>
-                                                        <div className="meta-right">
-                                                            {item.notebookId && (
-                                                                <Tag className="notebook-tag" color="blue">
-                                                                    <BookOutlined style={{ marginRight: 3 }} />
-                                                                    {item.notebookId.name}
-                                                                </Tag>
+
+                                                        {item.contextSnippet && (
+                                                            <div className="card-snippet">
+                                                                “{renderSnippet(item.contextSnippet)}”
+                                                            </div>
+                                                        )}
+
+                                                        <div className="card-action-bar" onClick={e => e.stopPropagation()}>
+                                                            {onWeaveBacklink && (
+                                                                <Tooltip
+                                                                    title={
+                                                                        isWeaved
+                                                                            ? '当前笔记正文已包含该反向双链'
+                                                                            : '在本文末尾物理回织该反向双链'
+                                                                    }
+                                                                >
+                                                                    <button
+                                                                        type="button"
+                                                                        className={`quick-action-btn weave-btn ${isWeaved ? 'is-weaved' : ''}`}
+                                                                        disabled={isWeaved}
+                                                                        onClick={e => {
+                                                                            e.stopPropagation();
+                                                                            if (!isWeaved) {
+                                                                                onWeaveBacklink(item, e);
+                                                                            }
+                                                                        }}
+                                                                    >
+                                                                        {isWeaved ? (
+                                                                            <>
+                                                                                <CheckOutlined /> 已回织
+                                                                            </>
+                                                                        ) : (
+                                                                            <>
+                                                                                <LinkOutlined /> 一键回织
+                                                                            </>
+                                                                        )}
+                                                                    </button>
+                                                                </Tooltip>
                                                             )}
                                                             <Tooltip title="在副屏分屏参考">
                                                                 <button
                                                                     type="button"
-                                                                    className="card-split-btn"
+                                                                    className="quick-action-btn"
                                                                     onClick={e => handleOpenSplit(item._id, item.title, e)}
                                                                 >
-                                                                    <SplitCellsOutlined />
+                                                                    <SplitCellsOutlined /> 分屏研读
                                                                 </button>
                                                             </Tooltip>
-                                                            <span className="update-time">
-                                                                <ClockCircleOutlined style={{ marginRight: 3 }} />
-                                                                {formatTime(item.updatedAt)}
-                                                            </span>
                                                         </div>
                                                     </div>
-
-                                                    {item.contextSnippet && (
-                                                        <div className="card-snippet">
-                                                            “{renderSnippet(item.contextSnippet)}”
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     </div>
                                 )}
