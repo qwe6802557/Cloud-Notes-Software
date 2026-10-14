@@ -26,6 +26,8 @@ import ImageViewerModal from '../../components/ImageViewerModal';
 import LocalRadarModal from '../../components/LocalRadarModal';
 import NotePeekBottomSheet from '../../components/NotePeekBottomSheet';
 import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
+import NoteCompanionBottomSheet, { CompanionTab } from '../../components/NoteCompanionBottomSheet';
+import { weaveBacklinksToText, isItemWeaved } from '../../utils/weavingUtils';
 
 interface TocItem {
   level: number;
@@ -214,6 +216,71 @@ export default function NoteDetailScreen() {
     targetTitle?: string;
     targetNoteId?: string;
   }>({ visible: false });
+
+  // 智能伴侣抽屉状态
+  const [showCompanionSheet, setShowCompanionSheet] = useState(false);
+  const [companionInitialTab, setCompanionInitialTab] = useState<CompanionTab>('backlinks');
+  const [isWeaving, setIsWeaving] = useState(false);
+  const [aiInitialAction, setAiInitialAction] = useState<string>('full_summary');
+
+  // 单项反向双链物理回织
+  const handleWeaveBacklink = async (item: any) => {
+    if (!id || !note) return;
+    try {
+      setIsWeaving(true);
+      const { newContent, addedCount } = weaveBacklinksToText(note.content || '', [item]);
+      if (addedCount === 0) {
+        Alert.alert('提示', '当前笔记正文已包含该反向双链');
+        return;
+      }
+      const updateRes = await notesApi.updateNote(id, { content: newContent });
+      if (updateRes.code === 200 && updateRes.data) {
+        setNote(updateRes.data);
+        parseToc(updateRes.data.content);
+      } else {
+        setNote(prev => (prev ? { ...prev, content: newContent } : prev));
+        parseToc(newContent);
+      }
+      await fetchBacklinks();
+      Alert.alert('回织成功', `已在文末专区成功回织《${item.title}》反向双链`);
+    } catch (e: any) {
+      Alert.alert('回织失败', e.message || '网络连接异常');
+    } finally {
+      setIsWeaving(false);
+    }
+  };
+
+  // 一键全部反向双链物理回织
+  const handleWeaveAllBacklinks = async (items: any[]) => {
+    if (!id || !note || !items.length) return;
+    try {
+      setIsWeaving(true);
+      const { newContent, addedCount } = weaveBacklinksToText(note.content || '', items);
+      if (addedCount === 0) {
+        Alert.alert('提示', '所有反向双链已全部存在于当前正文中');
+        return;
+      }
+      const updateRes = await notesApi.updateNote(id, { content: newContent });
+      if (updateRes.code === 200 && updateRes.data) {
+        setNote(updateRes.data);
+        parseToc(updateRes.data.content);
+      } else {
+        setNote(prev => (prev ? { ...prev, content: newContent } : prev));
+        parseToc(newContent);
+      }
+      await fetchBacklinks();
+      Alert.alert('全部回织完成', `已在文末成功回织 ${addedCount} 处反向双链`);
+    } catch (e: any) {
+      Alert.alert('回织失败', e.message || '网络连接异常');
+    } finally {
+      setIsWeaving(false);
+    }
+  };
+
+  const handleOpenCompanionTab = (tab: CompanionTab) => {
+    setCompanionInitialTab(tab);
+    setShowCompanionSheet(true);
+  };
 
   const processedContent = useMemo(() => {
     if (!note?.content) return '*该笔记暂无正文内容*';
@@ -603,55 +670,33 @@ export default function NoteDetailScreen() {
           headerTitle: note?.title ? note.title : '笔记详情',
           headerRight: () => (
             <View style={styles.headerRightActions}>
-              {/* 大纲按钮 */}
-              {tocList.length > 0 && (
-                <TouchableOpacity
-                  style={styles.headerActionBtn}
-                  onPress={() => setShowTocModal(true)}
-                >
-                  <Ionicons name="list-outline" size={22} color="#0f172a" />
-                </TouchableOpacity>
-              )}
-
-              {/* 局部关系雷达 */}
-              <TouchableOpacity
-                style={styles.headerActionBtn}
-                onPress={() => setShowRadarModal(true)}
-              >
-                <Ionicons name="git-network-outline" size={22} color="#2563eb" />
-              </TouchableOpacity>
-
-              {/* 历史版本快照 */}
-              <TouchableOpacity
-                style={styles.headerActionBtn}
-                onPress={() => setShowHistoryModal(true)}
-              >
-                <Ionicons name="time-outline" size={22} color="#0f172a" />
-              </TouchableOpacity>
-
               {/* 收藏按钮 */}
-              <TouchableOpacity style={styles.headerActionBtn} onPress={handleToggleStar}>
+              <TouchableOpacity
+                style={styles.headerActionBtn}
+                onPress={handleToggleStar}
+                hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              >
                 <Ionicons
                   name={note?.isStarred ? 'star' : 'star-outline'}
-                  size={22}
+                  size={21}
                   color={note?.isStarred ? '#eab308' : '#0f172a'}
                 />
               </TouchableOpacity>
 
-              {/* AI 创作分析 */}
+              {/* 智能伴侣四合一入口 (大纲/双链/雷达/AI) */}
               <TouchableOpacity
-                style={styles.headerActionBtn}
-                onPress={() => setShowAIModal(true)}
+                style={[styles.headerActionBtn, styles.headerCompanionBtn]}
+                onPress={() => handleOpenCompanionTab('backlinks')}
+                hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
               >
-                <Ionicons name="sparkles" size={20} color="#7c3aed" />
-              </TouchableOpacity>
-
-              {/* 知识库智能问答 */}
-              <TouchableOpacity
-                style={styles.headerActionBtn}
-                onPress={() => setShowRAGModal(true)}
-              >
-                <Ionicons name="hardware-chip-outline" size={20} color="#2563eb" />
+                <Ionicons name="sparkles" size={19} color="#7c3aed" />
+                {backlinksData.totalCount > 0 && (
+                  <View style={styles.headerCompanionBadge}>
+                    <Text style={styles.headerCompanionBadgeText}>
+                      {backlinksData.totalCount}
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
 
               {/* 编辑按钮 */}
@@ -663,13 +708,27 @@ export default function NoteDetailScreen() {
                     params: { id: note?._id },
                   })
                 }
+                hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
               >
-                <Ionicons name="create-outline" size={22} color="#1890ff" />
+                <Ionicons name="create-outline" size={21} color="#1890ff" />
+              </TouchableOpacity>
+
+              {/* 历史版本快照 */}
+              <TouchableOpacity
+                style={styles.headerActionBtn}
+                onPress={() => setShowHistoryModal(true)}
+                hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              >
+                <Ionicons name="time-outline" size={20} color="#64748b" />
               </TouchableOpacity>
 
               {/* 删除按钮 */}
-              <TouchableOpacity style={styles.headerActionBtn} onPress={handleDeleteNote}>
-                <Ionicons name="trash-outline" size={20} color="#ef4444" />
+              <TouchableOpacity
+                style={styles.headerActionBtn}
+                onPress={handleDeleteNote}
+                hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              >
+                <Ionicons name="trash-outline" size={19} color="#ef4444" />
               </TouchableOpacity>
             </View>
           ),
@@ -702,41 +761,71 @@ export default function NoteDetailScreen() {
           {backlinksData.totalCount > 0 && (
             <View style={styles.backlinksContainer}>
               <View style={styles.backlinksHeader}>
-                <Ionicons name="git-network-outline" size={16} color="#2563eb" />
-                <Text style={styles.backlinksTitle}>反向链接 (Backlinks)</Text>
-                <View style={styles.backlinksBadge}>
-                  <Text style={styles.backlinksBadgeText}>{backlinksData.totalCount}</Text>
+                <View style={styles.backlinksHeaderLeft}>
+                  <Ionicons name="git-network-outline" size={16} color="#2563eb" />
+                  <Text style={styles.backlinksTitle}>反向链接 (Backlinks)</Text>
+                  <View style={styles.backlinksBadge}>
+                    <Text style={styles.backlinksBadgeText}>{backlinksData.totalCount}</Text>
+                  </View>
                 </View>
+
+                <TouchableOpacity
+                  style={styles.openCompanionBtn}
+                  onPress={() => handleOpenCompanionTab('backlinks')}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="sparkles" size={13} color="#7c3aed" style={{ marginRight: 4 }} />
+                  <Text style={styles.openCompanionBtnText}>知识伴侣</Text>
+                </TouchableOpacity>
               </View>
 
               {backlinksData.backlinks.map((item: any) => {
                 const nbName = item.notebook?.name || item.notebookId?.name;
                 const nbColor = item.notebook?.color || '#3b82f6';
                 const snippet = item.snippet || item.contextSnippet;
+                const isWeaved = isItemWeaved(note?.content || '', item.title);
 
                 return (
-                  <TouchableOpacity
-                    key={item._id}
-                    style={styles.backlinkCard}
-                    onPress={() => handleBacklinkPress(item._id, item.title)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.backlinkTopRow}>
-                      <Ionicons name="document-text-outline" size={14} color="#3b82f6" />
-                      <Text style={styles.backlinkNoteTitle} numberOfLines={1}>{item.title}</Text>
-                      {nbName && (
-                        <View style={[styles.backlinkNotebookTag, { borderColor: nbColor + '30', borderWidth: 1 }]}>
-                          <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: nbColor, marginRight: 4 }} />
-                          <Text style={styles.backlinkNotebookText}>{nbName}</Text>
-                        </View>
+                  <View key={item._id} style={styles.backlinkCard}>
+                    <TouchableOpacity
+                      onPress={() => handleBacklinkPress(item._id, item.title)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.backlinkTopRow}>
+                        <Ionicons name="document-text-outline" size={14} color="#3b82f6" />
+                        <Text style={styles.backlinkNoteTitle} numberOfLines={1}>{item.title}</Text>
+                        {nbName && (
+                          <View style={[styles.backlinkNotebookTag, { borderColor: nbColor + '30', borderWidth: 1 }]}>
+                            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: nbColor, marginRight: 4 }} />
+                            <Text style={styles.backlinkNotebookText}>{nbName}</Text>
+                          </View>
+                        )}
+                      </View>
+                      {snippet && (
+                        <Text style={styles.backlinkSnippet} numberOfLines={2}>
+                          “{snippet.replace(/==/g, '')}”
+                        </Text>
                       )}
+                    </TouchableOpacity>
+
+                    <View style={styles.backlinkCardActionRow}>
+                      <TouchableOpacity
+                        style={[styles.backlinkWeaveBtn, isWeaved && styles.backlinkWeaveBtnDisabled]}
+                        disabled={isWeaved || isWeaving}
+                        onPress={() => handleWeaveBacklink(item)}
+                      >
+                        <Ionicons
+                          name={isWeaved ? 'checkmark-circle-outline' : 'link-outline'}
+                          size={12}
+                          color={isWeaved ? '#94a3b8' : '#1890ff'}
+                          style={{ marginRight: 3 }}
+                        />
+                        <Text style={[styles.backlinkWeaveBtnText, isWeaved && styles.backlinkWeaveBtnDisabledText]}>
+                          {isWeaved ? '已回织' : '一键回织'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
-                    {snippet && (
-                      <Text style={styles.backlinkSnippet} numberOfLines={2}>
-                        “{snippet.replace(/==/g, '')}”
-                      </Text>
-                    )}
-                  </TouchableOpacity>
+                  </View>
                 );
               })}
 
@@ -780,6 +869,56 @@ export default function NoteDetailScreen() {
         </View>
       )}
 
+      {/* 悬浮智能伴侣胶囊 (Floating Companion Pill) */}
+      {!isLoading && note && (
+        <TouchableOpacity
+          style={styles.floatingCompanionPill}
+          onPress={() => handleOpenCompanionTab('backlinks')}
+          activeOpacity={0.88}
+        >
+          <Ionicons name="sparkles" size={15} color="#7c3aed" style={{ marginRight: 6 }} />
+          <Text style={styles.floatingCompanionText}>知识伴侣</Text>
+          {backlinksData.totalCount > 0 && (
+            <View style={styles.floatingCompanionBadge}>
+              <Text style={styles.floatingCompanionBadgeText}>{backlinksData.totalCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      )}
+
+      {/* 统一智能知识伴侣四合一抽屉 (NoteCompanionBottomSheet) */}
+      {note && (
+        <NoteCompanionBottomSheet
+          visible={showCompanionSheet}
+          onClose={() => setShowCompanionSheet(false)}
+          noteId={note._id}
+          noteTitle={note.title || ''}
+          noteContent={note.content || ''}
+          tocList={tocList}
+          backlinksData={backlinksData}
+          initialTab={companionInitialTab}
+          isWeaving={isWeaving}
+          onSelectTocItem={item => {
+            setShowCompanionSheet(false);
+          }}
+          onOpenNote={(targetId, title) => {
+            setShowCompanionSheet(false);
+            setPeekConfig({
+              visible: true,
+              targetTitle: title,
+              targetNoteId: targetId,
+            });
+          }}
+          onWeaveBacklink={handleWeaveBacklink}
+          onWeaveAllBacklinks={handleWeaveAllBacklinks}
+          onOpenAIAction={actionKey => {
+            setShowCompanionSheet(false);
+            setAiInitialAction(actionKey);
+            setShowAIModal(true);
+          }}
+        />
+      )}
+
       {/* 全屏手势图片查看器与画廊 */}
       <ImageViewerModal
         visible={showImageViewer}
@@ -788,7 +927,7 @@ export default function NoteDetailScreen() {
         onClose={() => setShowImageViewer(false)}
       />
 
-      {/* 目录大纲弹窗 */}
+      {/* 目录大纲弹窗 (保留备用) */}
       <Modal visible={showTocModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -819,12 +958,14 @@ export default function NoteDetailScreen() {
           </View>
         </View>
       </Modal>
+
       {/* AI 创作助手 */}
       <AIAssistantModal
         visible={showAIModal}
         onClose={() => setShowAIModal(false)}
         noteTitle={note?.title || ''}
         noteContent={note?.content || ''}
+        initialAction={aiInitialAction}
         isEditable={false}
       />
 
@@ -1134,5 +1275,114 @@ const styles = StyleSheet.create({
     backgroundColor: '#f8fafc',
     padding: 6,
     borderRadius: 4,
+  },
+  headerCompanionBtn: {
+    position: 'relative',
+  },
+  headerCompanionBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    backgroundColor: '#7c3aed',
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    minWidth: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerCompanionBadgeText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  backlinksHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  openCompanionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f5f3ff',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#ede9fe',
+  },
+  openCompanionBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#7c3aed',
+  },
+  backlinkCardActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 6,
+    paddingTop: 6,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+  },
+  backlinkWeaveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  backlinkWeaveBtnDisabled: {
+    backgroundColor: '#f1f5f9',
+    borderColor: '#e2e8f0',
+  },
+  backlinkWeaveBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1890ff',
+  },
+  backlinkWeaveBtnDisabledText: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: '#94a3b8',
+  },
+  floatingCompanionPill: {
+    position: 'absolute',
+    right: 18,
+    bottom: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: '#e9d5ff',
+    shadowColor: '#7c3aed',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
+    zIndex: 99,
+  },
+  floatingCompanionText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6d28d9',
+  },
+  floatingCompanionBadge: {
+    backgroundColor: '#7c3aed',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    marginLeft: 6,
+  },
+  floatingCompanionBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#ffffff',
   },
 });

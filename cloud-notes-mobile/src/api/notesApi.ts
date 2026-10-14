@@ -264,3 +264,11 @@ export const getKnowledgeGraph = (params?: {
   });
 };
 
+// 获取知识库轻量词典（供 Ghost Link 主动概念感知毫秒级离线匹配）
+export const getNoteDictionary = (): Promise<ApiResponse<{ dictionary: Array<{ _id: string; title: string; notebookName?: string }> }>> => {
+  return request({
+    url: '/notes/dictionary',
+    method: 'get',
+  });
+};
+

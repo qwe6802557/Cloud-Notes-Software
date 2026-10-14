@@ -44,6 +44,7 @@ export interface InlineAIToolbarProps {
   onOpenFullAIModal: () => void;
   onTriggerAIAction: (actionKey: string, customPrompt?: string) => void;
   onTriggerWikiLink?: () => void;
+  onTriggerGhostLink?: () => void;
 }
 
 export default function InlineAIToolbar({
@@ -56,6 +57,7 @@ export default function InlineAIToolbar({
   onOpenFullAIModal,
   onTriggerAIAction,
   onTriggerWikiLink,
+  onTriggerGhostLink,
 }: InlineAIToolbarProps) {
   // 当处于选区时，用户可手动切回常规 Markdown 格式工具；重新选词时自动重置
   const [preferMarkdownInSelection, setPreferMarkdownInSelection] = useState(false);
@@ -251,6 +253,18 @@ export default function InlineAIToolbar({
               >
                 <Text style={styles.wikiLinkBtnText}>[[ ]]</Text>
               </TouchableOpacity>
+
+              {/* 概念感知快捷按钮 */}
+              {onTriggerGhostLink && (
+                <TouchableOpacity
+                  style={[styles.mdBtn, styles.ghostLinkBtn]}
+                  onPress={onTriggerGhostLink}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="sparkles" size={12} color="#7c3aed" style={{ marginRight: 2 }} />
+                  <Text style={styles.ghostLinkBtnText}>感知</Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity style={styles.mdBtn} onPress={() => onInsertMarkdown('## ')}>
                 <Text style={styles.mdBtnText}>H2</Text>
@@ -496,6 +510,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: '#2563eb',
+  },
+  ghostLinkBtn: {
+    width: 'auto',
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#faf5ff',
+    borderColor: '#e9d5ff',
+  },
+  ghostLinkBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#7c3aed',
   },
   backToSelectionAIBtn: {
     width: 34,

@@ -24,6 +24,7 @@ import VersionHistoryModal from '../../components/VersionHistoryModal';
 import InlineAIToolbar from '../../components/InlineAIToolbar';
 import InlineAIStreamCard from '../../components/InlineAIStreamCard';
 import LinkSuggestBar from '../../components/LinkSuggestBar';
+import GhostLinkSuggestStrip from '../../components/GhostLinkSuggestStrip';
 
 export default function NoteEditScreen() {
   const router = useRouter();
@@ -64,6 +65,9 @@ export default function NoteEditScreen() {
   const [wikiSuggestVisible, setWikiSuggestVisible] = useState(false);
   const [wikiSuggestKeyword, setWikiSuggestKeyword] = useState('');
   const [wikiMatchRange, setWikiMatchRange] = useState<{ start: number; end: number } | null>(null);
+
+  // 概念感知 (Ghost Link) 展开状态
+  const [ghostSuggestVisible, setGhostSuggestVisible] = useState(false);
 
   // 检测光标前是否存在未闭合的 [[
   const checkWikiLinkTrigger = (text: string, selection: { start: number; end: number }) => {
@@ -117,6 +121,57 @@ export default function NoteEditScreen() {
     setCursorPosition({ start: nextPos, end: nextPos });
     setWikiSuggestVisible(false);
     setWikiMatchRange(null);
+  };
+
+  // 单个词汇安全转换为 [[双链]]
+  const handleConvertGhostWord = (word: string) => {
+    if (!content || !word) return;
+    const placeholders: string[] = [];
+    let protectedText = content.replace(/\[\[[^\]\r\n]+\]\]/g, match => {
+      placeholders.push(match);
+      return `__WIKI_PLACEHOLDER_${placeholders.length - 1}__`;
+    });
+
+    const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wordRegex = new RegExp(escaped, 'g');
+    protectedText = protectedText.replace(wordRegex, `[[${word}]]`);
+
+    const finalContent = protectedText.replace(/__WIKI_PLACEHOLDER_(\d+)__/g, (_, idx) => {
+      return placeholders[Number(idx)] || '';
+    });
+
+    if (finalContent !== content) {
+      setContent(finalContent);
+      Alert.alert('已织入双链', `已将命中的「${word}」转换为 [[${word}]]`);
+    }
+  };
+
+  // 批量词汇安全转换为 [[双链]]
+  const handleConvertAllGhostWords = (words: string[]) => {
+    if (!content || !words.length) return;
+    let current = content;
+
+    words.forEach(word => {
+      const placeholders: string[] = [];
+      let protectedText = current.replace(/\[\[[^\]\r\n]+\]\]/g, match => {
+        placeholders.push(match);
+        return `__WIKI_PLACEHOLDER_${placeholders.length - 1}__`;
+      });
+
+      const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const wordRegex = new RegExp(escaped, 'g');
+      protectedText = protectedText.replace(wordRegex, `[[${word}]]`);
+
+      current = protectedText.replace(/__WIKI_PLACEHOLDER_(\d+)__/g, (_, idx) => {
+        return placeholders[Number(idx)] || '';
+      });
+    });
+
+    if (current !== content) {
+      setContent(current);
+      Alert.alert('已全部织入', `已成功将 ${words.length} 处概念词条升级为 [[双链]]`);
+      setGhostSuggestVisible(false);
+    }
   };
 
   // 组件卸载时中止请求
@@ -529,6 +584,17 @@ export default function NoteEditScreen() {
             onRetry={lastInlineParams ? () => startInlineStream(lastInlineParams) : undefined}
           />
 
+          {/* 概念感知与双链速转条 */}
+          <GhostLinkSuggestStrip
+            visible={ghostSuggestVisible}
+            onClose={() => setGhostSuggestVisible(false)}
+            content={content}
+            currentNoteId={id}
+            currentNoteTitle={title}
+            onConvertWord={handleConvertGhostWord}
+            onConvertAll={handleConvertAllGhostWords}
+          />
+
           {/* 双链输入联想浮动胶囊条 */}
           <LinkSuggestBar
             visible={wikiSuggestVisible}
@@ -548,6 +614,7 @@ export default function NoteEditScreen() {
             onOpenFullAIModal={() => setShowAIModal(true)}
             onTriggerAIAction={handleTriggerInlineAI}
             onTriggerWikiLink={handleTriggerWikiLink}
+            onTriggerGhostLink={() => setGhostSuggestVisible(prev => !prev)}
           />
         </KeyboardAvoidingView>
       )}
