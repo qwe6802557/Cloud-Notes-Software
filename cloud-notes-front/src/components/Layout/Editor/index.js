@@ -62,6 +62,7 @@ import RAGChatDrawer from '../RAGChat/RAGChatDrawer';
 import lazyImagePlugin from './plugins/lazyImagePlugin';
 import wikiLinkPlugin from './plugins/wikiLinkPlugin';
 import LinkSuggestPopup from './LinkSuggestPopup';
+import SlashCommandPopup from './SlashCommandPopup';
 import BacklinksPanel from './BacklinksPanel';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import WikiLinkHoverCard from './WikiLinkHoverCard';
@@ -2428,6 +2429,11 @@ const NoteEditor = ({
                 <LinkSuggestPopup
                     containerRef={editorContainerRef}
                     editorContextRef={editorContextRef}
+                />
+                <SlashCommandPopup
+                    containerRef={editorContainerRef}
+                    editorContextRef={editorContextRef}
+                    noteTitle={noteTitle}
                 />
             </div>
 
