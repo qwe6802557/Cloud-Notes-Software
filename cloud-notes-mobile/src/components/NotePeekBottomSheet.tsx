@@ -15,6 +15,8 @@ import { Ionicons } from '@expo/vector-icons';
 import Markdown from 'react-native-markdown-display';
 import * as notesApi from '../api/notesApi';
 import { Note } from '../api/types';
+import { mobileSearchEngine } from '../utils/search/mobileSearchEngine';
+import { getNoteCache } from '../utils/storage/mobileNotesDB';
 
 interface NotePeekBottomSheetProps {
   visible: boolean;
@@ -53,34 +55,62 @@ export default function NotePeekBottomSheet({
 
     const loadData = async () => {
       try {
-        if (targetNoteId) {
-          const res = await notesApi.getNoteDetail(targetNoteId);
-          if (!isMounted) return;
-          const noteData = res?.data;
-          if (noteData) {
-            setNote(noteData);
+        let noteIdToFetch = targetNoteId;
+
+        // 若无 ID 但有标题，优先从本地倒排索引秒级解析
+        if (!noteIdToFetch && targetTitle) {
+          const localMatch = mobileSearchEngine.search(targetTitle.trim(), { limit: 1 }).items.find(
+            it => it.title.trim().toLowerCase() === targetTitle.trim().toLowerCase()
+          );
+          if (localMatch) {
+            noteIdToFetch = localMatch.id || localMatch._id;
+          }
+        }
+
+        if (noteIdToFetch) {
+          // 1. 本地快照秒现
+          const cached = await getNoteCache(noteIdToFetch);
+          if (cached && isMounted) {
+            setNote(cached);
             setNotFound(false);
-          } else {
-            setNotFound(true);
+          }
+
+          // 2. 远端详情拉取（网络就绪时）
+          try {
+            const res = await notesApi.getNoteDetail(noteIdToFetch);
+            if (!isMounted) return;
+            if (res?.data) {
+              setNote(res.data);
+              setNotFound(false);
+            }
+          } catch {
+            // 离线无网时继续保留本地快照
+            if (!cached && isMounted) setNotFound(true);
           }
         } else if (targetTitle) {
-          const res = await notesApi.suggestNoteLinks(targetTitle);
-          if (!isMounted) return;
-          const list = res?.data?.suggestions || [];
-          const match = list.find(
-            (n: any) => n.title?.trim().toLowerCase() === targetTitle.trim().toLowerCase()
-          );
-
-          if (match?._id) {
-            // 获取完整详情
-            const detailRes = await notesApi.getNoteDetail(match._id);
+          // 尝试远端联想降级兜底
+          try {
+            const res = await notesApi.suggestNoteLinks(targetTitle);
             if (!isMounted) return;
-            const fullNote = detailRes?.data || match;
-            setNote(fullNote);
-            setNotFound(false);
-          } else {
-            setNotFound(true);
+            const list = res?.data?.suggestions || [];
+            const match = list.find(
+              (n: any) => n.title?.trim().toLowerCase() === targetTitle.trim().toLowerCase()
+            );
+
+            if (match?._id) {
+              const detailRes = await notesApi.getNoteDetail(match._id);
+              if (!isMounted) return;
+              const fullNote = detailRes?.data || match;
+              setNote(fullNote);
+              setNotFound(false);
+            } else {
+              setNotFound(true);
+            }
+          } catch {
+            if (isMounted) setNotFound(true);
           }
+        } else {
+          setNotFound(true);
         }
       } catch {
         if (isMounted) setNotFound(true);

@@ -28,6 +28,7 @@ import NotePeekBottomSheet from '../../components/NotePeekBottomSheet';
 import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 import NoteCompanionBottomSheet, { CompanionTab } from '../../components/NoteCompanionBottomSheet';
 import { weaveBacklinksToText, isItemWeaved } from '../../utils/weavingUtils';
+import { mobileSearchEngine } from '../../utils/search/mobileSearchEngine';
 
 interface TocItem {
   level: number;
@@ -293,7 +294,13 @@ export default function NoteDetailScreen() {
         title = parts[0].trim();
         alias = parts.slice(1).join('|').trim() || title;
       }
-      return `[${alias}](wikilink://${encodeURIComponent(title)})`;
+      // 检验本地倒排索引库中是否存在该标题的实体笔记
+      const searchRes = mobileSearchEngine.search(title, { limit: 1 });
+      const exists = searchRes.items.some(
+        it => it.title.toLowerCase() === title.toLowerCase()
+      );
+      const protocol = exists ? 'wikilink' : 'ghostlink';
+      return `[${alias}](${protocol}://${encodeURIComponent(title)})`;
     });
   }, [note?.content]);
 
@@ -532,6 +539,33 @@ export default function NoteDetailScreen() {
             >
               <Ionicons name="link" size={11} color="#2563eb" style={{ marginRight: 2 }} />
               <Text style={{ color: '#1d4ed8', fontWeight: '500', fontSize: 13 }}>
+                {children}
+              </Text>
+            </TouchableOpacity>
+          );
+        }
+        if (href.startsWith('ghostlink://')) {
+          const targetTitle = decodeURIComponent(href.replace('ghostlink://', ''));
+          return (
+            <TouchableOpacity
+              key={node.key}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: '#f8fafc',
+                paddingHorizontal: 6,
+                paddingVertical: 1,
+                borderRadius: 4,
+                marginHorizontal: 2,
+                borderWidth: 1,
+                borderStyle: 'dashed',
+                borderColor: 'rgba(148, 163, 184, 0.65)',
+              }}
+              onPress={() => handleWikiLinkPress(targetTitle)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="sparkles-outline" size={10} color="#64748b" style={{ marginRight: 2 }} />
+              <Text style={{ color: '#64748b', fontWeight: '500', fontSize: 13 }}>
                 {children}
               </Text>
             </TouchableOpacity>

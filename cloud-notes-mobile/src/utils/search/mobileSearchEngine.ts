@@ -398,6 +398,22 @@ class MobileSearchEngine {
   getTotalDocsCount(): number {
     return this.docs.size;
   }
+
+  getRecentDocs(limit = 5): SearchResultItem[] {
+    const all = Array.from(this.docs.values());
+    all.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+    return all.slice(0, limit).map(doc => ({
+      id: doc.id,
+      _id: doc.id,
+      title: doc.title,
+      snippet: doc.snippet || '',
+      notebookId: doc.notebookId,
+      notebookName: doc.notebookName,
+      notebookColor: doc.notebookColor,
+      updatedAt: doc.updatedAt,
+      score: 1.0,
+    }));
+  }
 }
 
 export const mobileSearchEngine = new MobileSearchEngine();

@@ -23,7 +23,7 @@ import AIAssistantModal from '../../components/AIAssistantModal';
 import VersionHistoryModal from '../../components/VersionHistoryModal';
 import InlineAIToolbar from '../../components/InlineAIToolbar';
 import InlineAIStreamCard from '../../components/InlineAIStreamCard';
-import LinkSuggestBar from '../../components/LinkSuggestBar';
+import WikiSuggestDock from '../../components/WikiSuggestDock';
 import GhostLinkSuggestStrip from '../../components/GhostLinkSuggestStrip';
 import SyncStatusPill from '../../components/SyncStatusPill';
 import { getNoteCache, saveNoteCache } from '../../utils/storage/mobileNotesDB';
@@ -77,15 +77,33 @@ export default function NoteEditScreen() {
   const [ghostSuggestVisible, setGhostSuggestVisible] = useState(false);
 
   // 检测光标前是否存在未闭合的 [[
-  const checkWikiLinkTrigger = (text: string, selection: { start: number; end: number }) => {
-    if (selection.start !== selection.end) {
+  const checkWikiLinkTrigger = (text: string, selection?: { start: number; end: number }) => {
+    if (selection && selection.start !== selection.end) {
       setWikiSuggestVisible(false);
       return;
     }
 
-    const pos = selection.start;
-    const textBefore = text.slice(0, pos);
-    const lastOpen = textBefore.lastIndexOf('[[');
+    let pos = selection ? selection.start : cursorPosition.start;
+    if (typeof pos !== 'number' || pos < 0 || pos > text.length) {
+      pos = text.length;
+    }
+
+    let textBefore = text.slice(0, pos);
+    let lastOpen = textBefore.lastIndexOf('[[');
+
+    // 容错：若光标处未找到，但文本末尾包含未闭合的 [[（常见于快速输入或拼音上屏）
+    if (lastOpen === -1) {
+      const globalLastOpen = text.lastIndexOf('[[');
+      if (globalLastOpen !== -1) {
+        const textAfter = text.slice(globalLastOpen + 2);
+        if (!textAfter.includes('\n') && !textAfter.includes(']]')) {
+          lastOpen = globalLastOpen;
+          pos = text.length;
+          textBefore = text;
+        }
+      }
+    }
+
     if (lastOpen === -1) {
       setWikiSuggestVisible(false);
       return;
@@ -102,13 +120,19 @@ export default function NoteEditScreen() {
     setWikiSuggestVisible(true);
   };
 
-  // 快捷插入 [[ 并呼起联想条
+  useEffect(() => {
+    if (content) {
+      checkWikiLinkTrigger(content);
+    }
+  }, [content]);
+
+  // 快捷插入 [[ 并呼起联想贴顶面板
   const handleTriggerWikiLink = () => {
     const pos = cursorPosition.end || content.length;
     const before = content.slice(0, pos);
     const after = content.slice(pos);
     const newContent = `${before}[[${after}`;
-    setContent(newContent);
+    handleContentChange(newContent);
     const newPos = pos + 2;
     setCursorPosition({ start: newPos, end: newPos });
     setWikiSuggestKeyword('');
@@ -116,14 +140,14 @@ export default function NoteEditScreen() {
     setWikiSuggestVisible(true);
   };
 
-  // 选择双链候选并自动闭合
-  const handleSelectWikiSuggestion = (selectedTitle: string) => {
+  // 选择双链候选并自动闭合（支持已有实体笔记与优雅悬空双链）
+  const handleSelectWikiSuggestion = (selectedTitle: string, isGhost = false) => {
     if (!wikiMatchRange) return;
     const before = content.slice(0, wikiMatchRange.start);
     const after = content.slice(wikiMatchRange.end);
     const replacement = `[[${selectedTitle}]] `;
     const newContent = `${before}${replacement}${after}`;
-    setContent(newContent);
+    handleContentChange(newContent);
     const nextPos = before.length + replacement.length;
     setCursorPosition({ start: nextPos, end: nextPos });
     setWikiSuggestVisible(false);
@@ -665,7 +689,9 @@ export default function NoteEditScreen() {
               value={content}
               onChangeText={text => {
                 handleContentChange(text);
-                checkWikiLinkTrigger(text, cursorPosition);
+                const diff = text.length - content.length;
+                const estimatedPos = Math.max(0, cursorPosition.start + diff);
+                checkWikiLinkTrigger(text, { start: estimatedPos, end: estimatedPos });
               }}
               multiline
               scrollEnabled={Platform.OS === 'web' ? true : false}
@@ -711,8 +737,8 @@ export default function NoteEditScreen() {
             onConvertAll={handleConvertAllGhostWords}
           />
 
-          {/* 双链输入联想浮动胶囊条 */}
-          <LinkSuggestBar
+          {/* 双链输入联想键盘贴顶流体面板 */}
+          <WikiSuggestDock
             visible={wikiSuggestVisible}
             keyword={wikiSuggestKeyword}
             onSelectSuggestion={handleSelectWikiSuggestion}
