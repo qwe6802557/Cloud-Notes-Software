@@ -104,21 +104,38 @@ export default function StashScreen() {
     setPreviewFile(null);
   }, [currentTab]);
 
-  // 拉取暂存文件列表
+  // SWR 保活控制器：初次挂载展示菊花，后续切 Tab 聚焦就地复用内存态与目录层级
+  const hasLoadedOnceRef = useRef(false);
+  const lastFetchTimeRef = useRef(0);
+
+  // 拉取暂存文件列表 (SWR 就地保活模型：保留已展开视图与滚动位置)
   const loadFiles = useCallback(async (isRefresh = false) => {
+    const isFirstLoad = !hasLoadedOnceRef.current;
+    const now = Date.now();
+
+    // SWR 限流：已有缓存数据、非手动下拉刷新且 30 秒内聚焦不重复发起请求
+    if (!isRefresh && !isFirstLoad && now - lastFetchTimeRef.current < 30000) {
+      return;
+    }
+
     try {
-      if (isRefresh) setIsRefreshing(true);
-      else setIsLoading(true);
+      if (isRefresh) {
+        setIsRefreshing(true);
+      } else if (isFirstLoad) {
+        setIsLoading(true);
+      }
 
       const res = await stashApi.getStashFiles(currentTab);
       if (res.code === 200 && res.data) {
         setFiles(res.data.files || []);
         setTempCount(res.data.tempCount ?? 0);
         setPermanentCount(res.data.permanentCount ?? 0);
+        lastFetchTimeRef.current = Date.now();
       }
     } catch (e: any) {
       console.warn('Fetch stash files failed:', e.message);
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
       setIsRefreshing(false);
     }

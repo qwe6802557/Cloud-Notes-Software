@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -75,6 +75,10 @@ export default function NotesScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showRAGModal, setShowRAGModal] = useState(false);
 
+  // SWR 保活控制器：初次挂载冷启动展示 Loading，切 Tab 聚焦时保持 FlatList 存活与滚动位不变
+  const hasLoadedOnceRef = useRef(false);
+  const lastFetchTimeRef = useRef(0);
+
   // 初始化全库倒排索引引擎 (微任务延迟，确保首屏组件挂载零阻塞)
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -83,11 +87,22 @@ export default function NotesScreen() {
     return () => clearTimeout(timer);
   }, []);
 
-  // 加载数据
+  // 加载数据 (SWR 就地保活模型：绝不卸载已渲染的列表)
   const loadData = useCallback(async (isRefresh = false, overrideNbId?: string | null) => {
+    const isFirstLoad = !hasLoadedOnceRef.current;
+    const now = Date.now();
+
+    // SWR 限流：已有数据且未切换笔记本、非下拉刷新、30秒内不重复向后端发请求
+    if (!isRefresh && !isFirstLoad && overrideNbId === undefined && now - lastFetchTimeRef.current < 30000) {
+      return;
+    }
+
     try {
-      if (isRefresh) setIsRefreshing(true);
-      else setIsLoading(true);
+      if (isRefresh) {
+        setIsRefreshing(true);
+      } else if (isFirstLoad) {
+        setIsLoading(true);
+      }
 
       const [nbRes, activeNbStored] = await Promise.all([
         notesApi.getNotebooks().catch(() => ({ code: 500, data: [] as Notebook[] })),
@@ -139,10 +154,12 @@ export default function NotesScreen() {
           isStarred: n.isStarred,
         }));
         mobileSearchEngine.batchUpsertDocuments(searchDocs);
+        lastFetchTimeRef.current = Date.now();
       }
     } catch (e: any) {
       console.warn('Load notes error:', e.message);
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
       setIsRefreshing(false);
     }

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -26,23 +26,40 @@ export default function NotebooksScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // SWR 保活控制器：初次挂载展示全屏菊花，后续切 Tab 聚焦就地复用内存态
+  const hasLoadedOnceRef = useRef(false);
+  const lastFetchTimeRef = useRef(0);
+
   // 新建笔记本弹窗
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newNotebookTitle, setNewNotebookTitle] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
   const loadNotebooks = useCallback(async (isRefresh = false) => {
+    const isFirstLoad = !hasLoadedOnceRef.current;
+    const now = Date.now();
+
+    // SWR 限流：已有缓存数据、非手动下拉刷新且 30 秒内聚焦不重复请求
+    if (!isRefresh && !isFirstLoad && now - lastFetchTimeRef.current < 30000) {
+      return;
+    }
+
     try {
-      if (isRefresh) setIsRefreshing(true);
-      else setIsLoading(true);
+      if (isRefresh) {
+        setIsRefreshing(true);
+      } else if (isFirstLoad) {
+        setIsLoading(true);
+      }
 
       const res = await notesApi.getNotebooks();
       if (res.code === 200 && Array.isArray(res.data)) {
         setNotebooks(res.data);
+        lastFetchTimeRef.current = Date.now();
       }
     } catch (e: any) {
       console.warn('Fetch notebooks failed:', e.message);
     } finally {
+      hasLoadedOnceRef.current = true;
       setIsLoading(false);
       setIsRefreshing(false);
     }
