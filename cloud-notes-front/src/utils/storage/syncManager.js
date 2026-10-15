@@ -1,0 +1,372 @@
+/**
+ * syncManager.js - 离线突变队列与非破坏性安全分叉增量同步器
+ * 遵循 Local-First 原则，按键即写本地，后台增量上云，断网自愈重放，冲突安全分叉
+ */
+
+import { updateNote, createNote, getNoteDetail } from '@/api/notes';
+import {
+    saveNoteCache,
+    enqueueMutation,
+    dequeueMutation,
+    getPendingMutations,
+    getPendingMutationCount,
+    clearMutationsForNote
+} from './localNotesDB';
+
+class SyncManager {
+    constructor() {
+        this.status = 'synced'; // 'synced' | 'pending' | 'syncing' | 'offline' | 'conflict'
+        this.isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+        this.queuedCount = 0;
+        this.lastSyncedAt = null;
+        this.lastConflictNote = null;
+        this.subscribers = new Set();
+        this.isFlushing = false;
+        this.debounceTimers = new Map(); // noteId -> timer
+        this.lastKnownRemoteUpdatedAt = new Map(); // noteId -> string
+
+        this.initNetworkListeners();
+        this.refreshQueuedCount();
+    }
+
+    setLastKnownRemoteUpdatedAt(noteId, updatedAt) {
+        if (noteId && updatedAt) {
+            this.lastKnownRemoteUpdatedAt.set(noteId, updatedAt);
+        }
+    }
+
+    initNetworkListeners() {
+        if (typeof window === 'undefined') return;
+
+        window.addEventListener('online', () => {
+            this.isOnline = true;
+            this.flushQueue();
+        });
+
+        window.addEventListener('offline', () => {
+            this.isOnline = false;
+            this.setStatus('offline');
+        });
+    }
+
+    /**
+     * 订阅状态变更
+     */
+    subscribe(callback) {
+        this.subscribers.add(callback);
+        // 立即向新订阅者推送当前状态快照
+        callback(this.getSnapshot());
+        return () => {
+            this.subscribers.delete(callback);
+        };
+    }
+
+    getSnapshot() {
+        return {
+            status: this.status,
+            isOnline: this.isOnline,
+            queuedCount: this.queuedCount,
+            lastSyncedAt: this.lastSyncedAt,
+            lastConflictNote: this.lastConflictNote
+        };
+    }
+
+    setStatus(status) {
+        if (this.status !== status) {
+            this.status = status;
+            this.notify();
+        }
+    }
+
+    notify() {
+        const snapshot = this.getSnapshot();
+        this.subscribers.forEach(cb => {
+            try {
+                cb(snapshot);
+            } catch (err) {
+                console.error('[SyncManager] Subscriber callback error:', err);
+            }
+        });
+    }
+
+    async refreshQueuedCount() {
+        try {
+            this.queuedCount = await getPendingMutationCount();
+            if (this.queuedCount > 0 && this.isOnline && this.status === 'synced') {
+                this.setStatus('pending');
+            } else if (this.queuedCount === 0 && this.isOnline && this.status === 'pending') {
+                this.setStatus('synced');
+            } else {
+                this.notify();
+            }
+        } catch {
+            this.queuedCount = 0;
+        }
+    }
+
+    /**
+     * 按键实时通知本地脏数据（无防抖，立即落盘本地 IndexedDB）
+     */
+    async notifyLocalDirty(noteId, { title, content, baseUpdatedAt }) {
+        if (!noteId) return;
+
+        // 1. 立即持久化到本地快照表
+        await saveNoteCache({
+            id: noteId,
+            title,
+            content,
+            updatedAt: new Date().toISOString(),
+            isDirty: true
+        });
+
+        // 2. 更新状态指示
+        if (!this.isOnline) {
+            await enqueueMutation({
+                noteId,
+                action: 'update',
+                payload: { title, content },
+                baseUpdatedAt
+            });
+            await this.refreshQueuedCount();
+            this.setStatus('offline');
+        } else {
+            this.setStatus('pending');
+        }
+    }
+
+    /**
+     * 防抖增量上云同步（默认 1.5s 防抖）
+     */
+    scheduleAutoSync(noteId, noteData, delay = 1500) {
+        if (!noteId) return;
+
+        if (this.debounceTimers.has(noteId)) {
+            clearTimeout(this.debounceTimers.get(noteId));
+        }
+
+        const timer = setTimeout(async () => {
+            this.debounceTimers.delete(noteId);
+            const res = await this.syncNote(noteId, noteData, { auto: true });
+            if (res?.success && !res.forked && typeof noteData?.onSyncSuccess === 'function') {
+                noteData.onSyncSuccess(res);
+            }
+        }, delay);
+
+        this.debounceTimers.set(noteId, timer);
+    }
+
+    /**
+     * 核心保存同步逻辑 (支持手动与自动)
+     */
+    async syncNote(noteId, { title, content, baseUpdatedAt }, options = {}) {
+        if (!noteId) return { success: false, error: 'Note ID required' };
+
+        // 取消该 note 正在排队的防抖计时器
+        if (this.debounceTimers.has(noteId)) {
+            clearTimeout(this.debounceTimers.get(noteId));
+            this.debounceTimers.delete(noteId);
+        }
+
+        // 无论在线与否，首先牢固写入本地持久化
+        await saveNoteCache({
+            id: noteId,
+            title,
+            content,
+            updatedAt: new Date().toISOString(),
+            isDirty: true
+        });
+
+        // 1. 若当前离线，直接入队，保证零丢稿
+        if (!this.isOnline) {
+            await enqueueMutation({
+                noteId,
+                action: 'update',
+                payload: { title, content },
+                baseUpdatedAt
+            });
+            await this.refreshQueuedCount();
+            this.setStatus('offline');
+            return { success: true, localOnly: true, offline: true };
+        }
+
+        // 2. 在线状态，开始推送上云
+        this.setStatus('syncing');
+
+        try {
+            // 冲突预检：比对云端最新版本
+            const lastKnown = this.lastKnownRemoteUpdatedAt.get(noteId) || baseUpdatedAt;
+            if (lastKnown) {
+                try {
+                    const remoteRes = await getNoteDetail(noteId);
+                    const remoteNote = remoteRes?.note;
+                    if (remoteNote && remoteNote.updatedAt) {
+                        const remoteTime = new Date(remoteNote.updatedAt).getTime();
+                        const lastKnownTime = new Date(lastKnown).getTime();
+
+                        // 只有当远端时间戳严格大于本地已知的远端最新时间戳（说明被另一端并发写入），且内容不同时，才触发非破坏性安全分叉
+                        if (remoteTime > lastKnownTime && remoteNote.content !== content) {
+                            console.warn('[SyncManager] Concurrent modification detected! Initiating safety fork.');
+                            const forkedNote = await this.forkConflictNote({
+                                originalTitle: title || remoteNote.title,
+                                content,
+                                notebookId: remoteNote.notebookId
+                            });
+
+                            // 本地原稿重设为干净，已通过分叉副本完整保留
+                            await saveNoteCache({
+                                id: noteId,
+                                title: remoteNote.title,
+                                content: remoteNote.content,
+                                updatedAt: remoteNote.updatedAt,
+                                lastSavedContent: remoteNote.content,
+                                lastSyncedAt: new Date().toISOString(),
+                                isDirty: false
+                            });
+                            await clearMutationsForNote(noteId);
+                            await this.refreshQueuedCount();
+
+                            this.lastKnownRemoteUpdatedAt.set(noteId, remoteNote.updatedAt);
+                            this.lastConflictNote = forkedNote;
+                            this.setStatus('conflict');
+                            return { success: true, forked: true, forkedNote };
+                        }
+                    }
+                } catch (checkErr) {
+                    console.warn('[SyncManager] Conflict check non-fatal error:', checkErr);
+                }
+            }
+
+            // 正式向云端保存
+            const saveRes = await updateNote(noteId, {
+                title,
+                content
+            });
+
+            const savedUpdatedAt = saveRes?.note?.updatedAt || new Date().toISOString();
+            this.lastKnownRemoteUpdatedAt.set(noteId, savedUpdatedAt);
+
+            // 更新本地快照为已同步
+            await saveNoteCache({
+                id: noteId,
+                title,
+                content,
+                updatedAt: savedUpdatedAt,
+                lastSavedContent: content,
+                lastSyncedAt: new Date().toISOString(),
+                isDirty: false
+            });
+
+            await clearMutationsForNote(noteId);
+            await this.refreshQueuedCount();
+
+            this.lastSyncedAt = new Date();
+            this.setStatus('synced');
+            return { success: true, localOnly: false, updatedAt: savedUpdatedAt };
+        } catch (error) {
+            console.error('[SyncManager] Cloud save failed, enqueueing mutation:', error);
+
+            // 网络失败或后端异常，安全入离线突变队列保底
+            await enqueueMutation({
+                noteId,
+                action: 'update',
+                payload: { title, content },
+                baseUpdatedAt
+            });
+            await this.refreshQueuedCount();
+
+            this.setStatus('offline');
+            return { success: false, localOnly: true, error };
+        }
+    }
+
+    /**
+     * 非破坏性冲突安全分叉（100% 零丢稿）
+     */
+    async forkConflictNote({ originalTitle, content, notebookId }) {
+        const now = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const timeStamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+        const conflictTitle = `[冲突副本] ${originalTitle || '无标题'}_${timeStamp}`;
+
+        const createRes = await createNote({
+            title: conflictTitle,
+            content,
+            notebookId
+        });
+
+        const createdNote = createRes?.note;
+        if (createdNote && createdNote.id) {
+            await saveNoteCache({
+                id: createdNote.id,
+                title: createdNote.title,
+                content: createdNote.content,
+                updatedAt: createdNote.updatedAt,
+                lastSavedContent: createdNote.content,
+                lastSyncedAt: new Date().toISOString(),
+                isDirty: false
+            });
+        }
+
+        return createdNote;
+    }
+
+    /**
+     * 联网后排空与重放突变队列
+     */
+    async flushQueue() {
+        if (this.isFlushing || !this.isOnline) return;
+        this.isFlushing = true;
+
+        try {
+            const mutations = await getPendingMutations();
+            if (mutations.length === 0) {
+                await this.refreshQueuedCount();
+                this.setStatus('synced');
+                return;
+            }
+
+            this.setStatus('syncing');
+
+            for (const task of mutations) {
+                if (!this.isOnline) break;
+
+                try {
+                    const { noteId, payload, baseUpdatedAt, seq } = task;
+                    const res = await this.syncNote(noteId, {
+                        title: payload.title,
+                        content: payload.content,
+                        baseUpdatedAt
+                    }, { auto: true });
+
+                    if (res.success) {
+                        await dequeueMutation(seq);
+                    } else {
+                        break;
+                    }
+                } catch (taskErr) {
+                    console.error('[SyncManager] Flush task error:', taskErr);
+                    break;
+                }
+            }
+
+            await this.refreshQueuedCount();
+            if (this.queuedCount === 0 && this.isOnline) {
+                this.setStatus('synced');
+            }
+        } finally {
+            this.isFlushing = false;
+        }
+    }
+
+    /**
+     * 用户手动触发立即重试同步
+     */
+    async retryManual() {
+        this.isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+        await this.flushQueue();
+    }
+}
+
+// 导出全局单例
+export const syncManager = new SyncManager();
+export default syncManager;

@@ -71,6 +71,9 @@ import WikiLinkHoverCard from './WikiLinkHoverCard';
 import SecondaryNotePane from './SecondaryNotePane';
 import NoteTabBar from './NoteTabBar';
 import { useNoteTabs } from '@/hooks/useNoteTabs';
+import SyncStatusPill from './SyncStatusPill';
+import { getNoteCache, saveNoteCache } from '@/utils/storage/localNotesDB';
+import syncManager from '@/utils/storage/syncManager';
 
 const locale = {
     ...zhHans
@@ -422,6 +425,8 @@ const NoteEditor = ({
     const [saving, setSaving] = useState(false);
     const [autoSaving, setAutoSaving] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
+    const isDirtyRef = useRef(false);
+    isDirtyRef.current = isDirty;
     const [lastSavedAt, setLastSavedAt] = useState(null);
     const [saveError, setSaveError] = useState('');
     const [uploadingImage, setUploadingImage] = useState(false);
@@ -1578,6 +1583,8 @@ const NoteEditor = ({
         if (selectedNote) {
             // 当前笔记已处于加载就绪状态时直接跳过，防止标签脏状态同步重刷破坏正在编辑的光标与正文
             if (currentLoadedNoteIdRef.current === selectedNote) {
+                loadingNoteRef.current = false;
+                setLoading(false);
                 return;
             }
             currentLoadedNoteIdRef.current = selectedNote;
@@ -1585,13 +1592,13 @@ const NoteEditor = ({
             loadingNoteRef.current = true;
             setSaveError('');
 
-            // 优先从内存缓存中秒级呈现正文与标题，消除切换标签时的白屏清空与文字闪烁
-            const cached = noteContentCacheRef.current.get(selectedNote);
-            if (cached) {
-                contentRef.current = cached.content || '';
-                setContent(cached.content || '');
-                lastSavedContentRef.current = cached.lastSavedContent || cached.content || '';
-                setNoteTitle(cached.title || '');
+            // 1. 本地优先 (Local-First): 优先从内存缓存或 IndexedDB 本地持久化快照秒级呈现
+            const memCached = noteContentCacheRef.current.get(selectedNote);
+            if (memCached) {
+                contentRef.current = memCached.content || '';
+                setContent(memCached.content || '');
+                lastSavedContentRef.current = memCached.lastSavedContent || memCached.content || '';
+                setNoteTitle(memCached.title || '');
                 setLoading(false);
             } else {
                 const existingTab = primaryTabsRef.current?.find(t => t.id === selectedNote);
@@ -1599,11 +1606,30 @@ const NoteEditor = ({
                     setNoteTitle(existingTab.title);
                 }
                 setLoading(true);
+
+                // 异步从 IndexedDB 极速提纯 (<10ms)，若内存无缓存则用本地快照先行上屏
+                getNoteCache(selectedNote).then(idbCached => {
+                    if (idbCached && mounted && currentLoadedNoteIdRef.current === selectedNote) {
+                        contentRef.current = idbCached.content || '';
+                        setContent(idbCached.content || '');
+                        lastSavedContentRef.current = idbCached.lastSavedContent || idbCached.content || '';
+                        if (idbCached.title) setNoteTitle(idbCached.title);
+                        setLoading(false);
+                        if (idbCached.isDirty) {
+                            setIsDirty(true);
+                        }
+                    }
+                }).catch(() => {});
             }
 
             getNoteDetail(selectedNote)
                 .then(result => {
-                    if (!mounted) {
+                    if (!mounted || currentLoadedNoteIdRef.current !== selectedNote) {
+                        return;
+                    }
+
+                    // SWR 安全保稿: 若用户已在当前篇产生未保存编辑（isDirty），严格保护本地输入现场
+                    if (isDirtyRef.current) {
                         return;
                     }
 
@@ -1618,6 +1644,9 @@ const NoteEditor = ({
                         updateTabTitle(selectedNote, loadedTitle);
                     }
                     setLastSavedAt(result?.note?.updatedAt ? new Date(result.note.updatedAt) : null);
+                    if (result?.note?.updatedAt) {
+                        syncManager.setLastKnownRemoteUpdatedAt(selectedNote, result.note.updatedAt);
+                    }
                     setIsDirty(false);
 
                     noteContentCacheRef.current.set(selectedNote, {
@@ -1626,6 +1655,17 @@ const NoteEditor = ({
                         title: loadedTitle,
                         updatedAt: result?.note?.updatedAt
                     });
+
+                    // 同步刷新本地持久化
+                    saveNoteCache({
+                        id: selectedNote,
+                        title: loadedTitle,
+                        content: noteContent,
+                        updatedAt: result?.note?.updatedAt,
+                        lastSavedContent: noteContent,
+                        lastSyncedAt: new Date().toISOString(),
+                        isDirty: false
+                    });
                 })
                 .catch(() => {
                     if (mounted) {
@@ -1633,10 +1673,8 @@ const NoteEditor = ({
                     }
                 })
                 .finally(() => {
-                    if (mounted) {
-                        loadingNoteRef.current = false;
-                        setLoading(false);
-                    }
+                    loadingNoteRef.current = false;
+                    setLoading(false);
                 });
         } else {
             currentLoadedNoteIdRef.current = null;
@@ -1652,8 +1690,12 @@ const NoteEditor = ({
 
         return () => {
             mounted = false;
+            if (currentLoadedNoteIdRef.current === selectedNote && loadingNoteRef.current) {
+                currentLoadedNoteIdRef.current = null;
+            }
         };
-    }, [selectedNote, updateTabTitle]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedNote]);
 
     // 切回全部笔记卡片时的 SWR 静默拉取与安全保稿策略
     const prevActiveViewRef = useRef(activeView);
@@ -1696,7 +1738,33 @@ const NoteEditor = ({
         }
 
         if (!loadingNoteRef.current) {
-            setIsDirty(value !== lastSavedContentRef.current);
+            const dirty = value !== lastSavedContentRef.current;
+            setIsDirty(dirty);
+
+            if (selectedNote && dirty) {
+                // 1. 键盘敲击按键即时写回 IndexedDB 本地持久化 (0 丢稿保底)
+                syncManager.notifyLocalDirty(selectedNote, {
+                    title: noteTitle,
+                    content: value,
+                    baseUpdatedAt: lastSavedAt
+                });
+
+                // 2. 1.5s 防抖后台增量静默上云
+                syncManager.scheduleAutoSync(selectedNote, {
+                    title: noteTitle,
+                    content: value,
+                    baseUpdatedAt: lastSavedAt,
+                    onSyncSuccess: syncRes => {
+                        if (contentRef.current === value) {
+                            lastSavedContentRef.current = value;
+                            setIsDirty(false);
+                            if (syncRes?.updatedAt) {
+                                setLastSavedAt(new Date(syncRes.updatedAt));
+                            }
+                        }
+                    }
+                }, 1500);
+            }
         }
     };
 
@@ -1723,6 +1791,13 @@ const NoteEditor = ({
         }
 
         try {
+            // 调度 syncManager 执行双层持久化、并发冲突检测与安全分叉
+            const syncRes = await syncManager.syncNote(selectedNote, {
+                title: noteTitle,
+                content,
+                baseUpdatedAt: lastSavedAt
+            }, options);
+
             if (onSave) {
                 await onSave(selectedNote, content, {
                     title: noteTitle,
@@ -1744,13 +1819,15 @@ const NoteEditor = ({
                 });
             }
 
-            if (!options.silent) {
+            if (syncRes?.forked && syncRes?.forkedNote) {
+                message.info(`已检测到版本冲突，本地修改已安全保存为：${syncRes.forkedNote.title}`);
+            } else if (!options.silent) {
                 message.success('保存成功');
             }
         } catch (error) {
             setSaveError('保存失败');
             if (!options.silent) {
-                message.error('保存失败，请稍后重试');
+                message.error('保存失败，内容已安全落盘至本地');
             }
             throw error;
         } finally {
@@ -1760,7 +1837,7 @@ const NoteEditor = ({
                 setSaving(false);
             }
         }
-    }, [autoSaving, content, isDirty, noteTitle, onSave, saving, selectedNote]);
+    }, [autoSaving, content, isDirty, lastSavedAt, noteTitle, onSave, saving, selectedNote]);
     handleSaveRef.current = handleSave;
 
     const handleRollbackSuccess = useCallback(rolledBackNote => {
@@ -2140,6 +2217,7 @@ const NoteEditor = ({
                         知识库问答
                     </Button>
                 </Tooltip>
+                <SyncStatusPill />
                 <Button
                     className="save-btn"
                     type="primary"

@@ -25,6 +25,9 @@ import InlineAIToolbar from '../../components/InlineAIToolbar';
 import InlineAIStreamCard from '../../components/InlineAIStreamCard';
 import LinkSuggestBar from '../../components/LinkSuggestBar';
 import GhostLinkSuggestStrip from '../../components/GhostLinkSuggestStrip';
+import SyncStatusPill from '../../components/SyncStatusPill';
+import { getNoteCache, saveNoteCache } from '../../utils/storage/mobileNotesDB';
+import mobileSyncManager from '../../utils/storage/mobileSyncManager';
 
 export default function NoteEditScreen() {
   const router = useRouter();
@@ -40,6 +43,10 @@ export default function NoteEditScreen() {
   const [isLoading, setIsLoading] = useState(!!id);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [baseUpdatedAt, setBaseUpdatedAt] = useState<string | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const isDirtyRef = useRef(false);
+  isDirtyRef.current = isDirty;
 
   const [cursorPosition, setCursorPosition] = useState<{ start: number; end: number }>({
     start: 0,
@@ -201,15 +208,47 @@ export default function NoteEditScreen() {
         return;
       }
 
+      // 1. 本地优先 (Local-First): 优先读取本地持久化快照瞬时上屏 (<10ms)
+      try {
+        const localCache = await getNoteCache(id);
+        if (localCache) {
+          setTitle(localCache.title || '');
+          setContent(localCache.content || '');
+          setBaseUpdatedAt(localCache.updatedAt || null);
+          setIsLoading(false);
+          if (localCache.isDirty) {
+            setIsDirty(true);
+          }
+        }
+      } catch (cacheErr) {}
+
+      // 2. SWR 后台异步拉取远端对齐
       try {
         const res = await notesApi.getNoteDetail(id);
         if (res.code === 200 && res.data) {
-          setTitle(res.data.title || '');
-          setContent(res.data.content || '');
+          mobileSyncManager.setLastKnownRemoteUpdatedAt(id, res.data.updatedAt);
+          // 若用户已在本地产生编辑脏数据，严格保护本地输入现场
+          if (!isDirtyRef.current) {
+            setTitle(res.data.title || '');
+            setContent(res.data.content || '');
+            setBaseUpdatedAt(res.data.updatedAt || null);
+            setIsDirty(false);
+          }
           setNotebookId(res.data.notebookId);
+
+          // 刷新本地持久化
+          await saveNoteCache({
+            id,
+            title: res.data.title || '',
+            content: res.data.content || '',
+            updatedAt: res.data.updatedAt,
+            lastSavedContent: res.data.content || '',
+            lastSyncedAt: new Date().toISOString(),
+            isDirty: isDirtyRef.current,
+          });
         }
       } catch (e: any) {
-        Alert.alert('加载错误', e.message || '获取笔记内容失败');
+        // 离线无网时静默依靠本地快照正常编辑
       } finally {
         setIsLoading(false);
       }
@@ -419,6 +458,62 @@ export default function NoteEditScreen() {
     setInlineSelectionSnapshot(null);
   };
 
+  const handleTitleChange = (newTitle: string) => {
+    setTitle(newTitle);
+    setIsDirty(true);
+    if (id) {
+      mobileSyncManager.notifyLocalDirty(id, {
+        title: newTitle,
+        content,
+        baseUpdatedAt,
+      });
+      mobileSyncManager.scheduleAutoSync(
+        id,
+        {
+          title: newTitle,
+          content,
+          baseUpdatedAt,
+          notebookId,
+          onSyncSuccess: syncRes => {
+            setIsDirty(false);
+            if (syncRes?.updatedAt) {
+              setBaseUpdatedAt(syncRes.updatedAt);
+            }
+          },
+        },
+        1500
+      );
+    }
+  };
+
+  const handleContentChange = (newContent: string) => {
+    setContent(newContent);
+    setIsDirty(true);
+    if (id) {
+      mobileSyncManager.notifyLocalDirty(id, {
+        title,
+        content: newContent,
+        baseUpdatedAt,
+      });
+      mobileSyncManager.scheduleAutoSync(
+        id,
+        {
+          title,
+          content: newContent,
+          baseUpdatedAt,
+          notebookId,
+          onSyncSuccess: syncRes => {
+            setIsDirty(false);
+            if (syncRes?.updatedAt) {
+              setBaseUpdatedAt(syncRes.updatedAt);
+            }
+          },
+        },
+        1500
+      );
+    }
+  };
+
   // 保存笔记
   const handleSave = async () => {
     if (!title.trim()) {
@@ -429,16 +524,26 @@ export default function NoteEditScreen() {
     try {
       setIsSaving(true);
       if (id) {
-        // 更新现有笔记
-        const res = await notesApi.updateNote(id, { title: title.trim(), content });
-        if (res.code === 200) {
-          // 清理草稿
-          await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${id}`);
-          Alert.alert('成功', '笔记已保存');
-          router.back();
+        // 更新现有笔记：通过 mobileSyncManager 执行本地持久化、防抖队列与安全分叉
+        const syncRes = await mobileSyncManager.syncNote(id, {
+          title: title.trim(),
+          content,
+          baseUpdatedAt,
+          notebookId,
+        });
+
+        setIsDirty(false);
+        // 清理草稿
+        await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${id}`);
+
+        if (syncRes.forked && syncRes.forkedNote) {
+          Alert.alert('已生成冲突副本', `检测到云端存在并发修改，本地内容已另存为：${syncRes.forkedNote.title}`);
+        } else if (syncRes.offline) {
+          Alert.alert('已离线安全落盘', '当前处于无网络环境，修改已牢固保存在本地并加入重试队列');
         } else {
-          throw new Error(res.message);
+          Alert.alert('成功', '笔记已保存');
         }
+        router.back();
       } else {
         // 新建笔记：若无 notebookId，先自动绑定首个笔记本
         let targetNbId = notebookId;
@@ -458,7 +563,17 @@ export default function NoteEditScreen() {
           parentId: initialParentId || null,
         });
 
-        if (res.code === 200) {
+        if (res.code === 200 && res.data) {
+          const newId = (res.data as any)?._id || (res.data as any)?.id;
+          await saveNoteCache({
+            id: newId,
+            title: res.data.title,
+            content: res.data.content,
+            updatedAt: res.data.updatedAt,
+            lastSavedContent: res.data.content,
+            lastSyncedAt: new Date().toISOString(),
+            isDirty: false,
+          });
           await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}new`);
           Alert.alert('成功', '笔记已创建');
           router.back();
@@ -479,7 +594,8 @@ export default function NoteEditScreen() {
         options={{
           headerTitle: id ? '编辑笔记' : '新建笔记',
           headerRight: () => (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <SyncStatusPill />
               {Boolean(id) && (
                 <TouchableOpacity
                   style={styles.historyHeaderBtn}
@@ -536,7 +652,7 @@ export default function NoteEditScreen() {
               placeholder="请输入标题..."
               placeholderTextColor="#94a3b8"
               value={title}
-              onChangeText={setTitle}
+              onChangeText={handleTitleChange}
               maxLength={120}
             />
 
@@ -548,7 +664,7 @@ export default function NoteEditScreen() {
               placeholderTextColor="#94a3b8"
               value={content}
               onChangeText={text => {
-                setContent(text);
+                handleContentChange(text);
                 checkWikiLinkTrigger(text, cursorPosition);
               }}
               multiline

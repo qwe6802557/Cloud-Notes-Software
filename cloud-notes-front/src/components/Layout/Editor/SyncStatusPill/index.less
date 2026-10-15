@@ -1,0 +1,222 @@
+// SyncStatusPill.less - 遵循 /stitch-design-taste 语义设计规范
+
+.sync-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    height: 28px;
+    border-radius: 14px;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+    &:hover {
+        background-color: #f1f5f9;
+        border-color: #cbd5e1;
+        transform: translateY(-1px);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    }
+
+    &:active {
+        transform: translateY(0);
+    }
+
+    .status-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        display: inline-block;
+        flex-shrink: 0;
+
+        &.dot-synced {
+            background-color: #059669;
+        }
+
+        &.dot-pending {
+            background-color: #d97706;
+            animation: syncBreathing 1.8s infinite ease-in-out;
+        }
+
+        &.dot-syncing {
+            background-color: #2563eb;
+            animation: syncPulse 1.2s infinite ease-in-out;
+        }
+
+        &.dot-offline {
+            background-color: #71717a;
+        }
+
+        &.dot-conflict {
+            background-color: #e11d48;
+        }
+    }
+
+    .status-text {
+        font-size: 12px;
+        font-weight: 500;
+        color: #334155;
+        line-height: 1;
+    }
+
+    .status-badge-count {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        font-weight: 600;
+        color: #d97706;
+        background-color: #fef3c7;
+        padding: 1px 5px;
+        border-radius: 8px;
+        line-height: 1;
+    }
+
+    &.pill-offline {
+        border-color: #cbd5e1;
+        background-color: #f1f5f9;
+        .status-text {
+            color: #64748b;
+        }
+    }
+
+    &.pill-conflict {
+        border-color: #fecdd3;
+        background-color: #fff1f2;
+        .status-text {
+            color: #e11d48;
+        }
+    }
+}
+
+@keyframes syncBreathing {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.4);
+        opacity: 0.55;
+    }
+}
+
+@keyframes syncPulse {
+    0% {
+        transform: scale(0.95);
+        opacity: 0.7;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(0.95);
+        opacity: 0.7;
+    }
+}
+
+// Popover 浮层面板样式
+.sync-status-popover-overlay {
+    .ant-popover-inner {
+        padding: 12px 14px;
+        border-radius: 12px;
+        background: #ffffff;
+        box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08), 0 8px 10px -6px rgba(15, 23, 42, 0.04);
+        border: 1px solid #e2e8f0;
+    }
+}
+
+.sync-status-popover {
+    min-width: 220px;
+
+    .popover-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #f1f5f9;
+        margin-bottom: 10px;
+
+        .popover-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #0f172a;
+        }
+
+        .popover-engine-tag {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 11px;
+            color: #2563eb;
+            background: #eff6ff;
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
+    }
+
+    .popover-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 12px;
+
+        .status-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+
+            .status-label {
+                color: #64748b;
+            }
+
+            .status-val {
+                color: #1e293b;
+                font-weight: 500;
+
+                &.val-online {
+                    color: #059669;
+                }
+
+                &.val-offline {
+                    color: #71717a;
+                }
+
+                &.val-mono {
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+                }
+            }
+        }
+
+        .conflict-alert {
+            margin-top: 6px;
+            padding: 6px 8px;
+            background-color: #fff1f2;
+            border: 1px solid #fecdd3;
+            border-radius: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+
+            .conflict-tip {
+                font-size: 11px;
+                color: #e11d48;
+                font-weight: 600;
+            }
+
+            .conflict-title {
+                font-size: 11px;
+                color: #9f1239;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+        }
+    }
+
+    .popover-footer {
+        display: flex;
+        justify-content: flex-end;
+        padding-top: 6px;
+        border-top: 1px solid #f8fafc;
+    }
+}
