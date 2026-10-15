@@ -7,7 +7,8 @@ import {
     SettingOutlined,
     PlusOutlined
 } from '@ant-design/icons';
-import { searchNotes, getRecentNotes } from '@/api/notes';
+import { getRecentNotes } from '@/api/notes';
+import { localSearchEngine } from '@/utils/search/localSearchEngine';
 import './CommandPalette.less';
 
 const formatRelativeTime = dateStr => {
@@ -28,14 +29,34 @@ const renderHighlighted = (text, keyword) => {
     if (!keyword) return text;
 
     const lowerText = text.toLowerCase();
-    const lowerKey = keyword.toLowerCase();
-    const index = lowerText.indexOf(lowerKey);
+    const lowerKey = keyword.toLowerCase().trim();
 
-    if (index === -1) return text;
+    if (!lowerKey) return text;
+
+    const index = lowerText.indexOf(lowerKey);
+    if (index === -1) {
+        // 尝试单字高亮首个匹配字符
+        for (const ch of lowerKey) {
+            const chIndex = lowerText.indexOf(ch);
+            if (chIndex !== -1) {
+                const before = text.slice(0, chIndex);
+                const match = text.slice(chIndex, chIndex + 1);
+                const after = text.slice(chIndex + 1);
+                return (
+                    <>
+                        {before}
+                        <mark>{match}</mark>
+                        {renderHighlighted(after, keyword)}
+                    </>
+                );
+            }
+        }
+        return text;
+    }
 
     const before = text.slice(0, index);
-    const match = text.slice(index, index + keyword.length);
-    const after = text.slice(index + keyword.length);
+    const match = text.slice(index, index + lowerKey.length);
+    const after = text.slice(index + lowerKey.length);
 
     return (
         <>
@@ -58,12 +79,19 @@ const CommandPalette = ({
     const [searchText, setSearchText] = useState('');
     const [recentNotes, setRecentNotes] = useState([]);
     const [searchResults, setSearchResults] = useState([]);
-    const [loading, setLoading] = useState(false);
+    const [searchMetrics, setSearchMetrics] = useState({ latencyMs: 0, total: 0 });
+    const [totalDocsCount, setTotalDocsCount] = useState(0);
     const [activeIndex, setActiveIndex] = useState(0);
 
     const inputRef = useRef(null);
-    const searchTimerRef = useRef(null);
     const activeItemRef = useRef(null);
+
+    // 组件挂载与唤起时初始化离线搜索引擎
+    useEffect(() => {
+        localSearchEngine.init().then(() => {
+            setTotalDocsCount(localSearchEngine.getTotalDocsCount());
+        });
+    }, []);
 
     const staticCommands = useMemo(() => [
         {
@@ -126,52 +154,40 @@ const CommandPalette = ({
         if (open) {
             setSearchText('');
             setSearchResults([]);
+            setSearchMetrics({ latencyMs: 0, total: 0 });
             setActiveIndex(0);
             fetchRecent();
+            setTotalDocsCount(localSearchEngine.getTotalDocsCount());
             setTimeout(() => {
                 inputRef.current?.focus();
             }, 50);
         }
     }, [open, fetchRecent]);
 
-    const executeSearch = useCallback(async query => {
-        if (!query.trim()) {
-            setSearchResults([]);
-            setLoading(false);
-            return;
-        }
-
-        setLoading(true);
-        try {
-            const res = await searchNotes({ query: query.trim() });
-            const list = res?.notes || res?.data?.notes || [];
-            setSearchResults(list);
-            setActiveIndex(0);
-        } catch {
-            setSearchResults([]);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
-
+    // 即时检索处理（基于本地倒排引擎毫秒直出）
     const handleInputChange = e => {
         const val = e.target.value;
         setSearchText(val);
 
-        if (searchTimerRef.current) {
-            clearTimeout(searchTimerRef.current);
-        }
-
         if (val.startsWith('>')) {
             setSearchResults([]);
-            setLoading(false);
+            setSearchMetrics({ latencyMs: 0, total: 0 });
             setActiveIndex(0);
             return;
         }
 
-        searchTimerRef.current = setTimeout(() => {
-            executeSearch(val);
-        }, 220);
+        if (!val.trim()) {
+            setSearchResults([]);
+            setSearchMetrics({ latencyMs: 0, total: 0 });
+            setActiveIndex(0);
+            return;
+        }
+
+        // 本地全库毫秒级倒排检索
+        const result = localSearchEngine.search(val);
+        setSearchResults(result.items);
+        setSearchMetrics({ latencyMs: result.latencyMs, total: result.total });
+        setActiveIndex(0);
     };
 
     const isCommandMode = searchText.trim().startsWith('>');
@@ -189,11 +205,26 @@ const CommandPalette = ({
         }
 
         if (searchText.trim()) {
-            return searchResults.map(note => ({
-                id: `note-${note._id}`,
+            const items = searchResults.map(note => ({
+                id: `note-${note.id || note._id}`,
                 type: 'note',
                 data: note
             }));
+
+            // 附带 RAG 深度语义问答入口选项
+            if (onOpenAI) {
+                items.push({
+                    id: 'cmd-rag-prompt',
+                    type: 'rag',
+                    title: `全库 RAG 深度问答: "${searchText.trim()}"`,
+                    action: () => {
+                        onOpenAI?.(searchText.trim());
+                        onClose?.();
+                    }
+                });
+            }
+
+            return items;
         }
 
         const items = [...filteredCommands];
@@ -201,12 +232,17 @@ const CommandPalette = ({
             items.push({
                 id: `recent-${note._id}`,
                 type: 'note',
-                data: note
+                data: {
+                    ...note,
+                    id: note._id,
+                    notebookName: note.notebook?.name || note.notebookName || '默认笔记本',
+                    notebookColor: note.notebook?.color || '#3b82f6'
+                }
             });
         });
 
         return items;
-    }, [isCommandMode, filteredCommands, searchText, searchResults, recentNotes]);
+    }, [isCommandMode, filteredCommands, searchText, searchResults, recentNotes, onOpenAI, onClose]);
 
     useEffect(() => {
         if (activeItemRef.current) {
@@ -218,10 +254,11 @@ const CommandPalette = ({
         const target = flatItems[index];
         if (!target) return;
 
-        if (target.type === 'command') {
+        if (target.type === 'command' || target.type === 'rag') {
             target.action?.();
-        } else if (target.type === 'note' && target.data?._id) {
-            onSelectNote?.(target.data._id);
+        } else if (target.type === 'note' && (target.data?.id || target.data?._id)) {
+            const noteId = target.data.id || target.data._id;
+            onSelectNote?.(noteId);
             onClose?.();
         }
     }, [flatItems, onSelectNote, onClose]);
@@ -260,7 +297,7 @@ const CommandPalette = ({
                     <input
                         ref={inputRef}
                         className="command-palette-input"
-                        placeholder="搜索文档或输入 > 执行快捷操作..."
+                        placeholder="毫秒级搜索文档正文或输入 > 执行操作..."
                         value={searchText}
                         onChange={handleInputChange}
                     />
@@ -268,10 +305,8 @@ const CommandPalette = ({
                 </div>
 
                 <div className="command-palette-body">
-                    {loading ? (
-                        <div className="command-palette-loading">正在全库极速检索中...</div>
-                    ) : flatItems.length === 0 ? (
-                        <div className="command-palette-empty">未匹配到相关文档或指令</div>
+                    {flatItems.length === 0 ? (
+                        <div className="command-palette-empty">未在本地匹配到相关文档或指令</div>
                     ) : (
                         <>
                             {!searchText.trim() && !isCommandMode ? (
@@ -323,6 +358,10 @@ const CommandPalette = ({
                                                                     </span>
                                                                     {note.notebook?.name && (
                                                                         <span className="command-item-notebook">
+                                                                            <span
+                                                                                className="notebook-dot"
+                                                                                style={{ backgroundColor: note.notebook.color || '#3b82f6' }}
+                                                                            />
                                                                             {note.notebook.name}
                                                                         </span>
                                                                     )}
@@ -364,6 +403,32 @@ const CommandPalette = ({
                                         );
                                     }
 
+                                    if (item.type === 'rag') {
+                                        return (
+                                            <div
+                                                key={item.id}
+                                                ref={isSelected ? activeItemRef : null}
+                                                className={`command-item command-item-rag ${isSelected ? 'is-active' : ''}`}
+                                                onClick={() => handleSelectCurrent(index)}
+                                                onMouseEnter={() => setActiveIndex(index)}
+                                            >
+                                                <div className="command-item-left">
+                                                    <div className="command-item-icon" style={{ background: '#ede9fe', color: '#7c3aed' }}>
+                                                        <ThunderboltOutlined />
+                                                    </div>
+                                                    <span className="command-item-title" style={{ color: '#6d28d9' }}>
+                                                        {item.title}
+                                                    </span>
+                                                </div>
+                                                <div className="command-item-right">
+                                                    <span className="command-item-action-hint" style={{ background: '#ddd6fe', color: '#5b21b6' }}>
+                                                        ↵ 深度解答
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+
                                     const note = item.data;
                                     return (
                                         <div
@@ -382,9 +447,13 @@ const CommandPalette = ({
                                                         <span className="command-item-title">
                                                             {renderHighlighted(note.title || '无标题文档', searchText.trim())}
                                                         </span>
-                                                        {note.notebook?.name && (
+                                                        {note.notebookName && (
                                                             <span className="command-item-notebook">
-                                                                {note.notebook.name}
+                                                                <span
+                                                                    className="notebook-dot"
+                                                                    style={{ backgroundColor: note.notebookColor || '#3b82f6' }}
+                                                                />
+                                                                {note.notebookName}
                                                             </span>
                                                         )}
                                                     </div>
@@ -415,7 +484,17 @@ const CommandPalette = ({
                         <span><kbd>↵</kbd> 打开</span>
                         <span><kbd>ESC</kbd> 退出</span>
                     </div>
-                    <div className="command-footer-brand">云笔记 · 闪电穿梭中枢</div>
+                    <div className="command-footer-metrics">
+                        {searchText.trim() && searchMetrics.latencyMs > 0 ? (
+                            <span className="metric-badge">
+                                ⚡ {searchMetrics.latencyMs}ms · 本地命中 {searchMetrics.total} 篇
+                            </span>
+                        ) : (
+                            <span className="brand-tag">
+                                本地全库 {totalDocsCount > 0 ? `${totalDocsCount} 篇` : ''} · 离线即时检索
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
         </div>

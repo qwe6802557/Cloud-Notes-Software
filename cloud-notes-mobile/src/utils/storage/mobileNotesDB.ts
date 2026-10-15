@@ -193,3 +193,79 @@ export async function clearMutationsForNote(noteId: string): Promise<void> {
     console.warn('[mobileNotesDB] clearMutationsForNote error:', e);
   }
 }
+
+// ==================== 3. 全库离线检索轻量索引 (Search Index) API ====================
+
+export interface SearchIndexDoc {
+  id: string;
+  title: string;
+  snippet: string;
+  notebookId: string;
+  notebookName: string;
+  notebookColor: string;
+  updatedAt: string;
+  createdAt?: string;
+  isStarred?: boolean;
+}
+
+const SEARCH_INDEX_KEY = '@cloud_notes:search_index';
+
+/**
+ * 获取所有本地持久化的检索文档
+ */
+export async function getAllSearchIndexDocs(): Promise<SearchIndexDoc[]> {
+  try {
+    const raw = await AsyncStorage.getItem(SEARCH_INDEX_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as SearchIndexDoc[];
+  } catch (e) {
+    console.warn('[mobileNotesDB] getAllSearchIndexDocs error:', e);
+    return [];
+  }
+}
+
+/**
+ * 批量保存/覆盖离线检索文档
+ */
+export async function saveSearchIndexDocs(docs: SearchIndexDoc[] = []): Promise<void> {
+  if (!Array.isArray(docs)) return;
+  try {
+    await AsyncStorage.setItem(SEARCH_INDEX_KEY, JSON.stringify(docs));
+  } catch (e) {
+    console.warn('[mobileNotesDB] saveSearchIndexDocs error:', e);
+  }
+}
+
+/**
+ * 增量新增或更新单篇笔记的检索条目
+ */
+export async function upsertSearchIndexDoc(doc: SearchIndexDoc): Promise<void> {
+  if (!doc || !doc.id) return;
+  try {
+    const list = await getAllSearchIndexDocs();
+    const index = list.findIndex(d => d.id === doc.id);
+    if (index >= 0) {
+      list[index] = { ...list[index], ...doc };
+    } else {
+      list.unshift(doc);
+    }
+    await AsyncStorage.setItem(SEARCH_INDEX_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.warn('[mobileNotesDB] upsertSearchIndexDoc error:', e);
+  }
+}
+
+/**
+ * 删除单篇笔记的检索条目
+ */
+export async function deleteSearchIndexDoc(id: string): Promise<void> {
+  if (!id) return;
+  try {
+    const list = await getAllSearchIndexDocs();
+    const filtered = list.filter(d => d.id !== id);
+    await AsyncStorage.setItem(SEARCH_INDEX_KEY, JSON.stringify(filtered));
+  } catch (e) {
+    console.warn('[mobileNotesDB] deleteSearchIndexDoc error:', e);
+  }
+}
+

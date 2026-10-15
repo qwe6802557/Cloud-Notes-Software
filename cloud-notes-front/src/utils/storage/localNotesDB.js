@@ -4,9 +4,10 @@
  */
 
 const DB_NAME = 'cloud_notes_local_db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NOTES_CACHE = 'notes_cache';
 const STORE_MUTATIONS = 'offline_mutations';
+const STORE_SEARCH_INDEX = 'search_index';
 
 let dbInstance = null;
 let dbPromise = null;
@@ -44,6 +45,12 @@ export function openLocalDB() {
                 const mutStore = db.createObjectStore(STORE_MUTATIONS, { keyPath: 'seq', autoIncrement: true });
                 mutStore.createIndex('noteId', 'noteId', { unique: false });
                 mutStore.createIndex('timestamp', 'timestamp', { unique: false });
+            }
+
+            // 3. 全库离线检索轻量索引表
+            if (!db.objectStoreNames.contains(STORE_SEARCH_INDEX)) {
+                const searchStore = db.createObjectStore(STORE_SEARCH_INDEX, { keyPath: 'id' });
+                searchStore.createIndex('updatedAt', 'updatedAt', { unique: false });
             }
         };
 
@@ -262,3 +269,68 @@ export function clearMutationsForNote(noteId) {
         });
     });
 }
+
+// ==================== 3. 全库离线检索轻量索引 (Search Index) API ====================
+
+/**
+ * 获取所有本地持久化的检索文档
+ * @returns {Promise<Array>}
+ */
+export function getAllSearchIndexDocs() {
+    return withTransaction(STORE_SEARCH_INDEX, 'readonly', store => {
+        return new Promise((resolve, reject) => {
+            const req = store.getAll();
+            req.onsuccess = () => resolve(req.result || []);
+            req.onerror = () => reject(req.error);
+        });
+    }).then(res => res);
+}
+
+/**
+ * 批量保存/覆盖离线检索文档
+ * @param {Array<object>} docs
+ * @returns {Promise<void>}
+ */
+export function saveSearchIndexDocs(docs = []) {
+    if (!Array.isArray(docs) || docs.length === 0) return Promise.resolve();
+    return openLocalDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction([STORE_SEARCH_INDEX], 'readwrite');
+            const store = tx.objectStore(STORE_SEARCH_INDEX);
+
+            docs.forEach(doc => {
+                if (doc && doc.id) {
+                    store.put(doc);
+                }
+            });
+
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    });
+}
+
+/**
+ * 增量新增或更新单篇笔记的检索条目
+ * @param {object} doc { id, title, snippet, notebookId, notebookName, notebookColor, updatedAt }
+ * @returns {Promise<void>}
+ */
+export function upsertSearchIndexDoc(doc) {
+    if (!doc || !doc.id) return Promise.resolve();
+    return withTransaction(STORE_SEARCH_INDEX, 'readwrite', store => {
+        store.put(doc);
+    });
+}
+
+/**
+ * 删除单篇笔记的检索条目
+ * @param {string} id
+ * @returns {Promise<void>}
+ */
+export function deleteSearchIndexDoc(id) {
+    if (!id) return Promise.resolve();
+    return withTransaction(STORE_SEARCH_INDEX, 'readwrite', store => {
+        store.delete(id);
+    });
+}
+

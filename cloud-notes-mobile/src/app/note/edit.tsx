@@ -226,7 +226,7 @@ export default function NoteEditScreen() {
       try {
         const res = await notesApi.getNoteDetail(id);
         if (res.code === 200 && res.data) {
-          mobileSyncManager.setLastKnownRemoteUpdatedAt(id, res.data.updatedAt);
+          mobileSyncManager.setLastKnownRemoteUpdatedAt(id, res.data.updatedAt, res.data.content || '');
           // 若用户已在本地产生编辑脏数据，严格保护本地输入现场
           if (!isDirtyRef.current) {
             setTitle(res.data.title || '');

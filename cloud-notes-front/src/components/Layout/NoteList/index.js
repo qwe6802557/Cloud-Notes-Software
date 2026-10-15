@@ -24,6 +24,7 @@ import {
   updateNote,
   updateNoteStarred
 } from '@/api/notes';
+import { localSearchEngine } from '@/utils/search/localSearchEngine';
 import './index.less';
 
 const { Sider } = Layout;
@@ -129,9 +130,37 @@ const NoteList = ({
               : await getNotebookNotes(selectedNotebook, params);
 
         if (mounted) {
-          setNotes(result?.notes || []);
+          const list = result?.notes || [];
+          setNotes(list);
+          list.forEach(n => {
+            localSearchEngine.upsertDocument({
+              id: n._id || n.id,
+              title: n.title,
+              snippet: n.content || n.rawContent || '',
+              notebookId: n.notebookId || selectedNotebook,
+              updatedAt: n.updatedAt
+            });
+          });
         }
       } catch (error) {
+        // 离线降级搜索
+        if (debouncedSearchTerm) {
+          const localRes = localSearchEngine.search(debouncedSearchTerm, {
+            notebookId: (!isTrash && !isStarred && !isRecent) ? selectedNotebook : undefined
+          });
+          if (mounted && localRes.items.length > 0) {
+            setNotes(localRes.items.map(item => ({
+              _id: item.id,
+              id: item.id,
+              title: item.title,
+              content: item.snippet,
+              updatedAt: item.updatedAt,
+              notebookId: item.notebookId
+            })));
+            return;
+          }
+        }
+
         message.error(
           isTrash
             ? '回收站加载失败'

@@ -13,6 +13,7 @@ import {
   getPendingMutationCount,
   clearMutationsForNote,
 } from './mobileNotesDB';
+import { mobileSearchEngine } from '../search/mobileSearchEngine';
 
 export type SyncStatusType = 'synced' | 'pending' | 'syncing' | 'offline' | 'conflict';
 
@@ -36,15 +37,21 @@ class MobileSyncManager {
   private isFlushing = false;
   private debounceTimers = new Map<string, any>();
   private lastKnownRemoteUpdatedAt = new Map<string, string>();
+  private lastSavedContentMap = new Map<string, string>();
 
   constructor() {
     this.initAppStateListener();
     this.refreshQueuedCount();
   }
 
-  public setLastKnownRemoteUpdatedAt(noteId: string, updatedAt: string) {
-    if (noteId && updatedAt) {
-      this.lastKnownRemoteUpdatedAt.set(noteId, updatedAt);
+  public setLastKnownRemoteUpdatedAt(noteId: string, updatedAt: string, content?: string) {
+    if (noteId) {
+      if (updatedAt) {
+        this.lastKnownRemoteUpdatedAt.set(noteId, updatedAt);
+      }
+      if (content !== undefined) {
+        this.lastSavedContentMap.set(noteId, content);
+      }
     }
   }
 
@@ -126,6 +133,14 @@ class MobileSyncManager {
       isDirty: true,
     });
 
+    // 立即增量更新移动端离线检索倒排索引
+    mobileSearchEngine.upsertDocument({
+      id: noteId,
+      title,
+      snippet: content,
+      updatedAt: new Date().toISOString(),
+    });
+
     // 2. 状态迁移
     if (!this.isOnline) {
       await enqueueMutation({
@@ -201,6 +216,15 @@ class MobileSyncManager {
       isDirty: true,
     });
 
+    // 立即增量更新移动端离线检索倒排索引
+    mobileSearchEngine.upsertDocument({
+      id: noteId,
+      title,
+      snippet: content,
+      notebookId,
+      updatedAt: new Date().toISOString(),
+    });
+
     // 1. 离线状态保底入队
     if (!this.isOnline) {
       await enqueueMutation({
@@ -218,8 +242,10 @@ class MobileSyncManager {
     this.setStatus('syncing');
 
     try {
-      // 冲突检测：比对本地已知的远端最新时间戳
+      // 冲突检测：比对本地已知的远端最新时间戳与基准正文
       const lastKnown = this.lastKnownRemoteUpdatedAt.get(noteId) || baseUpdatedAt;
+      const lastSavedContent = this.lastSavedContentMap.get(noteId);
+
       if (lastKnown) {
         try {
           const remoteRes = await getNoteDetail(noteId);
@@ -228,9 +254,17 @@ class MobileSyncManager {
             const remoteTime = new Date(remoteNote.updatedAt).getTime();
             const lastKnownTime = new Date(lastKnown).getTime();
 
-            // 只有当远端时间戳严格大于本地已知的最新时间戳且正文分叉时才触发安全分叉
-            if (remoteTime > lastKnownTime && remoteNote.content !== content) {
-              console.warn('[MobileSyncManager] Concurrent modification detected! Initiating safety fork.');
+            // 核心并发冲突判定规则：
+            // 1. 远端时间戳严格晚于本地已知最新时间（容差 1000ms 过滤自身网络/时钟微漂移）；
+            // 2. 远端正文既不等于当前输入内容，也不等于本地上一轮落盘成功的基准快照 (lastSavedContent)；
+            const isRealExternalConflict = (
+              lastSavedContent !== undefined
+                ? remoteNote.content !== lastSavedContent && remoteNote.content !== content
+                : remoteNote.content !== content
+            );
+
+            if (remoteTime > (lastKnownTime + 1000) && isRealExternalConflict) {
+              console.warn('[MobileSyncManager] Real concurrent modification detected! Initiating safety fork.');
               const forkedNote = await this.forkConflictNote({
                 originalTitle: title || remoteNote.title,
                 content,
@@ -251,6 +285,7 @@ class MobileSyncManager {
               await this.refreshQueuedCount();
 
               this.lastKnownRemoteUpdatedAt.set(noteId, remoteNote.updatedAt);
+              this.lastSavedContentMap.set(noteId, remoteNote.content);
               this.lastConflictNote = forkedNote;
               this.setStatus('conflict');
               return { success: true, forked: true, forkedNote };
@@ -269,6 +304,7 @@ class MobileSyncManager {
 
       const savedUpdatedAt = saveRes?.data?.updatedAt || new Date().toISOString();
       this.lastKnownRemoteUpdatedAt.set(noteId, savedUpdatedAt);
+      this.lastSavedContentMap.set(noteId, content);
 
       await saveNoteCache({
         id: noteId,

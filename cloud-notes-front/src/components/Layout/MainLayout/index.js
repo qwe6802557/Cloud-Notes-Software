@@ -40,6 +40,11 @@ const MainLayout = () => {
     }, [activeView]);
 
     const handleSaveNote = useCallback(async (noteId, content, meta = {}) => {
+        // 若已经由 syncManager 成功保存并传入 note 实体，直接同步导航树，绝不发起二次重复写入
+        if (meta?.note) {
+            setSavedNote(meta.note);
+            return { note: meta.note };
+        }
         const result = await updateNote(noteId, {
             content,
             rawContent: content,

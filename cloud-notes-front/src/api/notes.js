@@ -204,4 +204,14 @@ export const exportNoteZip = noteId => {
     });
 };
 
+// 同步离线全库轻量索引（用于客户端 Local-First 倒排索引构建）
+export const syncNoteIndex = params => {
+    return request({
+        url: '/notes/index-sync',
+        method: 'get',
+        params
+    });
+};
+
+
 

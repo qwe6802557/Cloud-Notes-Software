@@ -12,6 +12,7 @@ import {
     getPendingMutationCount,
     clearMutationsForNote
 } from './localNotesDB';
+import { localSearchEngine } from '../search/localSearchEngine';
 
 class SyncManager {
     constructor() {
@@ -24,14 +25,20 @@ class SyncManager {
         this.isFlushing = false;
         this.debounceTimers = new Map(); // noteId -> timer
         this.lastKnownRemoteUpdatedAt = new Map(); // noteId -> string
+        this.lastSavedContentMap = new Map(); // noteId -> string (基准正文快照)
 
         this.initNetworkListeners();
         this.refreshQueuedCount();
     }
 
-    setLastKnownRemoteUpdatedAt(noteId, updatedAt) {
-        if (noteId && updatedAt) {
-            this.lastKnownRemoteUpdatedAt.set(noteId, updatedAt);
+    setLastKnownRemoteUpdatedAt(noteId, updatedAt, content) {
+        if (noteId) {
+            if (updatedAt) {
+                this.lastKnownRemoteUpdatedAt.set(noteId, updatedAt);
+            }
+            if (content !== undefined) {
+                this.lastSavedContentMap.set(noteId, content);
+            }
         }
     }
 
@@ -119,6 +126,14 @@ class SyncManager {
             isDirty: true
         });
 
+        // 立即增量更新离线检索倒排索引
+        localSearchEngine.upsertDocument({
+            id: noteId,
+            title,
+            snippet: content,
+            updatedAt: new Date().toISOString()
+        });
+
         // 2. 更新状态指示
         if (!this.isOnline) {
             await enqueueMutation({
@@ -176,6 +191,14 @@ class SyncManager {
             isDirty: true
         });
 
+        // 立即增量更新离线检索倒排索引
+        localSearchEngine.upsertDocument({
+            id: noteId,
+            title,
+            snippet: content,
+            updatedAt: new Date().toISOString()
+        });
+
         // 1. 若当前离线，直接入队，保证零丢稿
         if (!this.isOnline) {
             await enqueueMutation({
@@ -195,6 +218,8 @@ class SyncManager {
         try {
             // 冲突预检：比对云端最新版本
             const lastKnown = this.lastKnownRemoteUpdatedAt.get(noteId) || baseUpdatedAt;
+            const lastSavedContent = this.lastSavedContentMap.get(noteId);
+
             if (lastKnown) {
                 try {
                     const remoteRes = await getNoteDetail(noteId);
@@ -203,9 +228,19 @@ class SyncManager {
                         const remoteTime = new Date(remoteNote.updatedAt).getTime();
                         const lastKnownTime = new Date(lastKnown).getTime();
 
-                        // 只有当远端时间戳严格大于本地已知的远端最新时间戳（说明被另一端并发写入），且内容不同时，才触发非破坏性安全分叉
-                        if (remoteTime > lastKnownTime && remoteNote.content !== content) {
-                            console.warn('[SyncManager] Concurrent modification detected! Initiating safety fork.');
+                        // 核心并发冲突判定规则：
+                        // 1. 远端时间戳必须晚于本地已知最新时间戳，给予 1000ms 容差过滤自身网络/时钟微漂移；
+                        // 2. 远端正文既不等于当前编辑内容，也不等于本地上一轮落盘成功的基准快照 (lastSavedContent)；
+                        //    如果 remoteNote.content === lastSavedContent，说明云端仍是本客户端刚才保存的内容，
+                        //    用户正在键盘上持续输入，绝对不是外部并发修改！
+                        const isRealExternalConflict = (
+                            lastSavedContent !== undefined
+                                ? remoteNote.content !== lastSavedContent && remoteNote.content !== content
+                                : remoteNote.content !== content
+                        );
+
+                        if (remoteTime > (lastKnownTime + 1000) && isRealExternalConflict) {
+                            console.warn('[SyncManager] Real concurrent modification detected! Initiating safety fork.');
                             const forkedNote = await this.forkConflictNote({
                                 originalTitle: title || remoteNote.title,
                                 content,
@@ -226,6 +261,7 @@ class SyncManager {
                             await this.refreshQueuedCount();
 
                             this.lastKnownRemoteUpdatedAt.set(noteId, remoteNote.updatedAt);
+                            this.lastSavedContentMap.set(noteId, remoteNote.content);
                             this.lastConflictNote = forkedNote;
                             this.setStatus('conflict');
                             return { success: true, forked: true, forkedNote };
@@ -244,6 +280,7 @@ class SyncManager {
 
             const savedUpdatedAt = saveRes?.note?.updatedAt || new Date().toISOString();
             this.lastKnownRemoteUpdatedAt.set(noteId, savedUpdatedAt);
+            this.lastSavedContentMap.set(noteId, content);
 
             // 更新本地快照为已同步
             await saveNoteCache({
@@ -261,7 +298,7 @@ class SyncManager {
 
             this.lastSyncedAt = new Date();
             this.setStatus('synced');
-            return { success: true, localOnly: false, updatedAt: savedUpdatedAt };
+            return { success: true, localOnly: false, updatedAt: savedUpdatedAt, note: saveRes?.note };
         } catch (error) {
             console.error('[SyncManager] Cloud save failed, enqueueing mutation:', error);
 

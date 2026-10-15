@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -18,6 +18,49 @@ import * as notesApi from '../../api/notesApi';
 import { Note, Notebook } from '../../api/types';
 import { Config } from '../../constants/Config';
 import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
+import { mobileSearchEngine, SearchResultItem } from '../../utils/search/mobileSearchEngine';
+
+const renderHighlightedText = (text: string, query: string, style?: any, highlightStyle?: any) => {
+  if (!text) return null;
+  if (!query) return <Text style={style}>{text}</Text>;
+
+  const lowerText = text.toLowerCase();
+  const lowerKey = query.toLowerCase().trim();
+  if (!lowerKey) return <Text style={style}>{text}</Text>;
+
+  const index = lowerText.indexOf(lowerKey);
+  if (index === -1) {
+    // 尝试字符匹配
+    for (const ch of lowerKey) {
+      const chIdx = lowerText.indexOf(ch);
+      if (chIdx !== -1) {
+        const before = text.slice(0, chIdx);
+        const match = text.slice(chIdx, chIdx + 1);
+        const after = text.slice(chIdx + 1);
+        return (
+          <Text style={style}>
+            {before}
+            <Text style={highlightStyle || styles.highlightMark}>{match}</Text>
+            {renderHighlightedText(after, query, style, highlightStyle)}
+          </Text>
+        );
+      }
+    }
+    return <Text style={style}>{text}</Text>;
+  }
+
+  const before = text.slice(0, index);
+  const match = text.slice(index, index + lowerKey.length);
+  const after = text.slice(index + lowerKey.length);
+
+  return (
+    <Text style={style}>
+      {before}
+      <Text style={highlightStyle || styles.highlightMark}>{match}</Text>
+      {renderHighlightedText(after, query, style, highlightStyle)}
+    </Text>
+  );
+};
 
 export default function NotesScreen() {
   const router = useRouter();
@@ -26,9 +69,16 @@ export default function NotesScreen() {
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [activeNotebookId, setActiveNotebookId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [searchMetrics, setSearchMetrics] = useState({ latencyMs: 0, total: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showRAGModal, setShowRAGModal] = useState(false);
+
+  // 初始化全库倒排索引引擎
+  useEffect(() => {
+    mobileSearchEngine.init();
+  }, []);
 
   // 加载数据
   const loadData = useCallback(async (isRefresh = false, overrideNbId?: string | null) => {
@@ -74,6 +124,19 @@ export default function NotesScreen() {
 
       if (notesRes && notesRes.code === 200 && Array.isArray(notesRes.data)) {
         setNotes(notesRes.data);
+        const currentNb = loadedNotebooks.find(nb => nb._id === targetNbId);
+        // 增量同步进本地倒排索引引擎
+        notesRes.data.forEach((n: Note) => {
+          mobileSearchEngine.upsertDocument({
+            id: n._id,
+            title: n.title,
+            snippet: n.content,
+            notebookId: n.notebookId || targetNbId || '',
+            notebookName: currentNb?.title || currentNb?.name || '默认笔记本',
+            updatedAt: n.updatedAt,
+            isStarred: n.isStarred,
+          });
+        });
       }
     } catch (e: any) {
       console.warn('Load notes error:', e.message);
@@ -90,16 +153,34 @@ export default function NotesScreen() {
     }, [loadData])
   );
 
+  // 搜索输入触发全库穿透毫秒级倒排检索
+  const handleSearchChange = (text: string) => {
+    setSearchQuery(text);
+    const trimmed = text.trim();
+    if (!trimmed) {
+      setSearchResults([]);
+      setSearchMetrics({ latencyMs: 0, total: 0 });
+      return;
+    }
+
+    const res = mobileSearchEngine.search(trimmed);
+    setSearchResults(res.items);
+    setSearchMetrics({ latencyMs: res.latencyMs, total: res.total });
+  };
+
   const handleSelectNotebook = async (id: string) => {
     setActiveNotebookId(id);
     await AsyncStorage.setItem(Config.storageKeys.activeNotebookId, id);
     loadData(false, id);
   };
 
-  const toggleStar = async (item: Note) => {
+  const toggleStar = async (item: Note | SearchResultItem) => {
     const newStatus = !item.isStarred;
     // 乐观更新
     setNotes(prev =>
+      prev.map(n => (n._id === item._id ? { ...n, isStarred: newStatus } : n))
+    );
+    setSearchResults(prev =>
       prev.map(n => (n._id === item._id ? { ...n, isStarred: newStatus } : n))
     );
     try {
@@ -109,28 +190,26 @@ export default function NotesScreen() {
       setNotes(prev =>
         prev.map(n => (n._id === item._id ? { ...n, isStarred: !newStatus } : n))
       );
+      setSearchResults(prev =>
+        prev.map(n => (n._id === item._id ? { ...n, isStarred: !newStatus } : n))
+      );
     }
   };
 
-  // 过滤笔记
-  const filteredNotes = notes.filter(n => {
-    if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase();
-    return (
-      (n.title && n.title.toLowerCase().includes(query)) ||
-      (n.content && n.content.toLowerCase().includes(query))
-    );
-  });
+  const isSearching = searchQuery.trim().length > 0;
 
-  // 在最外层笔记列表中，仅展示顶级条目（!item.parentId），子笔记收纳进文件夹内；搜索时展示所有匹配项
-  const displayNotes = searchQuery.trim()
-    ? filteredNotes
-    : filteredNotes.filter(item => !item.parentId);
+  // 决定最终展示的笔记列表
+  const displayNotes = useMemo(() => {
+    if (isSearching) {
+      return searchResults;
+    }
+    return notes.filter(item => !item.parentId);
+  }, [isSearching, searchResults, notes]);
 
   const activeNotebook = notebooks.find(nb => nb._id === activeNotebookId);
 
   // 清洗 Markdown 特殊语法以展示纯文本摘要
-  const cleanSnippet = (content: string) => {
+  const cleanSnippet = (content?: string) => {
     if (!content) return '暂无内容';
     return content
       .replace(/#+\s+/g, '')
@@ -157,26 +236,27 @@ export default function NotesScreen() {
     return `${d.getMonth() + 1}/${d.getDate()}`;
   };
 
-  const renderNoteCard = ({ item }: { item: Note }) => {
+  const renderNoteCard = ({ item }: { item: any }) => {
     const isFolder = item.type === 'folder';
+    const nbName = item.notebookName || notebooks.find(n => n._id === item.notebookId)?.title || '笔记本';
+    const nbColor = item.notebookColor || '#3b82f6';
 
     return (
       <TouchableOpacity
         style={styles.card}
         onPress={() => {
           if (isFolder) {
-            const nb = notebooks.find(n => n._id === item.notebookId);
             router.push({
               pathname: '/folder/[id]',
               params: {
                 id: item._id,
                 title: item.title,
                 notebookId: item.notebookId || activeNotebookId || '',
-                notebookName: nb?.title || nb?.name || activeNotebook?.title || '笔记本',
+                notebookName: nbName,
               },
             });
           } else {
-            router.push({ pathname: '/note/[id]', params: { id: item._id } });
+            router.push({ pathname: '/note/[id]', params: { id: item._id || item.id } });
           }
         }}
         activeOpacity={0.7}
@@ -189,9 +269,17 @@ export default function NotesScreen() {
               color={isFolder ? '#f59e0b' : '#3b82f6'}
               style={{ marginRight: 6 }}
             />
-            <Text style={styles.cardTitle} numberOfLines={1}>
-              {item.title || (isFolder ? '未命名文件夹' : '无标题笔记')}
-            </Text>
+            {isSearching ? (
+              renderHighlightedText(
+                item.title || '无标题笔记',
+                searchQuery.trim(),
+                styles.cardTitle
+              )
+            ) : (
+              <Text style={styles.cardTitle} numberOfLines={1}>
+                {item.title || (isFolder ? '未命名文件夹' : '无标题笔记')}
+              </Text>
+            )}
           </View>
           {isFolder ? (
             <View style={styles.folderBadge}>
@@ -212,24 +300,29 @@ export default function NotesScreen() {
           )}
         </View>
 
-        <Text style={[styles.cardSnippet, isFolder && styles.folderSnippet]} numberOfLines={2}>
-          {isFolder ? '📁 点击浏览文件夹内容' : cleanSnippet(item.content)}
-        </Text>
+        {isSearching ? (
+          <Text style={styles.cardSnippet} numberOfLines={2}>
+            {renderHighlightedText(
+              item.snippet || cleanSnippet(item.content),
+              searchQuery.trim(),
+              styles.cardSnippet
+            )}
+          </Text>
+        ) : (
+          <Text style={[styles.cardSnippet, isFolder && styles.folderSnippet]} numberOfLines={2}>
+            {isFolder ? '📁 点击浏览文件夹内容' : cleanSnippet(item.content)}
+          </Text>
+        )}
 
         <View style={styles.cardFooter}>
           <View style={styles.cardFooterLeft}>
             <Text style={styles.cardDate}>{formatDate(item.updatedAt || item.createdAt)}</Text>
-            {(() => {
-              const nb = notebooks.find(n => n._id === item.notebookId);
-              return nb ? (
-                <View style={styles.notebookBadge}>
-                  <Ionicons name="book-outline" size={11} color="#64748b" style={{ marginRight: 3 }} />
-                  <Text style={styles.notebookBadgeText} numberOfLines={1}>
-                    {nb.title || nb.name}
-                  </Text>
-                </View>
-              ) : null;
-            })()}
+            <View style={styles.notebookBadge}>
+              <View style={[styles.notebookDot, { backgroundColor: nbColor }]} />
+              <Text style={styles.notebookBadgeText} numberOfLines={1}>
+                {nbName}
+              </Text>
+            </View>
           </View>
           <Ionicons name="chevron-forward" size={14} color="#94a3b8" />
         </View>
@@ -239,20 +332,20 @@ export default function NotesScreen() {
 
   return (
     <View style={styles.container}>
-      {/* 顶部搜索与知识库问答栏 */}
+      {/* 顶部全库搜索与知识库问答栏 */}
       <View style={styles.searchRow}>
         <View style={styles.searchBar}>
           <Ionicons name="search" size={18} color="#94a3b8" style={styles.searchIcon} />
           <TextInput
             style={styles.searchInput}
-            placeholder="搜索笔记标题或内容..."
+            placeholder="全库毫秒级即打即搜 (支持拼音)..."
             placeholderTextColor="#94a3b8"
             value={searchQuery}
-            onChangeText={setSearchQuery}
+            onChangeText={handleSearchChange}
             clearButtonMode="while-editing"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <TouchableOpacity onPress={() => handleSearchChange('')}>
               <Ionicons name="close-circle" size={18} color="#94a3b8" />
             </TouchableOpacity>
           )}
@@ -267,25 +360,37 @@ export default function NotesScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* 分类过滤器条 */}
-      <View style={styles.filterRow}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
-          {notebooks.map(nb => {
-            const isActive = activeNotebookId === nb._id;
-            return (
-              <TouchableOpacity
-                key={nb._id}
-                style={[styles.filterChip, isActive && styles.filterChipActive]}
-                onPress={() => handleSelectNotebook(nb._id)}
-              >
-                <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
-                  {nb.title || nb.name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-      </View>
+      {/* 搜索性能指标栏 / 分类过滤器栏 */}
+      {isSearching ? (
+        <View style={styles.searchMetricsBar}>
+          <View style={styles.searchMetricsLeft}>
+            <Ionicons name="flash" size={13} color="#2563eb" />
+            <Text style={styles.searchMetricsText}>
+              ⚡ {searchMetrics.latencyMs}ms · 全库命中 {searchMetrics.total} 篇
+            </Text>
+          </View>
+          <Text style={styles.searchMetricsTag}>离线引擎</Text>
+        </View>
+      ) : (
+        <View style={styles.filterRow}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScroll}>
+            {notebooks.map(nb => {
+              const isActive = activeNotebookId === nb._id;
+              return (
+                <TouchableOpacity
+                  key={nb._id}
+                  style={[styles.filterChip, isActive && styles.filterChipActive]}
+                  onPress={() => handleSelectNotebook(nb._id)}
+                >
+                  <Text style={[styles.filterChipText, isActive && styles.filterChipTextActive]}>
+                    {nb.title || nb.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
 
       {/* 笔记列表 */}
       {isLoading ? (
@@ -295,7 +400,7 @@ export default function NotesScreen() {
       ) : (
         <FlatList
           data={displayNotes}
-          keyExtractor={item => item._id}
+          keyExtractor={item => item._id || item.id}
           renderItem={renderNoteCard}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -309,9 +414,11 @@ export default function NotesScreen() {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Ionicons name="document-text-outline" size={56} color="#cbd5e1" />
-              <Text style={styles.emptyTitle}>暂无相关笔记</Text>
+              <Text style={styles.emptyTitle}>暂无匹配笔记</Text>
               <Text style={styles.emptyDesc}>
-                {searchQuery ? '未找到符合条件的笔记' : '点击右下角按钮立即创建第一篇笔记'}
+                {isSearching
+                  ? `未找到包含 "${searchQuery}" 的笔记，可尝试拼音或更短词`
+                  : '点击右下角按钮立即创建第一篇笔记'}
               </Text>
             </View>
           }
@@ -400,6 +507,46 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#0f172a',
     paddingVertical: 0,
+  },
+  searchMetricsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  searchMetricsLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  searchMetricsText: {
+    fontSize: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: '#1e293b',
+    fontWeight: '600',
+  },
+  searchMetricsTag: {
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    color: '#64748b',
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  highlightMark: {
+    backgroundColor: 'rgba(254, 240, 138, 0.5)',
+    color: '#854d0e',
+    fontWeight: '600',
   },
   filterRow: {
     marginHorizontal: 16,
@@ -512,9 +659,15 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     maxWidth: 160,
   },
+  notebookDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 5,
+  },
   notebookBadgeText: {
     fontSize: 11,
-    color: '#64748b',
+    color: '#475569',
     fontWeight: '500',
   },
   cardDate: {

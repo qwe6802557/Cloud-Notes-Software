@@ -443,7 +443,6 @@ const NoteEditor = ({
         current: 0,
         images: []
     });
-    const autoSaveTimerRef = useRef(null);
     const lastSavedContentRef = useRef('');
     const loadingNoteRef = useRef(false);
     const editorContextRef = useRef(null);
@@ -1576,10 +1575,6 @@ const NoteEditor = ({
     useEffect(() => {
         let mounted = true;
 
-        if (autoSaveTimerRef.current) {
-            clearTimeout(autoSaveTimerRef.current);
-        }
-
         if (selectedNote) {
             // 当前笔记已处于加载就绪状态时直接跳过，防止标签脏状态同步重刷破坏正在编辑的光标与正文
             if (currentLoadedNoteIdRef.current === selectedNote) {
@@ -1645,7 +1640,7 @@ const NoteEditor = ({
                     }
                     setLastSavedAt(result?.note?.updatedAt ? new Date(result.note.updatedAt) : null);
                     if (result?.note?.updatedAt) {
-                        syncManager.setLastKnownRemoteUpdatedAt(selectedNote, result.note.updatedAt);
+                        syncManager.setLastKnownRemoteUpdatedAt(selectedNote, result.note.updatedAt, noteContent);
                     }
                     setIsDirty(false);
 
@@ -1716,6 +1711,9 @@ const NoteEditor = ({
                                 updateTabTitle(selectedNote, newTitle);
                             }
                             setLastSavedAt(note.updatedAt ? new Date(note.updatedAt) : null);
+                            if (note.updatedAt) {
+                                syncManager.setLastKnownRemoteUpdatedAt(selectedNote, note.updatedAt, newContent);
+                            }
                         }
                     }
                 }).catch(() => {});
@@ -1755,12 +1753,12 @@ const NoteEditor = ({
                     content: value,
                     baseUpdatedAt: lastSavedAt,
                     onSyncSuccess: syncRes => {
+                        if (syncRes?.updatedAt) {
+                            setLastSavedAt(new Date(syncRes.updatedAt));
+                        }
                         if (contentRef.current === value) {
                             lastSavedContentRef.current = value;
                             setIsDirty(false);
-                            if (syncRes?.updatedAt) {
-                                setLastSavedAt(new Date(syncRes.updatedAt));
-                            }
                         }
                     }
                 }, 1500);
@@ -1801,12 +1799,17 @@ const NoteEditor = ({
             if (onSave) {
                 await onSave(selectedNote, content, {
                     title: noteTitle,
-                    saveType: options.auto ? 'auto' : 'manual'
+                    saveType: options.auto ? 'auto' : 'manual',
+                    note: syncRes?.note
                 });
             }
 
             lastSavedContentRef.current = content;
-            setLastSavedAt(new Date());
+            if (syncRes?.updatedAt) {
+                setLastSavedAt(new Date(syncRes.updatedAt));
+            } else {
+                setLastSavedAt(new Date());
+            }
             setIsDirty(false);
             setSaveError('');
 
@@ -1815,7 +1818,7 @@ const NoteEditor = ({
                     content,
                     lastSavedContent: content,
                     title: noteTitle,
-                    updatedAt: new Date().toISOString()
+                    updatedAt: syncRes?.updatedAt || new Date().toISOString()
                 });
             }
 
@@ -2303,22 +2306,6 @@ const NoteEditor = ({
             )}
         </div>
     );
-
-    useEffect(() => {
-        if (!selectedNote || !isDirty || loading || saving || autoSaving || uploadingImage) {
-            return undefined;
-        }
-
-        autoSaveTimerRef.current = setTimeout(() => {
-            handleSave({ auto: true, silent: true }).catch(() => {});
-        }, 2000);
-
-        return () => {
-            if (autoSaveTimerRef.current) {
-                clearTimeout(autoSaveTimerRef.current);
-            }
-        };
-    }, [autoSaving, content, handleSave, isDirty, loading, saving, selectedNote, uploadingImage]);
 
     useEffect(() => {
         const handleBeforeUnload = event => {

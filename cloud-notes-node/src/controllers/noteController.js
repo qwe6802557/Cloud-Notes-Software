@@ -935,6 +935,70 @@ exports.getNoteDictionary = asyncHandler(async (req, res) => {
     });
 });
 
+// 同步离线全库轻量索引（用于客户端 Local-First 离线即时倒排索引构建）
+exports.syncNoteIndex = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const { since } = req.query;
+
+    const query = {
+        userId,
+        isDeleted: false,
+        type: 'note'
+    };
+
+    if (since) {
+        const sinceDate = new Date(since);
+        if (!isNaN(sinceDate.getTime())) {
+            query.updatedAt = { $gt: sinceDate };
+        }
+    }
+
+    const notes = await Note.find(query)
+        .select('_id title content rawContent notebookId updatedAt createdAt isStarred')
+        .populate('notebookId', 'name color')
+        .sort({ updatedAt: -1 })
+        .lean();
+
+    const stripMarkdown = (md = '') => {
+        return md
+            .replace(/!\[.*?\]\(.*?\)/g, '')
+            .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+            .replace(/\[\[(.*?)(?:\|.*?)?\]\]/g, '$1')
+            .replace(/`{1,3}[\s\S]*?`{1,3}/g, '')
+            .replace(/#+\s+/g, '')
+            .replace(/(\*\*|__)(.*?)\1/g, '$2')
+            .replace(/(\*|_)(.*?)\1/g, '$2')
+            .replace(/>\s+/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    };
+
+    const items = notes.map(n => {
+        const raw = n.rawContent || n.content || '';
+        const cleanText = stripMarkdown(raw);
+        return {
+            id: n._id.toString(),
+            title: n.title || '无标题笔记',
+            snippet: cleanText.slice(0, 300),
+            notebookId: n.notebookId?._id?.toString() || '',
+            notebookName: n.notebookId?.name || '默认笔记本',
+            notebookColor: n.notebookId?.color || '#3b82f6',
+            updatedAt: n.updatedAt,
+            createdAt: n.createdAt,
+            isStarred: Boolean(n.isStarred)
+        };
+    });
+
+    res.status(200).json({
+        code: 200,
+        message: '获取全库离线索引成功',
+        data: {
+            items,
+            serverTime: new Date().toISOString()
+        }
+    });
+});
+
 // 导出笔记为独立离线 Zip 归档包（含相对路径重写与本地媒体资产打包）
 exports.exportNoteZip = asyncHandler(async (req, res, next) => {
     const { id } = req.params;

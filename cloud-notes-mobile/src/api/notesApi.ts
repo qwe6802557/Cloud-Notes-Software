@@ -272,3 +272,25 @@ export const getNoteDictionary = (): Promise<ApiResponse<{ dictionary: Array<{ _
   });
 };
 
+// 同步离线全库轻量索引（供 Local-First 离线即时倒排索引构建）
+export interface NoteIndexItem {
+  id: string;
+  title: string;
+  snippet: string;
+  notebookId: string;
+  notebookName: string;
+  notebookColor: string;
+  updatedAt: string;
+  createdAt?: string;
+  isStarred?: boolean;
+}
+
+export const syncNoteIndex = (params?: { since?: string }): Promise<ApiResponse<{ items: NoteIndexItem[]; serverTime: string }>> => {
+  return request({
+    url: '/notes/index-sync',
+    method: 'get',
+    params,
+  });
+};
+
+
