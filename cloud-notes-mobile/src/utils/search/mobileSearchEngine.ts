@@ -29,6 +29,13 @@ const PINYIN_BOUNDARIES = [
   { initial: 'z', char: '匝' },
 ];
 
+// 单字拼音首字母轻量内存缓存，杜绝循环重复比对造成的 JS 线程卡死
+const pinyinCharCache = new Map<string, string>();
+const zhCollator =
+  typeof Intl !== 'undefined' && Intl.Collator
+    ? new Intl.Collator('zh-Hans-CN')
+    : null;
+
 /**
  * 提取中文字符串拼音首字母简写 (如 "移动端" -> "ydd")
  */
@@ -38,12 +45,21 @@ export function getPinyinInitials(str = ''): string {
     .split('')
     .map(ch => {
       if (!/[\u4e00-\u9fa5]/.test(ch)) return ch.toLowerCase();
+      const cached = pinyinCharCache.get(ch);
+      if (cached !== undefined) return cached;
+
+      let initial = '';
       for (let i = PINYIN_BOUNDARIES.length - 1; i >= 0; i--) {
-        if (ch.localeCompare(PINYIN_BOUNDARIES[i].char, 'zh-Hans-CN') >= 0) {
-          return PINYIN_BOUNDARIES[i].initial;
+        const cmp = zhCollator
+          ? zhCollator.compare(ch, PINYIN_BOUNDARIES[i].char)
+          : ch.localeCompare(PINYIN_BOUNDARIES[i].char);
+        if (cmp >= 0) {
+          initial = PINYIN_BOUNDARIES[i].initial;
+          break;
         }
       }
-      return '';
+      pinyinCharCache.set(ch, initial);
+      return initial;
     })
     .join('');
 }
@@ -143,6 +159,22 @@ class MobileSearchEngine {
   private invertedIndex: Map<string, Set<string>> = new Map();
   private isInitialized = false;
   private initPromise: Promise<void> | null = null;
+  private persistTimer: any = null;
+
+  /**
+   * 防抖异步落盘，彻底解决并发写 AsyncStorage 导致的桥接堵塞与卡死
+   */
+  private schedulePersist(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+    }
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      saveSearchIndexDocs(Array.from(this.docs.values())).catch(e =>
+        console.warn('[MobileSearchEngine] Persist error:', e)
+      );
+    }, 1200);
+  }
 
   async init(): Promise<void> {
     if (this.isInitialized) return;
@@ -155,10 +187,12 @@ class MobileSearchEngine {
           this.buildIndex(cachedDocs);
         }
 
-        // 后台静默增量预热
-        this.syncWithServer().catch(err => {
-          console.warn('[MobileSearchEngine] sync warn:', err.message);
-        });
+        // 延迟 2.5 秒后在后台静默预热增量索引，确保主页首屏渲染拥有 100% 优先级
+        setTimeout(() => {
+          this.syncWithServer().catch(err => {
+            console.warn('[MobileSearchEngine] sync warn:', err.message);
+          });
+        }, 2500);
       } catch (e) {
         console.warn('[MobileSearchEngine] init error:', e);
       } finally {
@@ -216,19 +250,27 @@ class MobileSearchEngine {
     });
   }
 
+  /**
+   * 批量增量更新索引 (纯内存操作，合并防抖落盘)
+   */
+  batchUpsertDocuments(docs: any[]): void {
+    if (!Array.isArray(docs) || docs.length === 0) return;
+    for (const doc of docs) {
+      if (!doc || !(doc.id || doc._id)) continue;
+      const id = String(doc.id || doc._id);
+      this.removeDocument(id, false);
+      this.indexSingleDoc(doc);
+    }
+    this.schedulePersist();
+  }
+
   upsertDocument(doc: any): void {
-    if (!doc || !doc.id) return;
+    if (!doc || !(doc.id || doc._id)) return;
     const id = String(doc.id || doc._id);
 
     this.removeDocument(id, false);
     this.indexSingleDoc(doc);
-
-    const stored = this.docs.get(id);
-    if (stored) {
-      upsertSearchIndexDoc(stored).catch(e =>
-        console.warn('[MobileSearchEngine] Upsert DB warn:', e)
-      );
-    }
+    this.schedulePersist();
   }
 
   removeDocument(id: string, persist = true): void {

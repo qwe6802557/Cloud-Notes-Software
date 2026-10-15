@@ -75,9 +75,12 @@ export default function NotesScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showRAGModal, setShowRAGModal] = useState(false);
 
-  // 初始化全库倒排索引引擎
+  // 初始化全库倒排索引引擎 (微任务延迟，确保首屏组件挂载零阻塞)
   useEffect(() => {
-    mobileSearchEngine.init();
+    const timer = setTimeout(() => {
+      mobileSearchEngine.init();
+    }, 200);
+    return () => clearTimeout(timer);
   }, []);
 
   // 加载数据
@@ -125,18 +128,17 @@ export default function NotesScreen() {
       if (notesRes && notesRes.code === 200 && Array.isArray(notesRes.data)) {
         setNotes(notesRes.data);
         const currentNb = loadedNotebooks.find(nb => nb._id === targetNbId);
-        // 增量同步进本地倒排索引引擎
-        notesRes.data.forEach((n: Note) => {
-          mobileSearchEngine.upsertDocument({
-            id: n._id,
-            title: n.title,
-            snippet: n.content,
-            notebookId: n.notebookId || targetNbId || '',
-            notebookName: currentNb?.title || currentNb?.name || '默认笔记本',
-            updatedAt: n.updatedAt,
-            isStarred: n.isStarred,
-          });
-        });
+        // 批量极速增量同步进倒排检索内存引擎，合并异步防抖落盘，杜绝 JS 线程与 SQLite 堵塞
+        const searchDocs = notesRes.data.map((n: Note) => ({
+          id: n._id,
+          title: n.title,
+          snippet: n.content,
+          notebookId: n.notebookId || targetNbId || '',
+          notebookName: currentNb?.title || currentNb?.name || '默认笔记本',
+          updatedAt: n.updatedAt,
+          isStarred: n.isStarred,
+        }));
+        mobileSearchEngine.batchUpsertDocuments(searchDocs);
       }
     } catch (e: any) {
       console.warn('Load notes error:', e.message);
@@ -208,10 +210,11 @@ export default function NotesScreen() {
 
   const activeNotebook = notebooks.find(nb => nb._id === activeNotebookId);
 
-  // 清洗 Markdown 特殊语法以展示纯文本摘要
+  // 清洗 Markdown 特殊语法以展示纯文本摘要 (先切片后正则，大幅提升列表渲染帧率)
   const cleanSnippet = (content?: string) => {
     if (!content) return '暂无内容';
-    return content
+    const rawHead = content.slice(0, 240);
+    return rawHead
       .replace(/#+\s+/g, '')
       .replace(/!\[.*?\]\(.*?\)/g, '[图片]')
       .replace(/\[.*?\]\(.*?\)/g, '$1')
@@ -439,12 +442,14 @@ export default function NotesScreen() {
         <Ionicons name="add" size={30} color="#ffffff" />
       </TouchableOpacity>
 
-      <RAGKnowledgeModal
-        visible={showRAGModal}
-        onClose={() => setShowRAGModal(false)}
-        currentNotebookId={activeNotebookId || undefined}
-        currentNotebookName={notebooks.find(n => n._id === activeNotebookId)?.title}
-      />
+      {showRAGModal && (
+        <RAGKnowledgeModal
+          visible={showRAGModal}
+          onClose={() => setShowRAGModal(false)}
+          currentNotebookId={activeNotebookId || undefined}
+          currentNotebookName={notebooks.find(n => n._id === activeNotebookId)?.title}
+        />
+      )}
     </View>
   );
 }

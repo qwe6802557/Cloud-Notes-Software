@@ -162,42 +162,44 @@ export default function NotebooksScreen() {
       )}
 
       {/* 新建笔记本弹窗 */}
-      <Modal visible={showCreateModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>新建笔记本</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="请输入笔记本标题 (如：面试复习、读书笔记)"
-              placeholderTextColor="#94a3b8"
-              value={newNotebookTitle}
-              onChangeText={setNewNotebookTitle}
-              autoFocus
-            />
+      {showCreateModal && (
+        <Modal visible={showCreateModal} transparent animationType="fade">
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>新建笔记本</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="请输入笔记本标题 (如：面试复习、读书笔记)"
+                placeholderTextColor="#94a3b8"
+                value={newNotebookTitle}
+                onChangeText={setNewNotebookTitle}
+                autoFocus
+              />
 
-            <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalCancelBtn]}
-                onPress={() => setShowCreateModal(false)}
-                disabled={isCreating}
-              >
-                <Text style={styles.modalCancelText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalConfirmBtn]}
-                onPress={handleCreateNotebook}
-                disabled={isCreating}
-              >
-                {isCreating ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <Text style={styles.modalConfirmText}>创建</Text>
-                )}
-              </TouchableOpacity>
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalCancelBtn]}
+                  onPress={() => setShowCreateModal(false)}
+                  disabled={isCreating}
+                >
+                  <Text style={styles.modalCancelText}>取消</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, styles.modalConfirmBtn]}
+                  onPress={handleCreateNotebook}
+                  disabled={isCreating}
+                >
+                  {isCreating ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.modalConfirmText}>创建</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
     </View>
   );
 }

@@ -28,8 +28,10 @@ export default function TabLayout() {
           paddingBottom: bottomInset,
         },
         tabBarItemStyle: {
+          flex: 1,
+          height: '100%',
           justifyContent: 'center',
-          alignItems: 'center',
+          alignItems: 'stretch',
         },
         tabBarLabelStyle: {
           fontSize: 11,

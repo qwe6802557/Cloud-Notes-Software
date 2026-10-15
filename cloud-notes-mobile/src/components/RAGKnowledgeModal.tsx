@@ -408,6 +408,10 @@ export default function RAGKnowledgeModal({
     );
   };
 
+  if (!visible) {
+    return null;
+  }
+
   return (
     <Modal
       visible={visible}

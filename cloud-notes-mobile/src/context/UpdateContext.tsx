@@ -63,6 +63,7 @@ export const UpdateProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     async (isManual = false) => {
       if (isCheckingRef.current) return;
       try {
+        if (Platform.OS === 'web') return;
         isCheckingRef.current = true;
         setIsChecking(true);
         const platformKey = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web';
