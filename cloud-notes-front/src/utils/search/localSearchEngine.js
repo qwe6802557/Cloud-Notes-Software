@@ -277,10 +277,8 @@ class LocalSearchEngine {
         try {
             const res = await apiSyncNoteIndex();
             const items = res?.data?.items || res?.items || [];
-            if (Array.isArray(items) && items.length > 0) {
-                for (const item of items) {
-                    this.indexSingleDoc(item);
-                }
+            if (Array.isArray(items)) {
+                this.buildIndex(items);
                 await saveSearchIndexDocs(Array.from(this.docs.values()));
                 this.lastSyncTime = Date.now();
             }

@@ -4,7 +4,7 @@
  */
 
 import { AppState, AppStateStatus } from 'react-native';
-import { updateNote, createNote, getNoteDetail } from '../../api/notesApi';
+import { updateNote, createNote, getNoteDetail, getNotebooks, createNotebook } from '../../api/notesApi';
 import {
   saveNoteCache,
   enqueueMutation,
@@ -341,7 +341,30 @@ class MobileSyncManager {
   }
 
   /**
-   * 非破坏性冲突安全分叉（100% 零丢稿）
+   * 获取或自动创建专用的「⚠️ 冲突归档」系统笔记本，杜绝污染正常工作目录
+   */
+  public async getConflictNotebookId(): Promise<string> {
+    try {
+      const res = await getNotebooks();
+      const list = res?.data || [];
+      const existing = list.find((nb: any) => (nb.name || nb.title) === '⚠️ 冲突归档');
+      if (existing) {
+        return existing._id || '';
+      }
+      const createRes = await createNotebook({
+        title: '⚠️ 冲突归档',
+        name: '⚠️ 冲突归档',
+      });
+      const newNb = createRes?.data;
+      return (newNb as any)?._id || (newNb as any)?.id || '';
+    } catch (e) {
+      console.warn('[mobileSyncManager] getConflictNotebookId warning:', e);
+      return '';
+    }
+  }
+
+  /**
+   * 非破坏性冲突安全分叉（100% 零丢稿，自动归集入「⚠️ 冲突归档」专区）
    */
   public async forkConflictNote({
     originalTitle,
@@ -357,10 +380,16 @@ class MobileSyncManager {
     const timeStamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
     const conflictTitle = `[冲突副本] ${originalTitle || '无标题'}_${timeStamp}`;
 
+    // 隔离专区策略：冲突副本绝不进入原工作目录，优先归集入「⚠️ 冲突归档」笔记本
+    let targetNotebookId = await this.getConflictNotebookId();
+    if (!targetNotebookId) {
+      targetNotebookId = notebookId || '';
+    }
+
     const createRes = await createNote({
       title: conflictTitle,
       content,
-      notebookId: notebookId || '',
+      notebookId: targetNotebookId,
     });
 
     const createdNote = createRes?.data;

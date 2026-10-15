@@ -3,7 +3,7 @@
  * 遵循 Local-First 原则，按键即写本地，后台增量上云，断网自愈重放，冲突安全分叉
  */
 
-import { updateNote, createNote, getNoteDetail } from '@/api/notes';
+import { updateNote, createNote, getNoteDetail, getNotebooks, createNotebook } from '@/api/notes';
 import {
     saveNoteCache,
     enqueueMutation,
@@ -317,7 +317,30 @@ class SyncManager {
     }
 
     /**
-     * 非破坏性冲突安全分叉（100% 零丢稿）
+     * 获取或自动创建专用的「⚠️ 冲突归档」系统笔记本，杜绝污染正常工作目录
+     */
+    async getConflictNotebookId() {
+        try {
+            const res = await getNotebooks();
+            const list = res?.notebooks || res?.data || (Array.isArray(res) ? res : []);
+            const existing = list.find(nb => (nb.name || nb.title) === '⚠️ 冲突归档');
+            if (existing) {
+                return existing.id || existing._id;
+            }
+            const createRes = await createNotebook({
+                name: '⚠️ 冲突归档',
+                title: '⚠️ 冲突归档'
+            });
+            const created = createRes?.notebook || createRes?.data;
+            return created?.id || created?._id || '';
+        } catch (e) {
+            console.warn('[syncManager] getConflictNotebookId warning:', e);
+            return '';
+        }
+    }
+
+    /**
+     * 非破坏性冲突安全分叉（100% 零丢稿，自动归拢至专属冲突归档笔记本）
      */
     async forkConflictNote({ originalTitle, content, notebookId }) {
         const now = new Date();
@@ -325,10 +348,16 @@ class SyncManager {
         const timeStamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
         const conflictTitle = `[冲突副本] ${originalTitle || '无标题'}_${timeStamp}`;
 
+        // 隔离专区策略：冲突副本绝不进入原工作目录，优先归集入「⚠️ 冲突归档」笔记本
+        let targetNotebookId = await this.getConflictNotebookId();
+        if (!targetNotebookId) {
+            targetNotebookId = notebookId;
+        }
+
         const createRes = await createNote({
             title: conflictTitle,
             content,
-            notebookId
+            notebookId: targetNotebookId
         });
 
         const createdNote = createRes?.note;

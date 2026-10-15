@@ -293,10 +293,8 @@ class MobileSearchEngine {
     try {
       const res = await notesApi.syncNoteIndex();
       const items = res?.data?.items || (res as any)?.items || [];
-      if (Array.isArray(items) && items.length > 0) {
-        for (const item of items) {
-          this.indexSingleDoc(item);
-        }
+      if (Array.isArray(items)) {
+        this.buildIndex(items);
         await saveSearchIndexDocs(Array.from(this.docs.values()));
       }
     } catch (err: any) {
