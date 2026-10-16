@@ -150,7 +150,7 @@ export default function NoteCompanionBottomSheet({
                 </TouchableOpacity>
               </View>
 
-              {/* Tab 导航胶囊条 */}
+              {/* Tab 导航分段滑块控制器 (Segmented Control) */}
               <View style={styles.tabsBar}>
                 <TouchableOpacity
                   style={[styles.tabBtn, activeTab === 'backlinks' && styles.tabBtnActive]}
@@ -159,10 +159,10 @@ export default function NoteCompanionBottomSheet({
                 >
                   <Ionicons
                     name="git-network-outline"
-                    size={15}
+                    size={13}
                     color={activeTab === 'backlinks' ? '#1890ff' : '#64748b'}
                   />
-                  <Text style={[styles.tabText, activeTab === 'backlinks' && styles.tabTextActive]}>
+                  <Text numberOfLines={1} style={[styles.tabText, activeTab === 'backlinks' && styles.tabTextActive]}>
                     反向双链
                   </Text>
                   {totalBacklinksCount > 0 && (
@@ -181,10 +181,10 @@ export default function NoteCompanionBottomSheet({
                 >
                   <Ionicons
                     name="list-outline"
-                    size={15}
+                    size={13}
                     color={activeTab === 'toc' ? '#1890ff' : '#64748b'}
                   />
-                  <Text style={[styles.tabText, activeTab === 'toc' && styles.tabTextActive]}>
+                  <Text numberOfLines={1} style={[styles.tabText, activeTab === 'toc' && styles.tabTextActive]}>
                     目录大纲
                   </Text>
                   {tocList.length > 0 && (
@@ -203,10 +203,10 @@ export default function NoteCompanionBottomSheet({
                 >
                   <Ionicons
                     name="compass-outline"
-                    size={15}
+                    size={13}
                     color={activeTab === 'radar' ? '#1890ff' : '#64748b'}
                   />
-                  <Text style={[styles.tabText, activeTab === 'radar' && styles.tabTextActive]}>
+                  <Text numberOfLines={1} style={[styles.tabText, activeTab === 'radar' && styles.tabTextActive]}>
                     关系雷达
                   </Text>
                 </TouchableOpacity>
@@ -218,10 +218,10 @@ export default function NoteCompanionBottomSheet({
                 >
                   <Ionicons
                     name="sparkles-outline"
-                    size={15}
+                    size={13}
                     color={activeTab === 'ai' ? '#7c3aed' : '#64748b'}
                   />
-                  <Text style={[styles.tabText, activeTab === 'ai' && styles.tabTextAiActive]}>
+                  <Text numberOfLines={1} style={[styles.tabText, activeTab === 'ai' && styles.tabTextAiActive]}>
                     AI 伴侣
                   </Text>
                 </TouchableOpacity>
@@ -616,58 +616,69 @@ const styles = StyleSheet.create({
   },
   tabsBar: {
     flexDirection: 'row',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#f8fafc',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    gap: 6,
+    alignItems: 'center',
+    marginHorizontal: 10,
+    marginVertical: 8,
+    padding: 2.5,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 9,
   },
   tabBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 6,
-    borderRadius: 8,
+    paddingVertical: 6.5,
+    paddingHorizontal: 1,
+    borderRadius: 7,
     backgroundColor: 'transparent',
-    gap: 4,
+    gap: 2,
   },
   tabBtnActive: {
-    backgroundColor: '#eff6ff',
-    borderWidth: 1,
-    borderColor: '#bfdbfe',
+    backgroundColor: '#ffffff',
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
   },
   tabText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '500',
     color: '#64748b',
+    letterSpacing: -0.2,
   },
   tabTextActive: {
-    color: '#1890ff',
+    color: '#0f172a',
+    fontWeight: '700',
   },
   tabTextAiActive: {
     color: '#7c3aed',
+    fontWeight: '700',
   },
   tabBadge: {
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-    borderRadius: 10,
+    paddingHorizontal: 3.5,
+    paddingVertical: 0.5,
+    borderRadius: 5,
     backgroundColor: '#e2e8f0',
-    minWidth: 16,
+    minWidth: 15,
+    height: 15,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   tabBadgeActive: {
-    backgroundColor: '#1890ff',
+    backgroundColor: '#eff6ff',
   },
   tabBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 9.5,
+    fontWeight: '600',
     color: '#64748b',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    lineHeight: 12,
   },
   tabBadgeTextActive: {
-    color: '#ffffff',
+    color: '#1890ff',
+    fontWeight: '700',
   },
   bodyContainer: {
     flex: 1,
