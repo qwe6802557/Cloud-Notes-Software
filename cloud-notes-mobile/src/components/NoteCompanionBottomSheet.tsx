@@ -1254,9 +1254,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 4,
+    ...(Platform.OS === 'web' ? ({ outline: 'none' } as any) : {}),
   },
   fullScreenBackText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: '#0f172a',
     marginLeft: 2,
@@ -1264,10 +1265,10 @@ const styles = StyleSheet.create({
   fullScreenTitleWrap: {
     flex: 1,
     alignItems: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
   },
   fullScreenTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
     color: '#0f172a',
   },
