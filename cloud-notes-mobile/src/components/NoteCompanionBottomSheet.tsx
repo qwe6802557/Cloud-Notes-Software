@@ -6,6 +6,7 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TouchableOpacity,
   TouchableWithoutFeedback,
@@ -14,6 +15,8 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { isItemWeaved } from '../utils/weavingUtils';
 import { getKnowledgeGraph } from '../api/notesApi';
+import KnowledgeGalaxyView, { GraphNode, GraphLink } from './KnowledgeGalaxyView';
+import GalaxyPeekCard from './GalaxyPeekCard';
 
 export type CompanionTab = 'backlinks' | 'toc' | 'radar' | 'ai';
 
@@ -71,43 +74,94 @@ export default function NoteCompanionBottomSheet({
 }: NoteCompanionBottomSheetProps) {
   const [activeTab, setActiveTab] = useState<CompanionTab>(initialTab);
 
-  // 关系雷达状态
-  const [radarLoading, setRadarLoading] = useState(false);
-  const [radarNodes, setRadarNodes] = useState<any[]>([]);
+  // 关系雷达与动态知识星系状态
+  const [radarFocusId, setRadarFocusId] = useState<string>(noteId);
+  const [radarFocusTitle, setRadarFocusTitle] = useState<string>(noteTitle);
+  const [isDepth2, setIsDepth2] = useState<boolean>(false);
+  const [radarLoading, setRadarLoading] = useState<boolean>(false);
+  const [radarNodes, setRadarNodes] = useState<GraphNode[]>([]);
+  const [radarLinks, setRadarLinks] = useState<GraphLink[]>([]);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [isFullScreenGalaxy, setIsFullScreenGalaxy] = useState<boolean>(false);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
     if (visible) {
       setActiveTab(initialTab);
+      setRadarFocusId(noteId);
+      setRadarFocusTitle(noteTitle);
+      setSelectedNode(null);
     }
-  }, [visible, initialTab]);
+  }, [visible, initialTab, noteId, noteTitle]);
 
-  // 加载局部图谱数据
-  const loadRadarData = useCallback(async () => {
-    if (!noteId) return;
+  // 加载知识图谱数据
+  const loadRadarData = useCallback(async (targetFocusId: string, depth: number) => {
+    if (!targetFocusId) return;
     setRadarLoading(true);
     try {
       const res = await getKnowledgeGraph({
-        focusNoteId: noteId,
-        depth: 1,
+        focusNoteId: targetFocusId,
+        depth,
       });
-      if (res?.code === 200 && res.data?.nodes) {
-        const filtered = (res.data.nodes || []).filter((n: any) => n.id !== noteId);
-        setRadarNodes(filtered);
+      if (res?.code === 200 && res.data) {
+        setRadarNodes(res.data.nodes || []);
+        setRadarLinks(res.data.links || []);
       } else {
         setRadarNodes([]);
+        setRadarLinks([]);
       }
     } catch {
       setRadarNodes([]);
+      setRadarLinks([]);
     } finally {
       setRadarLoading(false);
     }
-  }, [noteId]);
+  }, []);
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => {
-    if (visible && activeTab === 'radar') {
-      loadRadarData();
+    if (visible && activeTab === 'radar' && radarFocusId) {
+      loadRadarData(radarFocusId, isDepth2 ? 2 : 1);
     }
-  }, [visible, activeTab, loadRadarData]);
+  }, [visible, activeTab, radarFocusId, isDepth2, loadRadarData]);
+
+  // 计算当前选中节点与中心恒星的双链关系
+  const selectedNodeRelation = useMemo(() => {
+    if (!selectedNode) return 'out';
+    const sId = radarFocusId;
+    const tId = selectedNode.id;
+    let hasOut = false;
+    let hasIn = false;
+    radarLinks.forEach((l) => {
+      const src = typeof l.source === 'object' ? (l.source as any).id : l.source;
+      const tgt = typeof l.target === 'object' ? (l.target as any).id : l.target;
+      if (src === sId && tgt === tId) hasOut = true;
+      if (src === tId && tgt === sId) hasIn = true;
+    });
+    if (hasOut && hasIn) return 'bidirectional';
+    if (hasOut) return 'out';
+    if (hasIn) return 'in';
+    return 'indirect';
+  }, [selectedNode, radarFocusId, radarLinks]);
+
+  // 原地漫游：设置新节点为引力中心
+  const handleFocusAsCenter = useCallback((nodeId: string, title: string) => {
+    setRadarFocusId(nodeId);
+    setRadarFocusTitle(title);
+    setSelectedNode(null);
+  }, []);
+
+  // 重置回本篇笔记中心
+  const handleResetFocus = useCallback(() => {
+    setRadarFocusId(noteId);
+    setRadarFocusTitle(noteTitle);
+    setSelectedNode(null);
+  }, [noteId, noteTitle]);
+
+  // 过滤中心节点后的周边卫星列表
+  const neighborNodes = useMemo(() => {
+    return radarNodes.filter((n) => n.id !== radarFocusId);
+  }, [radarNodes, radarFocusId]);
 
   // 统计未回织数量
   const unweavedBacklinks = useMemo(() => {
@@ -117,7 +171,8 @@ export default function NoteCompanionBottomSheet({
   const totalBacklinksCount = backlinksData.totalCount || 0;
 
   return (
-    <Modal
+    <>
+      <Modal
       visible={visible}
       transparent
       animationType="slide"
@@ -461,52 +516,128 @@ export default function NoteCompanionBottomSheet({
                     contentContainerStyle={styles.scrollContent}
                     showsVerticalScrollIndicator={true}
                   >
-                    <View style={styles.radarSummaryBanner}>
-                      <Ionicons name="git-network" size={16} color="#1890ff" style={{ marginRight: 6 }} />
-                      <Text style={styles.radarSummaryText}>
-                        以《{noteTitle || '当前笔记'}》为核心发掘知识网络
-                      </Text>
+                    {/* 星系控制与状态栏 */}
+                    <View style={styles.radarControlBar}>
+                      <View style={styles.radarControlLeft}>
+                        {radarFocusId !== noteId ? (
+                          <TouchableOpacity
+                            style={styles.resetFocusBtn}
+                            onPress={handleResetFocus}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons name="arrow-undo-outline" size={12} color="#2563eb" style={{ marginRight: 4 }} />
+                            <Text style={styles.resetFocusText} numberOfLines={1}>
+                              返回原笔记
+                            </Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <View style={styles.radarTitleGroup}>
+                            <Ionicons name="git-network" size={15} color="#1890ff" style={{ marginRight: 5 }} />
+                            <Text style={styles.radarBarTitle}>知识星系</Text>
+                            <View style={styles.radarBadge}>
+                              <Text style={styles.radarBadgeText}>{neighborNodes.length} 关联</Text>
+                            </View>
+                          </View>
+                        )}
+                      </View>
+
+                      <View style={styles.radarControlRight}>
+                        <Text style={styles.radarSwitchLabel}>2度网络</Text>
+                        <Switch
+                          value={isDepth2}
+                          onValueChange={setIsDepth2}
+                          trackColor={{ false: '#e2e8f0', true: '#93c5fd' }}
+                          thumbColor={isDepth2 ? '#2563eb' : '#f8fafc'}
+                          style={{ transform: [{ scaleX: 0.72 }, { scaleY: 0.72 }] }}
+                        />
+                        <TouchableOpacity
+                          style={styles.expandFullscreenBtn}
+                          onPress={() => setIsFullScreenGalaxy(true)}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="expand-outline" size={17} color="#475569" />
+                        </TouchableOpacity>
+                      </View>
                     </View>
 
+                    {/* 动态星系图谱画布与内容 */}
                     {radarLoading ? (
                       <View style={styles.centerBox}>
                         <ActivityIndicator size="small" color="#1890ff" />
-                        <Text style={styles.loadingText}>正在扫描知识星系关联...</Text>
+                        <Text style={styles.loadingText}>计算知识引力星系中...</Text>
                       </View>
-                    ) : radarNodes.length === 0 ? (
+                    ) : neighborNodes.length === 0 ? (
                       <View style={styles.emptyContainer}>
                         <Ionicons name="compass-outline" size={36} color="#cbd5e1" />
-                        <Text style={styles.emptyTitle}>暂无直接一度关联节点</Text>
+                        <Text style={styles.emptyTitle}>暂无直接关联节点</Text>
                         <Text style={styles.emptyDesc}>
                           使用 [[双链]] 链接其他笔记，即可点亮本篇笔记的星系雷达
                         </Text>
                       </View>
                     ) : (
-                      <View style={{ gap: 8 }}>
-                        {radarNodes.map(node => (
-                          <TouchableOpacity
-                            key={node.id}
-                            style={styles.radarNodeCard}
-                            onPress={() => {
+                      <View>
+                        {/* 硬件加速极坐标星系球 */}
+                        <KnowledgeGalaxyView
+                          nodes={radarNodes}
+                          links={radarLinks}
+                          focusNodeId={radarFocusId}
+                          focusNodeTitle={radarFocusTitle}
+                          mode="compact"
+                          height={230}
+                          isDepth2={isDepth2}
+                          selectedNodeId={selectedNode?.id}
+                          onSelectNode={setSelectedNode}
+                          onSelectCenter={handleResetFocus}
+                        />
+
+                        {/* 选中的卫星节点窥探卡片 */}
+                        {selectedNode && (
+                          <GalaxyPeekCard
+                            node={selectedNode}
+                            focusNodeTitle={radarFocusTitle}
+                            linkRelation={selectedNodeRelation}
+                            onClose={() => setSelectedNode(null)}
+                            onNavigate={(id, title) => {
                               onClose();
-                              onOpenNote(node.id, node.title);
+                              onOpenNote(id, title);
                             }}
-                            activeOpacity={0.7}
-                          >
-                            <View style={styles.radarNodeLeft}>
-                              <View style={[styles.radarDot, { backgroundColor: node.notebookColor || '#1890ff' }]} />
-                              <Text style={styles.radarNodeTitle} numberOfLines={1}>
-                                {node.title}
-                              </Text>
-                            </View>
-                            <View style={styles.radarNodeRight}>
-                              <Text style={styles.radarNodeNbText} numberOfLines={1}>
-                                {node.notebookName || '默认'}
-                              </Text>
-                              <Ionicons name="chevron-forward" size={14} color="#94a3b8" />
-                            </View>
-                          </TouchableOpacity>
-                        ))}
+                            onFocusAsCenter={handleFocusAsCenter}
+                          />
+                        )}
+
+                        {/* 关联笔记卡片列表 */}
+                        <View style={styles.radarListHeader}>
+                          <Text style={styles.radarListTitle}>
+                            {radarFocusId !== noteId ? `《${radarFocusTitle}》的关联` : '关联笔记列表'} ({neighborNodes.length})
+                          </Text>
+                        </View>
+
+                        <View style={{ gap: 8 }}>
+                          {neighborNodes.map((node) => {
+                            const isSelected = selectedNode?.id === node.id;
+                            return (
+                              <TouchableOpacity
+                                key={`radar-node-${node.id}`}
+                                style={[styles.radarNodeCard, isSelected && styles.radarNodeCardActive]}
+                                onPress={() => setSelectedNode(node)}
+                                activeOpacity={0.7}
+                              >
+                                <View style={styles.radarNodeLeft}>
+                                  <View style={[styles.radarDot, { backgroundColor: node.notebookColor || '#1890ff' }]} />
+                                  <Text style={[styles.radarNodeTitle, isSelected && styles.radarNodeTitleActive]} numberOfLines={1}>
+                                    {node.title}
+                                  </Text>
+                                </View>
+                                <View style={styles.radarNodeRight}>
+                                  <Text style={styles.radarNodeNbText} numberOfLines={1}>
+                                    {node.notebookName || '默认'}
+                                  </Text>
+                                  <Ionicons name="chevron-forward" size={14} color={isSelected ? '#1890ff' : '#94a3b8'} />
+                                </View>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
                       </View>
                     )}
                   </ScrollView>
@@ -556,6 +687,87 @@ export default function NoteCompanionBottomSheet({
         </View>
       </TouchableWithoutFeedback>
     </Modal>
+
+    {/* 全屏沉浸知识星系探索 Modal */}
+    <Modal
+      visible={isFullScreenGalaxy}
+      animationType="fade"
+      transparent={false}
+      onRequestClose={() => setIsFullScreenGalaxy(false)}
+    >
+      <View style={styles.fullScreenGalaxyContainer}>
+        {/* 顶部控制栏 */}
+        <View style={styles.fullScreenHeader}>
+          <TouchableOpacity
+            style={styles.fullScreenBackBtn}
+            onPress={() => setIsFullScreenGalaxy(false)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="chevron-back" size={20} color="#0f172a" />
+            <Text style={styles.fullScreenBackText}>返回伴侣</Text>
+          </TouchableOpacity>
+
+          <View style={styles.fullScreenTitleWrap}>
+            <Text style={styles.fullScreenTitle} numberOfLines={1}>
+              《{radarFocusTitle}》知识全息星系
+            </Text>
+          </View>
+
+          <View style={styles.fullScreenHeaderRight}>
+            <Text style={styles.radarSwitchLabel}>2度网络</Text>
+            <Switch
+              value={isDepth2}
+              onValueChange={setIsDepth2}
+              trackColor={{ false: '#e2e8f0', true: '#93c5fd' }}
+              thumbColor={isDepth2 ? '#2563eb' : '#f8fafc'}
+              style={{ transform: [{ scaleX: 0.72 }, { scaleY: 0.72 }] }}
+            />
+          </View>
+        </View>
+
+        {/* 全屏星系大画布 */}
+        <View style={styles.fullScreenCanvasWrap}>
+          <KnowledgeGalaxyView
+            nodes={radarNodes}
+            links={radarLinks}
+            focusNodeId={radarFocusId}
+            focusNodeTitle={radarFocusTitle}
+            mode="fullscreen"
+            height={380}
+            isDepth2={isDepth2}
+            selectedNodeId={selectedNode?.id}
+            onSelectNode={setSelectedNode}
+            onSelectCenter={handleResetFocus}
+          />
+        </View>
+
+        {/* 底部悬浮卡片或操作指引 */}
+        <View style={styles.fullScreenFooterWrap}>
+          {selectedNode ? (
+            <GalaxyPeekCard
+              node={selectedNode}
+              focusNodeTitle={radarFocusTitle}
+              linkRelation={selectedNodeRelation}
+              onClose={() => setSelectedNode(null)}
+              onNavigate={(id, title) => {
+                setIsFullScreenGalaxy(false);
+                onClose();
+                onOpenNote(id, title);
+              }}
+              onFocusAsCenter={handleFocusAsCenter}
+            />
+          ) : (
+            <View style={styles.fullScreenTipBox}>
+              <Ionicons name="finger-print-outline" size={18} color="#94a3b8" />
+              <Text style={styles.fullScreenTipText}>
+                轻触周边卫星节点可查看引力双链，并可原地重新聚焦漫游
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </Modal>
+  </>
   );
 }
 
@@ -900,22 +1112,83 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
   },
-  radarSummaryBanner: {
+  radarControlBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    marginBottom: 6,
+  },
+  radarControlLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  radarTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  radarBarTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginRight: 6,
+  },
+  radarBadge: {
+    backgroundColor: '#eff6ff',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#bfdbfe',
+  },
+  radarBadgeText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#1890ff',
+  },
+  resetFocusBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#eff6ff',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#dbeafe',
+    borderColor: '#93c5fd',
   },
-  radarSummaryText: {
-    fontSize: 13,
-    color: '#1d4ed8',
+  resetFocusText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#2563eb',
+    maxWidth: 130,
+  },
+  radarControlRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  radarSwitchLabel: {
+    fontSize: 11,
+    color: '#64748b',
     fontWeight: '500',
-    flex: 1,
+  },
+  expandFullscreenBtn: {
+    padding: 4,
+    borderRadius: 6,
+    backgroundColor: '#f1f5f9',
+    marginLeft: 2,
+  },
+  radarListHeader: {
+    marginTop: 12,
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
+  radarListTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748b',
   },
   radarNodeCard: {
     flexDirection: 'row',
@@ -927,6 +1200,10 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 11,
+  },
+  radarNodeCardActive: {
+    borderColor: '#1890ff',
+    backgroundColor: '#f0f9ff',
   },
   radarNodeLeft: {
     flexDirection: 'row',
@@ -946,6 +1223,9 @@ const styles = StyleSheet.create({
     color: '#0f172a',
     flex: 1,
   },
+  radarNodeTitleActive: {
+    color: '#1890ff',
+  },
   radarNodeRight: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -955,6 +1235,73 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#64748b',
     maxWidth: 90,
+  },
+  fullScreenGalaxyContainer: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    paddingTop: Platform.OS === 'ios' ? 44 : 20,
+  },
+  fullScreenHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e2e8f0',
+  },
+  fullScreenBackBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  fullScreenBackText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0f172a',
+    marginLeft: 2,
+  },
+  fullScreenTitleWrap: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  fullScreenTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  fullScreenHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  fullScreenCanvasWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+  },
+  fullScreenFooterWrap: {
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+  },
+  fullScreenTipBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  fullScreenTipText: {
+    fontSize: 12,
+    color: '#64748b',
+    flex: 1,
+    lineHeight: 18,
   },
   aiBanner: {
     flexDirection: 'row',
