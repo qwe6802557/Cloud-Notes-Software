@@ -5,8 +5,11 @@
 
 import { AppState, AppStateStatus } from 'react-native';
 import { updateNote, createNote, getNoteDetail, getNotebooks, createNotebook } from '../../api/notesApi';
+import axiosInstance, { setOnNetworkStateChange } from '../../api/client';
 import {
   saveNoteCache,
+  createOfflineNote,
+  remapLocalNoteId,
   enqueueMutation,
   dequeueMutation,
   getPendingMutations,
@@ -41,7 +44,41 @@ class MobileSyncManager {
 
   constructor() {
     this.initAppStateListener();
+    setOnNetworkStateChange((online: boolean) => {
+      this.setOnline(online);
+    });
     this.refreshQueuedCount();
+  }
+
+  public setOnline(online: boolean) {
+    if (this.isOnline !== online) {
+      this.isOnline = online;
+      if (!online) {
+        this.setStatus('offline');
+      } else {
+        if (this.queuedCount > 0) {
+          this.setStatus('pending');
+          this.flushQueue();
+        } else {
+          this.setStatus('synced');
+        }
+      }
+    }
+  }
+
+  public async probeNetwork(): Promise<boolean> {
+    try {
+      await axiosInstance.get('/app/check-update', { timeout: 3000 });
+      this.setOnline(true);
+      return true;
+    } catch (err: any) {
+      if (!err?.response) {
+        this.setOnline(false);
+        return false;
+      }
+      this.setOnline(true);
+      return true;
+    }
   }
 
   public setLastKnownRemoteUpdatedAt(noteId: string, updatedAt: string, content?: string) {
@@ -58,10 +95,14 @@ class MobileSyncManager {
   private initAppStateListener() {
     AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
-        // App 从后台唤醒切回前台时，自动尝试排空突变队列
-        this.flushQueue();
+        this.probeNetwork();
       }
     });
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('online', () => this.setOnline(true));
+      window.addEventListener('offline', () => this.setOnline(false));
+    }
   }
 
   public subscribe(callback: SyncStateSubscriber): () => void {
@@ -410,10 +451,40 @@ class MobileSyncManager {
   }
 
   /**
+   * 离线新建笔记分配本地临时 ID 并入队
+   */
+  public async createOfflineNote({
+    title,
+    content,
+    notebookId,
+  }: {
+    title: string;
+    content: string;
+    notebookId?: string;
+  }) {
+    const noteCache = await createOfflineNote({ title, content, notebookId });
+    mobileSearchEngine.upsertDocument({
+      id: noteCache.id,
+      title: noteCache.title,
+      snippet: noteCache.content,
+      notebookId,
+      updatedAt: noteCache.updatedAt,
+    });
+    await this.refreshQueuedCount();
+    if (!this.isOnline) {
+      this.setStatus('offline');
+    } else {
+      this.setStatus('pending');
+      this.flushQueue();
+    }
+    return noteCache;
+  }
+
+  /**
    * 恢复联网后排空与重放突变队列
    */
   public async flushQueue() {
-    if (this.isFlushing) return;
+    if (this.isFlushing || !this.isOnline) return;
     this.isFlushing = true;
 
     try {
@@ -428,22 +499,64 @@ class MobileSyncManager {
 
       for (const task of mutations) {
         try {
-          const { noteId, payload, baseUpdatedAt, seq } = task;
-          const res = await this.syncNote(
-            noteId,
-            {
-              title: payload.title || '',
-              content: payload.content || '',
-              baseUpdatedAt,
-              notebookId: payload.notebookId,
-            },
-            { auto: true }
-          );
+          const { noteId, action, payload, baseUpdatedAt, seq } = task;
 
-          if (res.success) {
-            await dequeueMutation(seq);
+          if (action === 'create') {
+            let targetNbId = payload.notebookId;
+            if (!targetNbId) {
+              const nbRes = await getNotebooks();
+              if (nbRes.code === 200 && nbRes.data.length > 0) {
+                targetNbId = nbRes.data[0]._id;
+              }
+            }
+
+            const createRes = await createNote({
+              title: payload.title || '无标题笔记',
+              content: payload.content || '',
+              notebookId: targetNbId || '',
+            });
+
+            if (createRes?.code === 200 && createRes.data) {
+              const realNote = createRes.data;
+              const realId = (realNote as any)._id || (realNote as any).id;
+              await remapLocalNoteId(noteId, {
+                id: realId,
+                title: realNote.title,
+                content: realNote.content,
+                updatedAt: realNote.updatedAt,
+                notebookId: realNote.notebookId,
+              });
+
+              mobileSearchEngine.removeDocument(noteId);
+              mobileSearchEngine.upsertDocument({
+                id: realId,
+                title: realNote.title,
+                snippet: realNote.content,
+                notebookId: realNote.notebookId,
+                updatedAt: realNote.updatedAt,
+              });
+
+              await dequeueMutation(seq);
+            } else {
+              break;
+            }
           } else {
-            break;
+            const res = await this.syncNote(
+              noteId,
+              {
+                title: payload.title || '',
+                content: payload.content || '',
+                baseUpdatedAt,
+                notebookId: payload.notebookId,
+              },
+              { auto: true }
+            );
+
+            if (res.success && !res.offline) {
+              await dequeueMutation(seq);
+            } else {
+              break;
+            }
           }
         } catch {
           break;
@@ -451,7 +564,8 @@ class MobileSyncManager {
       }
 
       await this.refreshQueuedCount();
-      if (this.queuedCount === 0) {
+      if (this.queuedCount === 0 && this.isOnline) {
+        this.lastSyncedAt = new Date();
         this.setStatus('synced');
       }
     } finally {
@@ -463,7 +577,7 @@ class MobileSyncManager {
    * 手动触发立即重试同步
    */
   public async retryManual() {
-    this.isOnline = true;
+    await this.probeNetwork();
     await this.flushQueue();
   }
 }

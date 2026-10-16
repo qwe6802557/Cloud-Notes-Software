@@ -26,7 +26,7 @@ import InlineAIStreamCard from '../../components/InlineAIStreamCard';
 import WikiSuggestDock from '../../components/WikiSuggestDock';
 import GhostLinkSuggestStrip from '../../components/GhostLinkSuggestStrip';
 import SyncStatusPill from '../../components/SyncStatusPill';
-import { getNoteCache, saveNoteCache } from '../../utils/storage/mobileNotesDB';
+import { getNoteCache, saveNoteCache, resolveNoteId } from '../../utils/storage/mobileNotesDB';
 import mobileSyncManager from '../../utils/storage/mobileSyncManager';
 
 export default function NoteEditScreen() {
@@ -232,9 +232,11 @@ export default function NoteEditScreen() {
         return;
       }
 
+      const targetId = await resolveNoteId(id);
+
       // 1. 本地优先 (Local-First): 优先读取本地持久化快照瞬时上屏 (<10ms)
       try {
-        const localCache = await getNoteCache(id);
+        const localCache = await getNoteCache(targetId);
         if (localCache) {
           setTitle(localCache.title || '');
           setContent(localCache.content || '');
@@ -246,11 +248,17 @@ export default function NoteEditScreen() {
         }
       } catch (cacheErr) {}
 
+      // 纯离线尚未同步至服务端的本地草稿跳过远端请求
+      if (targetId.startsWith('local_')) {
+        setIsLoading(false);
+        return;
+      }
+
       // 2. SWR 后台异步拉取远端对齐
       try {
-        const res = await notesApi.getNoteDetail(id);
+        const res = await notesApi.getNoteDetail(targetId);
         if (res.code === 200 && res.data) {
-          mobileSyncManager.setLastKnownRemoteUpdatedAt(id, res.data.updatedAt, res.data.content || '');
+          mobileSyncManager.setLastKnownRemoteUpdatedAt(targetId, res.data.updatedAt, res.data.content || '');
           // 若用户已在本地产生编辑脏数据，严格保护本地输入现场
           if (!isDirtyRef.current) {
             setTitle(res.data.title || '');
@@ -262,7 +270,7 @@ export default function NoteEditScreen() {
 
           // 刷新本地持久化
           await saveNoteCache({
-            id,
+            id: targetId,
             title: res.data.title || '',
             content: res.data.content || '',
             updatedAt: res.data.updatedAt,
@@ -548,8 +556,9 @@ export default function NoteEditScreen() {
     try {
       setIsSaving(true);
       if (id) {
+        const targetId = await resolveNoteId(id);
         // 更新现有笔记：通过 mobileSyncManager 执行本地持久化、防抖队列与安全分叉
-        const syncRes = await mobileSyncManager.syncNote(id, {
+        const syncRes = await mobileSyncManager.syncNote(targetId, {
           title: title.trim(),
           content,
           baseUpdatedAt,
@@ -559,6 +568,9 @@ export default function NoteEditScreen() {
         setIsDirty(false);
         // 清理草稿
         await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${id}`);
+        if (targetId !== id) {
+          await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${targetId}`);
+        }
 
         if (syncRes.forked && syncRes.forkedNote) {
           Alert.alert('已生成冲突副本', `检测到云端存在并发修改，本地内容已另存为：${syncRes.forkedNote.title}`);
@@ -572,41 +584,68 @@ export default function NoteEditScreen() {
         // 新建笔记：若无 notebookId，先自动绑定首个笔记本
         let targetNbId = notebookId;
         if (!targetNbId) {
-          const nbRes = await notesApi.getNotebooks();
-          if (nbRes.code === 200 && nbRes.data.length > 0) {
-            targetNbId = nbRes.data[0]._id;
-          } else {
-            throw new Error('请先在“笔记本”标签页创建一个笔记本');
+          try {
+            const nbRes = await notesApi.getNotebooks();
+            if (nbRes.code === 200 && nbRes.data.length > 0) {
+              targetNbId = nbRes.data[0]._id;
+            }
+          } catch {
+            // 离线时无笔记本列表则置空
           }
         }
 
-        const res = await notesApi.createNote({
-          title: title.trim(),
-          content,
-          notebookId: targetNbId,
-          parentId: initialParentId || null,
-        });
-
-        if (res.code === 200 && res.data) {
-          const newId = (res.data as any)?._id || (res.data as any)?.id;
-          await saveNoteCache({
-            id: newId,
-            title: res.data.title,
-            content: res.data.content,
-            updatedAt: res.data.updatedAt,
-            lastSavedContent: res.data.content,
-            lastSyncedAt: new Date().toISOString(),
-            isDirty: false,
+        const syncState = mobileSyncManager.getSnapshot();
+        if (!syncState.isOnline) {
+          await mobileSyncManager.createOfflineNote({
+            title: title.trim(),
+            content,
+            notebookId: targetNbId,
           });
+          setIsDirty(false);
           await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}new`);
-          Alert.alert('成功', '笔记已创建');
+          Alert.alert('已离线安全落盘', '当前处于无网络环境，新建笔记已牢固保存在本地并加入重试队列');
           router.back();
-        } else {
-          throw new Error(res.message);
+          return;
+        }
+
+        try {
+          const res = await notesApi.createNote({
+            title: title.trim(),
+            content,
+            notebookId: targetNbId,
+            parentId: initialParentId || null,
+          });
+
+          if (res.code === 200 && res.data) {
+            const newId = (res.data as any)?._id || (res.data as any)?.id;
+            await saveNoteCache({
+              id: newId,
+              title: res.data.title,
+              content: res.data.content,
+              updatedAt: res.data.updatedAt,
+              lastSavedContent: res.data.content,
+              lastSyncedAt: new Date().toISOString(),
+              isDirty: false,
+            });
+            await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}new`);
+            Alert.alert('成功', '笔记已创建');
+            router.back();
+          } else {
+            throw new Error(res.message);
+          }
+        } catch {
+          // 弱网创建失败自动降级本地离线安全落盘
+          await mobileSyncManager.createOfflineNote({
+            title: title.trim(),
+            content,
+            notebookId: targetNbId,
+          });
+          setIsDirty(false);
+          await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}new`);
+          Alert.alert('已离线安全落盘', '网络连接异常，新建笔记已在本地安全落盘，后台将自动重试同步');
+          router.back();
         }
       }
-    } catch (e: any) {
-      Alert.alert('保存失败', e.message || '网络错误');
     } finally {
       setIsSaving(false);
     }

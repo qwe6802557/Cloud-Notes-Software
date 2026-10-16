@@ -6,9 +6,14 @@ import { ApiResponse } from './types';
 
 let currentServerUrl = Config.defaultServerUrl;
 let onUnauthorizedCallback: (() => void) | null = null;
+let onNetworkStateChange: ((online: boolean) => void) | null = null;
 
 export const setOnUnauthorizedCallback = (cb: () => void) => {
   onUnauthorizedCallback = cb;
+};
+
+export const setOnNetworkStateChange = (cb: (online: boolean) => void) => {
+  onNetworkStateChange = cb;
 };
 
 export const getServerUrl = () => currentServerUrl;
@@ -80,9 +85,17 @@ axiosInstance.interceptors.request.use(
 // 响应拦截器：统一格式提取与 401 鉴权失效拦截
 axiosInstance.interceptors.response.use(
   (response: AxiosResponse) => {
+    if (onNetworkStateChange) {
+      onNetworkStateChange(true);
+    }
     return response.data;
   },
   async (error) => {
+    // 无响应体或断网超时时标记离线
+    if (!error.response && onNetworkStateChange) {
+      onNetworkStateChange(false);
+    }
+
     if (error.response && error.response.status === 401) {
       // Token 过期或未授权，清理本地凭据并唤起重新登录
       try {

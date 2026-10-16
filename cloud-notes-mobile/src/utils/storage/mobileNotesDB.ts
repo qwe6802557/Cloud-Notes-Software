@@ -30,9 +30,23 @@ export interface OfflineMutation {
 }
 
 const CACHE_KEY_PREFIX = '@cloud_notes:cache:';
+const ALIAS_KEY_PREFIX = '@cloud_notes:alias:';
 const MUTATIONS_KEY = '@cloud_notes:mutations';
 
 // ==================== 1. 本地笔记快照缓存 API ====================
+
+/**
+ * 解析本地临时 ID 别名映射为远端真实 ID
+ */
+export async function resolveNoteId(id: string): Promise<string> {
+  if (!id || !id.startsWith('local_')) return id;
+  try {
+    const realId = await AsyncStorage.getItem(`${ALIAS_KEY_PREFIX}${id}`);
+    return realId || id;
+  } catch {
+    return id;
+  }
+}
 
 /**
  * 获取本地缓存的笔记数据
@@ -40,7 +54,14 @@ const MUTATIONS_KEY = '@cloud_notes:mutations';
 export async function getNoteCache(id: string): Promise<NoteCache | null> {
   if (!id) return null;
   try {
-    const raw = await AsyncStorage.getItem(`${CACHE_KEY_PREFIX}${id}`);
+    let targetId = id;
+    if (id.startsWith('local_')) {
+      const alias = await AsyncStorage.getItem(`${ALIAS_KEY_PREFIX}${id}`);
+      if (alias) {
+        targetId = alias;
+      }
+    }
+    const raw = await AsyncStorage.getItem(`${CACHE_KEY_PREFIX}${targetId}`);
     if (!raw) return null;
     return JSON.parse(raw) as NoteCache;
   } catch (e) {
@@ -83,6 +104,104 @@ export async function deleteNoteCache(id: string): Promise<void> {
     await AsyncStorage.removeItem(`${CACHE_KEY_PREFIX}${id}`);
   } catch (e) {
     console.warn('[mobileNotesDB] deleteNoteCache error:', e);
+  }
+}
+
+/**
+ * 获取本地缓存的所有笔记快照列表（按更新时间降序）
+ */
+export async function getAllCachedNotes(): Promise<NoteCache[]> {
+  try {
+    const allKeys = await AsyncStorage.getAllKeys();
+    const noteKeys = allKeys.filter(k => k.startsWith(CACHE_KEY_PREFIX));
+    if (noteKeys.length === 0) return [];
+
+    const pairs = await AsyncStorage.multiGet(noteKeys);
+    const notes: NoteCache[] = [];
+    for (const [, val] of pairs) {
+      if (val) {
+        notes.push(JSON.parse(val));
+      }
+    }
+    notes.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return notes;
+  } catch (e) {
+    console.warn('[mobileNotesDB] getAllCachedNotes error:', e);
+    return [];
+  }
+}
+
+/**
+ * 离线新建笔记分配本地临时 ID
+ */
+export async function createOfflineNote({
+  title,
+  content,
+  notebookId,
+}: {
+  title: string;
+  content: string;
+  notebookId?: string;
+}): Promise<NoteCache> {
+  const tempId = `local_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const now = new Date().toISOString();
+  const record: NoteCache = {
+    id: tempId,
+    title: title || '无标题笔记',
+    content: content || '',
+    updatedAt: now,
+    lastSavedContent: content || '',
+    lastSyncedAt: now,
+    isDirty: true,
+  };
+
+  await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${tempId}`, JSON.stringify(record));
+  await enqueueMutation({
+    noteId: tempId,
+    action: 'create',
+    payload: { title, content, notebookId },
+  });
+
+  return record;
+}
+
+/**
+ * 远端创建成功后，将本地临时 ID 原子映射替换为远端真实 ID
+ */
+export async function remapLocalNoteId(
+  tempId: string,
+  realNote: { id: string; title: string; content: string; updatedAt: string; notebookId?: string }
+): Promise<void> {
+  if (!tempId || !realNote?.id || tempId === realNote.id) return;
+  try {
+    const record: NoteCache = {
+      id: realNote.id,
+      title: realNote.title,
+      content: realNote.content,
+      updatedAt: realNote.updatedAt,
+      lastSavedContent: realNote.content,
+      lastSyncedAt: new Date().toISOString(),
+      isDirty: false,
+    };
+
+    await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${realNote.id}`, JSON.stringify(record));
+    await AsyncStorage.removeItem(`${CACHE_KEY_PREFIX}${tempId}`);
+    await AsyncStorage.setItem(`${ALIAS_KEY_PREFIX}${tempId}`, realNote.id);
+
+    // 重映射突变队列中残留关联
+    const list = await getPendingMutations();
+    let hasChanged = false;
+    list.forEach(item => {
+      if (item.noteId === tempId) {
+        item.noteId = realNote.id;
+        hasChanged = true;
+      }
+    });
+    if (hasChanged) {
+      await AsyncStorage.setItem(MUTATIONS_KEY, JSON.stringify(list));
+    }
+  } catch (e) {
+    console.warn('[mobileNotesDB] remapLocalNoteId error:', e);
   }
 }
 

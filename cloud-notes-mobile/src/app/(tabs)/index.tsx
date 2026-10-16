@@ -19,6 +19,7 @@ import { Note, Notebook } from '../../api/types';
 import { Config } from '../../constants/Config';
 import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 import { mobileSearchEngine, SearchResultItem } from '../../utils/search/mobileSearchEngine';
+import { getAllCachedNotes } from '../../utils/storage/mobileNotesDB';
 
 const renderHighlightedText = (text: string, query: string, style?: any, highlightStyle?: any) => {
   if (!text) return null;
@@ -101,7 +102,30 @@ export default function NotesScreen() {
       if (isRefresh) {
         setIsRefreshing(true);
       } else if (isFirstLoad) {
-        setIsLoading(true);
+        // 本地优先瞬时上屏
+        try {
+          const cached = await getAllCachedNotes();
+          if (cached.length > 0) {
+            setNotes(
+              cached.map(c => ({
+                _id: c.id,
+                title: c.title,
+                content: c.content,
+                notebookId: '',
+                userId: '',
+                updatedAt: c.updatedAt,
+                createdAt: c.updatedAt,
+                isStarred: false,
+                tags: [],
+              }))
+            );
+            setIsLoading(false);
+          } else {
+            setIsLoading(true);
+          }
+        } catch {
+          setIsLoading(true);
+        }
       }
 
       const [nbRes, activeNbStored] = await Promise.all([
@@ -141,10 +165,28 @@ export default function NotesScreen() {
       }
 
       if (notesRes && notesRes.code === 200 && Array.isArray(notesRes.data)) {
-        setNotes(notesRes.data);
+        const remoteNotes = notesRes.data;
+        const cached = await getAllCachedNotes();
+        const pendingOffline = cached.filter(c => c.id.startsWith('local_'));
+        const mergedNotes: Note[] = [
+          ...pendingOffline.map(c => ({
+            _id: c.id,
+            title: c.title,
+            content: c.content,
+            notebookId: '',
+            userId: '',
+            updatedAt: c.updatedAt,
+            createdAt: c.updatedAt,
+            isStarred: false,
+            tags: [],
+          })),
+          ...remoteNotes,
+        ];
+
+        setNotes(mergedNotes);
         const currentNb = loadedNotebooks.find(nb => nb._id === targetNbId);
         // 批量极速增量同步进倒排检索内存引擎，合并异步防抖落盘，杜绝 JS 线程与 SQLite 堵塞
-        const searchDocs = notesRes.data.map((n: Note) => ({
+        const searchDocs = mergedNotes.map((n: Note) => ({
           id: n._id,
           title: n.title,
           snippet: n.content,
@@ -158,6 +200,24 @@ export default function NotesScreen() {
       }
     } catch (e: any) {
       console.warn('Load notes error:', e.message);
+      try {
+        const cached = await getAllCachedNotes();
+        if (cached.length > 0) {
+          setNotes(
+            cached.map(c => ({
+              _id: c.id,
+              title: c.title,
+              content: c.content,
+              notebookId: '',
+              userId: '',
+              updatedAt: c.updatedAt,
+              createdAt: c.updatedAt,
+              isStarred: false,
+              tags: [],
+            }))
+          );
+        }
+      } catch {}
     } finally {
       hasLoadedOnceRef.current = true;
       setIsLoading(false);

@@ -1,8 +1,9 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Platform, Pressable } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import SyncStatusPill from '../../components/SyncStatusPill';
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
@@ -75,6 +76,11 @@ export default function TabLayout() {
         name="index"
         options={{
           title: '全部笔记',
+          headerRight: () => (
+            <View style={{ marginRight: 16 }}>
+              <SyncStatusPill />
+            </View>
+          ),
           tabBarLabel: '笔记',
           tabBarIcon: ({ color }) => (
             <Ionicons name="document-text-outline" size={22} color={color} />

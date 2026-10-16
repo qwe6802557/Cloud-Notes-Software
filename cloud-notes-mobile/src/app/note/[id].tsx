@@ -29,6 +29,7 @@ import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 import NoteCompanionBottomSheet, { CompanionTab } from '../../components/NoteCompanionBottomSheet';
 import { weaveBacklinksToText, isItemWeaved } from '../../utils/weavingUtils';
 import { mobileSearchEngine } from '../../utils/search/mobileSearchEngine';
+import { getNoteCache, saveNoteCache, resolveNoteId, deleteNoteCache } from '../../utils/storage/mobileNotesDB';
 
 interface TocItem {
   level: number;
@@ -589,8 +590,10 @@ export default function NoteDetailScreen() {
 
   const fetchBacklinks = async () => {
     if (!id) return;
+    const resolvedId = await resolveNoteId(id);
+    if (resolvedId.startsWith('local_')) return;
     try {
-      const res = await notesApi.getNoteBacklinks(id);
+      const res = await notesApi.getNoteBacklinks(resolvedId);
       const data = res?.data;
       if (data) {
         const backlinks = data.backlinks || [];
@@ -608,15 +611,56 @@ export default function NoteDetailScreen() {
 
   const fetchNote = async () => {
     if (!id) return;
+    const resolvedId = await resolveNoteId(id);
+    let hasLocalData = false;
+
+    // 本地优先瞬时上屏
     try {
-      setIsLoading(true);
-      const res = await notesApi.getNoteDetail(id);
+      const localCache = await getNoteCache(resolvedId);
+      if (localCache) {
+        hasLocalData = true;
+        setNote({
+          _id: localCache.id,
+          title: localCache.title,
+          content: localCache.content,
+          updatedAt: localCache.updatedAt,
+          notebookId: '',
+        } as any);
+        parseToc(localCache.content);
+        setIsLoading(false);
+      }
+    } catch {}
+
+    // 纯离线尚未同步的本地草稿跳过远端拉取以防 404
+    if (resolvedId.startsWith('local_')) {
+      if (!hasLocalData) {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    try {
+      if (!hasLocalData) {
+        setIsLoading(true);
+      }
+      const res = await notesApi.getNoteDetail(resolvedId);
       if (res.code === 200 && res.data) {
         setNote(res.data);
         parseToc(res.data.content);
+        await saveNoteCache({
+          id: res.data._id,
+          title: res.data.title,
+          content: res.data.content,
+          updatedAt: res.data.updatedAt,
+          lastSavedContent: res.data.content,
+          lastSyncedAt: new Date().toISOString(),
+          isDirty: false,
+        });
       }
     } catch (e: any) {
-      Alert.alert('加载失败', e.message || '无法获取笔记内容');
+      if (!hasLocalData) {
+        Alert.alert('加载失败', e.message || '无法获取笔记内容');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -647,7 +691,13 @@ export default function NoteDetailScreen() {
     const executeDelete = async () => {
       try {
         if (!id) return;
-        await notesApi.deleteNote(id);
+        const targetId = (note?._id) || (await resolveNoteId(id));
+        if (targetId.startsWith('local_')) {
+          await deleteNoteCache(targetId);
+        } else {
+          await notesApi.deleteNote(targetId);
+          await deleteNoteCache(targetId);
+        }
         if (Platform.OS === 'web') {
           window.alert('笔记已成功删除');
         } else {

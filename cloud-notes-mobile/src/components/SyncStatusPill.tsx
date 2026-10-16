@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   Modal,
   Platform,
   StyleSheet,
@@ -27,7 +28,7 @@ const STATUS_CONFIG = {
   },
   syncing: {
     text: '同步中',
-    dotColor: '#2563eb',
+    dotColor: '#1890ff',
     icon: 'sync-outline' as const,
     title: '正在增量推送到云端服务',
   },
@@ -48,6 +49,7 @@ const STATUS_CONFIG = {
 export default function SyncStatusPill() {
   const [syncState, setSyncState] = useState<SyncStateSnapshot>(() => mobileSyncManager.getSnapshot());
   const [modalVisible, setModalVisible] = useState(false);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     const unsubscribe = mobileSyncManager.subscribe(snapshot => {
@@ -55,6 +57,29 @@ export default function SyncStatusPill() {
     });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (syncState.status === 'pending' || syncState.status === 'syncing') {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.25,
+            duration: 750,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 0.85,
+            duration: 750,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [syncState.status]);
 
   const currentConfig = STATUS_CONFIG[syncState.status] || STATUS_CONFIG.synced;
 
@@ -74,9 +99,17 @@ export default function SyncStatusPill() {
           syncState.status === 'conflict' && styles.pillConflict,
         ]}
         onPress={() => setModalVisible(true)}
-        activeOpacity={0.7}
+        activeOpacity={0.75}
       >
-        <View style={[styles.statusDot, { backgroundColor: currentConfig.dotColor }]} />
+        <Animated.View
+          style={[
+            styles.statusDot,
+            {
+              backgroundColor: currentConfig.dotColor,
+              transform: [{ scale: pulseAnim }],
+            },
+          ]}
+        />
         <Text style={[styles.statusText, syncState.status === 'conflict' && styles.textConflict]}>
           {currentConfig.text}
         </Text>
@@ -102,11 +135,11 @@ export default function SyncStatusPill() {
           <View style={styles.sheetContainer}>
             <View style={styles.sheetHeader}>
               <View style={styles.sheetHeaderLeft}>
-                <Ionicons name="hardware-chip-outline" size={18} color="#2563eb" style={{ marginRight: 6 }} />
+                <Ionicons name="hardware-chip-outline" size={18} color="#1890ff" style={{ marginRight: 6 }} />
                 <Text style={styles.sheetTitle}>本地优先存储引擎</Text>
               </View>
               <View style={styles.engineBadge}>
-                <Text style={styles.engineBadgeText}>AsyncStorage</Text>
+                <Text style={styles.engineBadgeText}>AsyncStorage (Local-First)</Text>
               </View>
             </View>
 
@@ -258,7 +291,7 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
   engineBadge: {
-    backgroundColor: '#eff6ff',
+    backgroundColor: '#e6f4ff',
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -267,7 +300,7 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontSize: 10,
     fontWeight: '600',
-    color: '#2563eb',
+    color: '#1890ff',
   },
   sheetBody: {
     gap: 8,
@@ -322,7 +355,7 @@ const styles = StyleSheet.create({
     flex: 1,
     height: 36,
     borderRadius: 8,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#1890ff',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
