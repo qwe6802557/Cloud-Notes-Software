@@ -1037,43 +1037,13 @@
     -webkit-backdrop-filter: blur(5px);
   }
 
-  // 非长图模式（代码截图、常规横图/方图）：自适应黄金舒适区，居中对齐，高锐度文字与优雅阴影
+  // 非长图模式（常规小图/适中横图）：由 Ant Design 默认容器居中，配合轻质阴影与高锐度文字呈现
   &:not(.is-tall-image) {
-    .ant-image-preview-wrap {
-      overflow: hidden !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      cursor: default;
-    }
-
-    .ant-image-preview-body {
-      position: absolute !important;
-      inset: 0 !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      overflow: hidden !important;
-    }
-
-    .ant-image-preview-img-wrapper {
-      position: absolute !important;
-      inset: 0 !important;
-      display: flex !important;
-      align-items: center !important;
-      justify-content: center !important;
-      transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1) !important;
-    }
-
     .ant-image-preview-img {
-      position: relative !important;
-      margin: 0 auto !important;
       box-shadow: 0 16px 56px rgba(0, 0, 0, 0.65);
       border-radius: 6px;
       user-select: none;
       -webkit-user-drag: none;
-      image-rendering: -webkit-optimize-contrast;
-      image-rendering: crisp-edges;
       transition: box-shadow 0.25s ease, opacity 0.2s ease;
 
       &.is-zoomed {
@@ -1082,7 +1052,7 @@
     }
   }
 
-  // 长截图模式：从头部开始展示，解除视口高度限制，支持鼠标滚轮与纵向拖拽阅读，严禁横向左右漂移
+  // 长截图与纵向大图模式：从头部开始展示，解除视口高度限制，支持鼠标滚轮与纵向拖拽阅读，严禁横向左右漂移
   &.is-tall-image {
     .ant-image-preview-wrap {
       overflow-y: auto !important;
@@ -1131,7 +1101,7 @@
       position: relative !important;
       margin: 0 !important;
       max-height: none !important;
-      max-width: min(94vw, 1080px) !important;
+      max-width: min(94vw, 1400px) !important;
       width: auto !important;
       height: auto !important;
       transform-origin: top center;

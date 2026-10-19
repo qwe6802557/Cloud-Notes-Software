@@ -443,10 +443,6 @@ const NoteEditor = ({
         current: 0,
         images: []
     });
-    const [previewViewport, setPreviewViewport] = useState({
-        width: typeof window !== 'undefined' ? window.innerWidth : 1920,
-        height: typeof window !== 'undefined' ? window.innerHeight : 1080
-    });
     const lastSavedContentRef = useRef('');
     const loadingNoteRef = useRef(false);
     const editorContextRef = useRef(null);
@@ -1281,16 +1277,22 @@ const NoteEditor = ({
         event.preventDefault();
         event.stopPropagation();
 
+        const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
         const container = target.closest('.markdown-body');
         const imgElements = Array.from(container.querySelectorAll('img'));
         const images = imgElements.map(img => {
             const naturalWidth = img.naturalWidth || img.width || 1;
             const naturalHeight = img.naturalHeight || img.height || 1;
             const realSrc = img.dataset.src || img.getAttribute('src') || img.src;
+            // 判定是否启用纵向自然阅读滚动模式：
+            // 1. 高宽比大于 1.25（纵向长图、移动端长截图）
+            // 2. 或者图片自身物理高度超过当前视口的 85%（如包含丰富代码/长文本的大截图）
+            // 这类图片绝不进行纵向强制压扁缩小，而是保持 100% 原始点对点清晰度并支持自然滚动，确保文字边缘锐利清晰
+            const isTall = (naturalHeight / naturalWidth > 1.25) || (naturalHeight > vh * 0.85);
             return {
                 src: realSrc,
                 alt: img.getAttribute('alt') || '笔记图片',
-                isTall: naturalHeight / naturalWidth > 1.6,
+                isTall,
                 naturalWidth,
                 naturalHeight
             };
@@ -1300,13 +1302,15 @@ const NoteEditor = ({
         const targetSrc = target.dataset?.src || target.getAttribute('src') || target.src;
         const targetNatW = target.naturalWidth || target.width || 1;
         const targetNatH = target.naturalHeight || target.height || 1;
+        const targetIsTall = (targetNatH / targetNatW > 1.25) || (targetNatH > vh * 0.85);
+
         setImagePreview({
             visible: true,
             current: clickedIndex >= 0 ? clickedIndex : 0,
             images: images.length > 0 ? images : [{
                 src: targetSrc,
                 alt: target.getAttribute('alt') || '笔记图片',
-                isTall: targetNatH / targetNatW > 1.6,
+                isTall: targetIsTall,
                 naturalWidth: targetNatW,
                 naturalHeight: targetNatH
             }]
@@ -1314,32 +1318,11 @@ const NoteEditor = ({
     }, []);
 
     const { visible: isPreviewVisible, current: previewCurrentIndex } = imagePreview;
-
-    // 监听窗口尺寸变化，保证非长图自适应计算实时响应
-    useEffect(() => {
-        if (!isPreviewVisible) {
-            return undefined;
-        }
-        const handleResize = () => {
-            setPreviewViewport({
-                width: window.innerWidth,
-                height: window.innerHeight
-            });
-        };
-        handleResize();
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, [isPreviewVisible]);
+    const isCurrentPreviewTall = Boolean(imagePreview.images[previewCurrentIndex]?.isTall);
 
     // 长图预览：重置视口顶端 + 纵向拖拽上下平滑阅读（严格锁定 X 轴，防止横向偏移与图片消失）
     useEffect(() => {
-        if (!isPreviewVisible) {
-            return undefined;
-        }
-
-        const currentImage = imagePreview.images[previewCurrentIndex];
-        const isTall = Boolean(currentImage?.isTall);
-        if (!isTall) {
+        if (!isPreviewVisible || !isCurrentPreviewTall) {
             return undefined;
         }
 
@@ -1378,19 +1361,11 @@ const NoteEditor = ({
             document.body.style.userSelect = '';
         };
 
-        // 鼠标在图片区域时，滚轮只触发放大缩小，阻止外层容器滚动；图片外部滚轮正常滚动
-        const handleWrapWheel = e => {
-            if (e.target && e.target.closest('.ant-image-preview-img')) {
-                e.preventDefault();
-            }
-        };
-
         const timer = setTimeout(() => {
             activeWrap = document.querySelector('.cloud-note-image-preview.is-tall-image .ant-image-preview-wrap');
             if (activeWrap) {
                 activeWrap.scrollTo({ top: 0, behavior: 'instant' });
                 activeWrap.addEventListener('mousedown', handleMouseDown);
-                activeWrap.addEventListener('wheel', handleWrapWheel, { passive: false });
             }
         }, 30);
 
@@ -1401,14 +1376,13 @@ const NoteEditor = ({
             clearTimeout(timer);
             if (activeWrap) {
                 activeWrap.removeEventListener('mousedown', handleMouseDown);
-                activeWrap.removeEventListener('wheel', handleWrapWheel);
                 activeWrap.classList.remove('is-dragging');
             }
             window.removeEventListener('mousemove', handleMouseMove);
             window.removeEventListener('mouseup', handleMouseUp);
             document.body.style.userSelect = '';
         };
-    }, [isPreviewVisible, previewCurrentIndex, imagePreview.images]);
+    }, [isPreviewVisible, previewCurrentIndex, isCurrentPreviewTall]);
 
     const handleExportMarkdown = async () => {
         if (!selectedNote) {
@@ -2724,7 +2698,8 @@ const NoteEditor = ({
                         movable: !Boolean(imagePreview.images[imagePreview.current]?.isTall),
                         imageRender: (originalNode, info) => {
                             const scale = info?.transform?.scale || 1;
-                            const currentImg = imagePreview.images[imagePreview.current];
+                            const activeIndex = typeof info?.current === 'number' ? info.current : imagePreview.current;
+                            const currentImg = imagePreview.images[activeIndex];
                             const isTall = Boolean(currentImg?.isTall);
                             let nodeStyle = originalNode.props.style || {};
 
@@ -2737,41 +2712,6 @@ const NoteEditor = ({
                                     transform: cleanTransform,
                                     transformOrigin: 'top center'
                                 };
-                            } else {
-                                // 非长图模式（代码截图、常规横图/方图）：自适应居中撑满视口黄金舒适区（85%）
-                                const naturalW = currentImg?.naturalWidth;
-                                const naturalH = currentImg?.naturalHeight;
-
-                                if (naturalW && naturalH && naturalW > 1 && naturalH > 1) {
-                                    const vw = previewViewport.width || window.innerWidth || 1920;
-                                    const vh = previewViewport.height || window.innerHeight || 1080;
-                                    const maxW = Math.max(320, vw * 0.85);
-                                    const maxH = Math.max(240, vh * 0.85);
-
-                                    let targetW = naturalW;
-                                    let targetH = naturalH;
-
-                                    if (naturalW < 240 && naturalH < 240) {
-                                        // 智能防失真：极小图标/表情适度限幅，最多放大 2x
-                                        const smallScale = Math.min(2.0, maxW / naturalW, maxH / naturalH);
-                                        targetW = Math.round(naturalW * smallScale);
-                                        targetH = Math.round(naturalH * smallScale);
-                                    } else {
-                                        // 常规截图/图表：直接自适应贴合 85% 视口黄金舒适区
-                                        const fitScale = Math.min(maxW / naturalW, maxH / naturalH);
-                                        targetW = Math.round(naturalW * fitScale);
-                                        targetH = Math.round(naturalH * fitScale);
-                                    }
-
-                                    nodeStyle = {
-                                        ...nodeStyle,
-                                        width: `${targetW}px`,
-                                        height: `${targetH}px`,
-                                        maxWidth: 'none',
-                                        maxHeight: 'none',
-                                        objectFit: 'contain'
-                                    };
-                                }
                             }
 
                             return React.cloneElement(originalNode, {
@@ -2781,22 +2721,14 @@ const NoteEditor = ({
                                     cursor: isTall ? 'grab' : scale > 1 ? 'grab' : originalNode.props.style?.cursor
                                 },
                                 draggable: false,
-                                onLoad: e => {
-                                    const nw = e.currentTarget?.naturalWidth;
-                                    const nh = e.currentTarget?.naturalHeight;
-                                    if (nw && nh && nw > 1 && nh > 1 && (!currentImg?.naturalWidth || currentImg.naturalWidth <= 1)) {
-                                        setImagePreview(prev => {
-                                            const newImages = [...prev.images];
-                                            if (newImages[prev.current]) {
-                                                newImages[prev.current] = {
-                                                    ...newImages[prev.current],
-                                                    naturalWidth: nw,
-                                                    naturalHeight: nh,
-                                                    isTall: nh / nw > 1.6
-                                                };
-                                            }
-                                            return { ...prev, images: newImages };
-                                        });
+                                onWheel: e => {
+                                    // 当处于长图/需滚动大图预览且未放大（scale <= 1）时，拦截默认缩放，直接驱动外层平滑纵向滚动
+                                    if (isTall && scale <= 1 && !e.ctrlKey) {
+                                        e.stopPropagation();
+                                        const wrap = document.querySelector('.cloud-note-image-preview.is-tall-image .ant-image-preview-wrap');
+                                        if (wrap) {
+                                            wrap.scrollBy({ top: e.deltaY, behavior: 'auto' });
+                                        }
                                     }
                                 }
                             });
