@@ -443,6 +443,10 @@ const NoteEditor = ({
         current: 0,
         images: []
     });
+    const [previewViewport, setPreviewViewport] = useState({
+        width: typeof window !== 'undefined' ? window.innerWidth : 1920,
+        height: typeof window !== 'undefined' ? window.innerHeight : 1080
+    });
     const lastSavedContentRef = useRef('');
     const loadingNoteRef = useRef(false);
     const editorContextRef = useRef(null);
@@ -1280,30 +1284,52 @@ const NoteEditor = ({
         const container = target.closest('.markdown-body');
         const imgElements = Array.from(container.querySelectorAll('img'));
         const images = imgElements.map(img => {
-            const naturalWidth = img.naturalWidth || 1;
-            const naturalHeight = img.naturalHeight || 1;
+            const naturalWidth = img.naturalWidth || img.width || 1;
+            const naturalHeight = img.naturalHeight || img.height || 1;
             const realSrc = img.dataset.src || img.getAttribute('src') || img.src;
             return {
                 src: realSrc,
                 alt: img.getAttribute('alt') || '笔记图片',
-                isTall: naturalHeight / naturalWidth > 1.6
+                isTall: naturalHeight / naturalWidth > 1.6,
+                naturalWidth,
+                naturalHeight
             };
         });
 
         const clickedIndex = imgElements.indexOf(target);
         const targetSrc = target.dataset?.src || target.getAttribute('src') || target.src;
+        const targetNatW = target.naturalWidth || target.width || 1;
+        const targetNatH = target.naturalHeight || target.height || 1;
         setImagePreview({
             visible: true,
             current: clickedIndex >= 0 ? clickedIndex : 0,
             images: images.length > 0 ? images : [{
                 src: targetSrc,
                 alt: target.getAttribute('alt') || '笔记图片',
-                isTall: (target.naturalHeight || 1) / (target.naturalWidth || 1) > 1.6
+                isTall: targetNatH / targetNatW > 1.6,
+                naturalWidth: targetNatW,
+                naturalHeight: targetNatH
             }]
         });
     }, []);
 
     const { visible: isPreviewVisible, current: previewCurrentIndex } = imagePreview;
+
+    // 监听窗口尺寸变化，保证非长图自适应计算实时响应
+    useEffect(() => {
+        if (!isPreviewVisible) {
+            return undefined;
+        }
+        const handleResize = () => {
+            setPreviewViewport({
+                width: window.innerWidth,
+                height: window.innerHeight
+            });
+        };
+        handleResize();
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, [isPreviewVisible]);
 
     // 长图预览：重置视口顶端 + 纵向拖拽上下平滑阅读（严格锁定 X 轴，防止横向偏移与图片消失）
     useEffect(() => {
@@ -2698,7 +2724,8 @@ const NoteEditor = ({
                         movable: !Boolean(imagePreview.images[imagePreview.current]?.isTall),
                         imageRender: (originalNode, info) => {
                             const scale = info?.transform?.scale || 1;
-                            const isTall = Boolean(imagePreview.images[imagePreview.current]?.isTall);
+                            const currentImg = imagePreview.images[imagePreview.current];
+                            const isTall = Boolean(currentImg?.isTall);
                             let nodeStyle = originalNode.props.style || {};
 
                             if (isTall) {
@@ -2710,6 +2737,41 @@ const NoteEditor = ({
                                     transform: cleanTransform,
                                     transformOrigin: 'top center'
                                 };
+                            } else {
+                                // 非长图模式（代码截图、常规横图/方图）：自适应居中撑满视口黄金舒适区（85%）
+                                const naturalW = currentImg?.naturalWidth;
+                                const naturalH = currentImg?.naturalHeight;
+
+                                if (naturalW && naturalH && naturalW > 1 && naturalH > 1) {
+                                    const vw = previewViewport.width || window.innerWidth || 1920;
+                                    const vh = previewViewport.height || window.innerHeight || 1080;
+                                    const maxW = Math.max(320, vw * 0.85);
+                                    const maxH = Math.max(240, vh * 0.85);
+
+                                    let targetW = naturalW;
+                                    let targetH = naturalH;
+
+                                    if (naturalW < 240 && naturalH < 240) {
+                                        // 智能防失真：极小图标/表情适度限幅，最多放大 2x
+                                        const smallScale = Math.min(2.0, maxW / naturalW, maxH / naturalH);
+                                        targetW = Math.round(naturalW * smallScale);
+                                        targetH = Math.round(naturalH * smallScale);
+                                    } else {
+                                        // 常规截图/图表：直接自适应贴合 85% 视口黄金舒适区
+                                        const fitScale = Math.min(maxW / naturalW, maxH / naturalH);
+                                        targetW = Math.round(naturalW * fitScale);
+                                        targetH = Math.round(naturalH * fitScale);
+                                    }
+
+                                    nodeStyle = {
+                                        ...nodeStyle,
+                                        width: `${targetW}px`,
+                                        height: `${targetH}px`,
+                                        maxWidth: 'none',
+                                        maxHeight: 'none',
+                                        objectFit: 'contain'
+                                    };
+                                }
                             }
 
                             return React.cloneElement(originalNode, {
@@ -2718,7 +2780,25 @@ const NoteEditor = ({
                                     ...nodeStyle,
                                     cursor: isTall ? 'grab' : scale > 1 ? 'grab' : originalNode.props.style?.cursor
                                 },
-                                draggable: false
+                                draggable: false,
+                                onLoad: e => {
+                                    const nw = e.currentTarget?.naturalWidth;
+                                    const nh = e.currentTarget?.naturalHeight;
+                                    if (nw && nh && nw > 1 && nh > 1 && (!currentImg?.naturalWidth || currentImg.naturalWidth <= 1)) {
+                                        setImagePreview(prev => {
+                                            const newImages = [...prev.images];
+                                            if (newImages[prev.current]) {
+                                                newImages[prev.current] = {
+                                                    ...newImages[prev.current],
+                                                    naturalWidth: nw,
+                                                    naturalHeight: nh,
+                                                    isTall: nh / nw > 1.6
+                                                };
+                                            }
+                                            return { ...prev, images: newImages };
+                                        });
+                                    }
+                                }
                             });
                         },
                         toolbarRender: (originalNode, info) => {
@@ -2727,7 +2807,7 @@ const NoteEditor = ({
                             return (
                                 <Space size={12} className="cloud-note-preview-custom-toolbar">
                                     {originalNode}
-                                    <Tooltip title={scale > 1 ? '复位至初始比例 (1:1)' : '当前已是初始比例'}>
+                                    <Tooltip title={scale > 1 ? '复位至自适应最佳尺寸' : '当前已是自适应最佳尺寸'}>
                                         <OneToOneOutlined
                                             className={`cloud-note-preview-toolbar-btn ${scale <= 1 ? 'is-disabled' : ''}`}
                                             onClick={() => {
