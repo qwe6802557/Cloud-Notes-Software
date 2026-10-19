@@ -293,4 +293,45 @@ export const syncNoteIndex = (params?: { since?: string }): Promise<ApiResponse<
   });
 };
 
+export interface DestinationFolder {
+  id: string;
+  title: string;
+  parentId: string | null;
+  notebookId: string;
+  children: DestinationFolder[];
+}
+
+export interface TargetDestination {
+  id: string;
+  name: string;
+  isDefault: boolean;
+  folders: DestinationFolder[];
+}
+
+// 获取全量可移动目标位置（笔记本与文件夹树）
+export const getTargetDestinations = async (): Promise<ApiResponse<{ destinations: TargetDestination[] }>> => {
+  const res: any = await request({
+    url: '/notes/target-destinations',
+    method: 'get',
+  });
+  return res;
+};
+
+// 移动笔记或目录到目标父级（支持跨笔记本）
+export const moveNote = async (
+  noteId: string,
+  data: {
+    targetParentId?: string | null;
+    notebookId?: string;
+    orderedSiblingIds?: string[];
+  }
+): Promise<ApiResponse<{ note: Note; targetNotebookId?: string }>> => {
+  const res: any = await request({
+    url: `/notes/${noteId}/move`,
+    method: 'put',
+    data,
+  });
+  return res;
+};
+
 

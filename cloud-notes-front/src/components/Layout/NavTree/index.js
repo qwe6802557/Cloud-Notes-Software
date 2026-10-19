@@ -49,7 +49,8 @@ import {
     deleteNote,
     restoreNote,
     updateNoteStarred,
-    moveNoteNode
+    moveNoteNode,
+    getTargetDestinations
 } from '@/api/notes';
 import { getUser } from '@/utils/auth';
 import SettingsModal from '@/components/SettingsModal';
@@ -410,23 +411,47 @@ const NavTree = forwardRef(({
         }
     }, [formatTreeData]);
 
-    // 执行节点移动与同级排序持久化
-    const executeMoveNode = useCallback(async (nodeKey, targetParentId, orderedSiblingIds = []) => {
+    // 执行节点移动与跨笔记本/同级排序持久化
+    const executeMoveNode = useCallback(async (nodeKey, targetParentId, targetNotebookIdOrSiblings = selectedNotebook, orderedSiblingIds = []) => {
+        let targetNotebookId = selectedNotebook;
+        let actualSiblingIds = orderedSiblingIds;
+        if (Array.isArray(targetNotebookIdOrSiblings)) {
+            actualSiblingIds = targetNotebookIdOrSiblings;
+            targetNotebookId = selectedNotebook;
+        } else if (targetNotebookIdOrSiblings) {
+            targetNotebookId = targetNotebookIdOrSiblings;
+        }
+
         try {
-            await moveNoteNode(nodeKey, {
+            const res = await moveNoteNode(nodeKey, {
                 targetParentId,
-                notebookId: selectedNotebook,
-                orderedSiblingIds
+                notebookId: targetNotebookId,
+                orderedSiblingIds: actualSiblingIds
             });
-            if (targetParentId) {
-                setExpandedKeys(prev => Array.from(new Set([...prev, targetParentId])));
+            const effectiveNbId = res?.targetNotebookId || res?.data?.targetNotebookId || targetNotebookId || selectedNotebook;
+            const isCrossNotebook = effectiveNbId && effectiveNbId !== selectedNotebook;
+
+            if (isCrossNotebook) {
+                // 跨笔记本移动：自动切换到目标笔记本并聚焦该节点
+                setSelectedNotebook(effectiveNbId);
+                if (targetParentId) {
+                    setExpandedKeys(prev => Array.from(new Set([...prev, targetParentId])));
+                }
+                await loadNotebookTree(effectiveNbId, false);
+                setSelectedNote(nodeKey);
+            } else {
+                // 同笔记本内移动
+                if (targetParentId) {
+                    setExpandedKeys(prev => Array.from(new Set([...prev, targetParentId])));
+                }
+                await refreshNotebookTree(selectedNotebook, targetParentId);
+                setSelectedNote(nodeKey);
             }
-            await refreshNotebookTree(selectedNotebook, targetParentId);
         } catch (err) {
             message.error(err?.message || '移动失败');
             await refreshNotebookTree(selectedNotebook);
         }
-    }, [selectedNotebook, refreshNotebookTree]);
+    }, [selectedNotebook, refreshNotebookTree, setSelectedNotebook, loadNotebookTree, setSelectedNote]);
 
     // 拖拽开始：记录拖拽节点
     const handleDragStart = useCallback(({ node }) => {
@@ -965,44 +990,94 @@ const NavTree = forwardRef(({
     const triggerMove = async node => {
         setContextMenu(prev => ({ ...prev, visible: false }));
         try {
-            const res = await getNotebookNotes(selectedNotebook, { all: 'true' });
-            const allNotes = res?.notes || [];
-            const folders = allNotes.filter(n => n.type === 'folder' && (n._id?.toString() || n.id) !== node.key);
+            const res = await getTargetDestinations();
+            const destinations = res?.destinations || res?.data?.destinations || [];
 
-            const buildFolderOptions = (items, pId = null) => {
-                return items
-                    .filter(item => {
-                        const itemPid = item.parentId ? item.parentId.toString() : null;
-                        return itemPid === pId;
-                    })
-                    .map(item => {
-                        const fKey = (item._id || item.id).toString();
-                        return {
-                            title: item.title,
-                            value: fKey,
-                            key: fKey,
-                            children: buildFolderOptions(items, fKey)
-                        };
-                    });
+            const nodeKey = node.key;
+            const isFolder = node.isFolder;
+            const currentParentId = node.parentId || null;
+            const currentNotebookId = selectedNotebook;
+
+            // 递归收集该节点下所有子孙目录ID（防止移动到自身子目录形成循环引用）
+            const getDescendantKeys = (foldersList, targetKey) => {
+                const results = [];
+                const search = list => {
+                    for (const item of list) {
+                        if (item.id === targetKey) {
+                            const collectAll = children => {
+                                for (const child of children) {
+                                    results.push(child.id);
+                                    if (child.children) collectAll(child.children);
+                                }
+                            };
+                            if (item.children) collectAll(item.children);
+                            return true;
+                        }
+                        if (item.children && search(item.children)) return true;
+                    }
+                    return false;
+                };
+                search(foldersList);
+                return results;
             };
 
-            const rootOption = {
-                title: '【笔记本根目录】',
-                value: 'root',
-                key: 'root',
-                children: buildFolderOptions(folders, null)
+            const descendantKeys = isFolder ? getDescendantKeys(destinations.flatMap(d => d.folders || []), nodeKey) : [];
+
+            const buildFolderOptions = (folders, nbId) => {
+                return folders.map(f => {
+                    const isSelf = f.id === nodeKey;
+                    const isDescendant = descendantKeys.includes(f.id);
+                    const isCurrentLoc = currentParentId === f.id && currentNotebookId === nbId;
+                    const isDisabled = isSelf || isDescendant || isCurrentLoc;
+
+                    let title = `📁 ${f.title}`;
+                    if (isCurrentLoc) {
+                        title += ' (当前位置)';
+                    } else if (isSelf || isDescendant) {
+                        title += ' (不可选)';
+                    }
+
+                    return {
+                        title,
+                        value: `folder_${f.id}`,
+                        key: `folder_${f.id}`,
+                        disabled: isDisabled,
+                        notebookId: nbId,
+                        folderId: f.id,
+                        children: f.children && f.children.length > 0 ? buildFolderOptions(f.children, nbId) : []
+                    };
+                });
             };
 
-            setMoveFolderTree([rootOption]);
+            const treeOptions = destinations.map(nb => {
+                const isCurrentRoot = !currentParentId && currentNotebookId === nb.id;
+                let title = `📘 ${nb.name}`;
+                if (isCurrentRoot) {
+                    title += ' (当前位置)';
+                }
+                return {
+                    title,
+                    value: `nb_${nb.id}`,
+                    key: `nb_${nb.id}`,
+                    disabled: isCurrentRoot,
+                    notebookId: nb.id,
+                    folderId: null,
+                    children: buildFolderOptions(nb.folders || [], nb.id)
+                };
+            });
+
+            setMoveFolderTree(treeOptions);
             setDialogState({
                 open: true,
                 type: 'move',
                 node,
-                targetParentId: node.parentId || 'root',
+                targetValue: null,
+                targetParentId: null,
+                targetNotebookId: null,
                 title: node.title
             });
         } catch {
-            message.error('获取目录列表失败');
+            message.error('获取目标位置列表失败');
         }
     };
 
@@ -1124,8 +1199,24 @@ const NavTree = forwardRef(({
                 message.success('重命名成功');
                 setTreeData(prev => updateNodeTitleInTree(prev, node.key, finalTitle));
             } else if (type === 'move') {
-                const parentId = targetParentId === 'root' ? null : targetParentId;
-                await executeMoveNode(node.key, parentId);
+                const { targetParentId, targetNotebookId, targetValue } = dialogState;
+                if (!targetValue) {
+                    message.warning('请选择要移动到的目标位置');
+                    return;
+                }
+
+                let finalNotebookId = targetNotebookId;
+                let finalParentId = targetParentId;
+                if (!finalNotebookId) {
+                    if (targetValue.startsWith('nb_')) {
+                        finalNotebookId = targetValue.replace('nb_', '');
+                        finalParentId = null;
+                    } else if (targetValue.startsWith('folder_')) {
+                        finalParentId = targetValue.replace('folder_', '');
+                    }
+                }
+
+                await executeMoveNode(node.key, finalParentId, finalNotebookId);
                 message.success('移动成功');
             }
             setDialogState({ open: false, type: 'createNote', node: null, targetParentId: null, title: '' });
@@ -1648,7 +1739,7 @@ const NavTree = forwardRef(({
                     dialogState.type === 'createNotebook' ? '新建笔记本' :
                     dialogState.type === 'createFolder' ? '新建目录' :
                     dialogState.type === 'createNote' ? '新建 Markdown 笔记' :
-                    dialogState.type === 'rename' ? '重命名' : '移动到目标目录'
+                    dialogState.type === 'rename' ? '重命名' : '移动到目标位置'
                 }
                 okText="确定"
                 cancelText="取消"
@@ -1660,14 +1751,29 @@ const NavTree = forwardRef(({
             >
                 {dialogState.type === 'move' ? (
                     <div style={{ padding: '16px 0' }}>
-                        <p style={{ color: '#64748b', marginBottom: 8 }}>请选择要移动到的目标位置：</p>
+                        <p style={{ color: '#64748b', marginBottom: 8, fontSize: 13 }}>
+                            请选择 <span style={{ fontWeight: 600, color: '#0f172a' }}>"{dialogState.title}"</span> 的目标位置：
+                        </p>
                         <TreeSelect
                             treeData={moveFolderTree}
-                            value={dialogState.targetParentId}
-                            onChange={val => setDialogState(prev => ({ ...prev, targetParentId: val }))}
+                            value={dialogState.targetValue}
+                            onChange={(val, label, extra) => {
+                                const selectedOption = extra?.triggerNode?.props;
+                                const notebookId = selectedOption?.notebookId;
+                                const folderId = selectedOption?.folderId;
+                                setDialogState(prev => ({
+                                    ...prev,
+                                    targetValue: val,
+                                    targetParentId: folderId,
+                                    targetNotebookId: notebookId
+                                }));
+                            }}
                             style={{ width: '100%' }}
-                            placeholder="请选择目标目录"
+                            placeholder="请选择目标笔记本根目录或文件夹"
                             treeDefaultExpandAll
+                            showSearch
+                            treeNodeFilterProp="title"
+                            dropdownStyle={{ maxHeight: 360, overflow: 'auto' }}
                         />
                     </div>
                 ) : (

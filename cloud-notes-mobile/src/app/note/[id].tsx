@@ -27,6 +27,7 @@ import LocalRadarModal from '../../components/LocalRadarModal';
 import NotePeekBottomSheet from '../../components/NotePeekBottomSheet';
 import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 import NoteCompanionBottomSheet, { CompanionTab } from '../../components/NoteCompanionBottomSheet';
+import MoveNoteBottomSheet from '../../components/MoveNoteBottomSheet';
 import { weaveBacklinksToText, isItemWeaved } from '../../utils/weavingUtils';
 import { mobileSearchEngine } from '../../utils/search/mobileSearchEngine';
 import { getNoteCache, saveNoteCache, resolveNoteId, deleteNoteCache } from '../../utils/storage/mobileNotesDB';
@@ -206,6 +207,7 @@ export default function NoteDetailScreen() {
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showImageViewer, setShowImageViewer] = useState(false);
   const [showRadarModal, setShowRadarModal] = useState(false);
+  const [showMoveModal, setShowMoveModal] = useState(false);
   const [viewerInitialIndex, setViewerInitialIndex] = useState(0);
   const [tocList, setTocList] = useState<TocItem[]>([]);
   const [backlinksData, setBacklinksData] = useState<{ backlinks: any[]; unresolvedMentions: any[]; totalCount: number }>({
@@ -806,6 +808,15 @@ export default function NoteDetailScreen() {
                 <Ionicons name="time-outline" size={20} color="#64748b" />
               </TouchableOpacity>
 
+              {/* 移动归属 */}
+              <TouchableOpacity
+                style={styles.headerActionBtn}
+                onPress={() => setShowMoveModal(true)}
+                hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+              >
+                <Ionicons name="folder-open-outline" size={19} color="#64748b" />
+              </TouchableOpacity>
+
               {/* 删除按钮 */}
               <TouchableOpacity
                 style={styles.headerActionBtn}
@@ -999,6 +1010,23 @@ export default function NoteDetailScreen() {
             setShowCompanionSheet(false);
             setAiInitialAction(actionKey);
             setShowAIModal(true);
+          }}
+        />
+      )}
+
+      {/* 跨笔记本与目录移动抽屉 (MoveNoteBottomSheet) */}
+      {note && (
+        <MoveNoteBottomSheet
+          visible={showMoveModal}
+          noteId={note._id}
+          noteTitle={note.title || ''}
+          isFolder={note.type === 'folder'}
+          currentNotebookId={note.notebookId}
+          currentParentId={note.parentId}
+          onClose={() => setShowMoveModal(false)}
+          onSuccess={(targetNotebookId, targetParentId) => {
+            setNote(prev => (prev ? { ...prev, notebookId: targetNotebookId, parentId: targetParentId } : prev));
+            Alert.alert('提示', '笔记已成功移动');
           }}
         />
       )}

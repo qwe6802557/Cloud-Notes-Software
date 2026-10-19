@@ -16,6 +16,7 @@ router.get('/suggest-links', noteController.suggestNoteLinks);
 router.get('/dictionary', noteController.getNoteDictionary);
 router.get('/index-sync', noteController.syncNoteIndex);
 router.get('/notebook/:notebookId', noteController.getNotebookNotes);
+router.get('/target-destinations', noteController.getTargetDestinations);
 router.post('/', validate(schemas.noteCreate, 'body'), noteController.createNote);
 router.get('/:id', noteController.getNote);
 router.get('/:id/backlinks', noteController.getNoteBacklinks);

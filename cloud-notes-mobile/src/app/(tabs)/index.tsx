@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Platform,
   RefreshControl,
@@ -18,6 +19,7 @@ import * as notesApi from '../../api/notesApi';
 import { Note, Notebook } from '../../api/types';
 import { Config } from '../../constants/Config';
 import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
+import MoveNoteBottomSheet from '../../components/MoveNoteBottomSheet';
 import { mobileSearchEngine, SearchResultItem } from '../../utils/search/mobileSearchEngine';
 import { getAllCachedNotes } from '../../utils/storage/mobileNotesDB';
 
@@ -75,6 +77,49 @@ export default function NotesScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showRAGModal, setShowRAGModal] = useState(false);
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [moveTargetNote, setMoveTargetNote] = useState<any>(null);
+
+  // 长按卡片唤起快捷操作菜单
+  const handleNoteLongPress = (item: any) => {
+    const isFolder = item.type === 'folder';
+    const noteId = item._id || item.id;
+    Alert.alert(
+      item.title || (isFolder ? '未命名文件夹' : '无标题笔记'),
+      '快捷操作',
+      [
+        {
+          text: '移动到...',
+          onPress: () => {
+            setMoveTargetNote(item);
+            setShowMoveModal(true);
+          },
+        },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert('确认删除', `确定要删除 "${item.title || '此项'}" 吗？`, [
+              { text: '取消', style: 'cancel' },
+              {
+                text: '删除',
+                style: 'destructive',
+                onPress: async () => {
+                  try {
+                    await notesApi.deleteNote(noteId);
+                    loadData(true);
+                  } catch (e: any) {
+                    Alert.alert('删除失败', e?.message || '网络异常');
+                  }
+                },
+              },
+            ]);
+          },
+        },
+        { text: '取消', style: 'cancel' },
+      ]
+    );
+  };
 
   // SWR 保活控制器：初次挂载冷启动展示 Loading，切 Tab 聚焦时保持 FlatList 存活与滚动位不变
   const hasLoadedOnceRef = useRef(false);
@@ -339,6 +384,8 @@ export default function NotesScreen() {
             router.push({ pathname: '/note/[id]', params: { id: item._id || item.id } });
           }
         }}
+        onLongPress={() => handleNoteLongPress(item)}
+        delayLongPress={400}
         activeOpacity={0.7}
       >
         <View style={styles.cardHeader}>
@@ -525,6 +572,25 @@ export default function NotesScreen() {
           onClose={() => setShowRAGModal(false)}
           currentNotebookId={activeNotebookId || undefined}
           currentNotebookName={notebooks.find(n => n._id === activeNotebookId)?.title}
+        />
+      )}
+
+      {moveTargetNote && (
+        <MoveNoteBottomSheet
+          visible={showMoveModal}
+          noteId={moveTargetNote._id || moveTargetNote.id}
+          noteTitle={moveTargetNote.title || ''}
+          isFolder={moveTargetNote.type === 'folder'}
+          currentNotebookId={moveTargetNote.notebookId || activeNotebookId || undefined}
+          currentParentId={moveTargetNote.parentId}
+          onClose={() => {
+            setShowMoveModal(false);
+            setMoveTargetNote(null);
+          }}
+          onSuccess={() => {
+            loadData(true);
+            Alert.alert('成功', '已移动到新位置');
+          }}
         />
       )}
     </View>

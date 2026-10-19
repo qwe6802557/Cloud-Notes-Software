@@ -213,5 +213,13 @@ export const syncNoteIndex = params => {
     });
 };
 
+// 获取所有可移动目标位置（全量笔记本与嵌套文件夹树）
+export const getTargetDestinations = () => {
+    return request({
+        url: '/notes/target-destinations',
+        method: 'get'
+    });
+};
+
 
 

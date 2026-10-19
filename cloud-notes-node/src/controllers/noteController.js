@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { ZipArchive } = require('archiver');
 const Note = require('../models/Note');
+const Notebook = require('../models/Notebook');
 const Tag = require('../models/Tag');
 const NoteHistory = require('../models/NoteHistory');
 const noteLinkService = require('../services/noteLinkService');
@@ -574,7 +575,69 @@ exports.restoreNote = asyncHandler(async (req, res, next) => {
     });
 });
 
-// 移动笔记或目录到目标父级
+// 获取所有可移动目标位置（全量笔记本与嵌套文件夹树）
+exports.getTargetDestinations = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+
+    // 1. 获取所有未删除的笔记本
+    const notebooks = await Notebook.find({ userId, isDeleted: false })
+        .sort({ isDefault: -1, sort: 1, createdAt: 1 })
+        .select('_id name isDefault');
+
+    // 2. 获取所有未删除的文件夹
+    const folders = await Note.find({ userId, type: 'folder', isDeleted: false })
+        .sort({ order: 1, createdAt: 1 })
+        .select('_id title parentId notebookId order');
+
+    // 3. 构建每个笔记本下的多级文件夹树
+    const folderMapByNotebook = new Map();
+    for (const folder of folders) {
+        const nbId = folder.notebookId.toString();
+        if (!folderMapByNotebook.has(nbId)) {
+            folderMapByNotebook.set(nbId, []);
+        }
+        folderMapByNotebook.get(nbId).push({
+            id: folder._id.toString(),
+            title: folder.title,
+            parentId: folder.parentId ? folder.parentId.toString() : null,
+            notebookId: nbId,
+            order: folder.order || 0
+        });
+    }
+
+    const buildTree = (items, pId = null) => {
+        return items
+            .filter(item => item.parentId === pId)
+            .map(item => ({
+                id: item.id,
+                title: item.title,
+                parentId: item.parentId,
+                notebookId: item.notebookId,
+                children: buildTree(items, item.id)
+            }));
+    };
+
+    const destinations = notebooks.map(nb => {
+        const nbId = nb._id.toString();
+        const nbFolders = folderMapByNotebook.get(nbId) || [];
+        return {
+            id: nbId,
+            name: nb.name,
+            isDefault: Boolean(nb.isDefault),
+            folders: buildTree(nbFolders, null)
+        };
+    });
+
+    res.status(200).json({
+        code: 200,
+        message: '获取目标位置成功',
+        data: {
+            destinations
+        }
+    });
+});
+
+// 移动笔记或目录到目标父级（支持同笔记本与跨笔记本移动）
 exports.moveNote = asyncHandler(async (req, res, next) => {
     const noteId = req.params.id;
     const userId = req.user._id;
@@ -585,14 +648,15 @@ exports.moveNote = asyncHandler(async (req, res, next) => {
         return next(new AppError('笔记或目录不存在', 404));
     }
 
-    const safeParentId = targetParentId && targetParentId !== 'null' ? targetParentId : null;
+    const safeParentId = targetParentId && targetParentId !== 'null' && targetParentId !== 'root' ? targetParentId : null;
+    let targetParent = null;
 
     if (safeParentId) {
         if (safeParentId === noteId) {
             return next(new AppError('不能将目录移动到自身内部', 400));
         }
 
-        const targetParent = await Note.findOne({ _id: safeParentId, userId, isDeleted: false });
+        targetParent = await Note.findOne({ _id: safeParentId, userId, isDeleted: false });
         if (!targetParent) {
             return next(new AppError('目标父目录不存在', 404));
         }
@@ -627,18 +691,23 @@ exports.moveNote = asyncHandler(async (req, res, next) => {
         await Note.bulkWrite(bulkOps);
     }
 
+    // 计算最终所属笔记本：若移入某文件夹，以该文件夹所属笔记本为准；若移入根目录，以传入的 notebookId 为准
+    const effectiveNotebookId = targetParent
+        ? targetParent.notebookId.toString()
+        : (notebookId ? notebookId.toString() : null);
+
     const updateFields = {
         parentId: safeParentId,
         updatedAt: new Date()
     };
 
-    if (notebookId && notebookId !== note.notebookId.toString()) {
-        updateFields.notebookId = notebookId;
+    if (effectiveNotebookId && effectiveNotebookId !== note.notebookId.toString()) {
+        updateFields.notebookId = effectiveNotebookId;
         if (note.type === 'folder') {
             const descendantIds = await findDescendantIds([note._id], userId, false);
             await Note.updateMany(
                 { _id: { $in: descendantIds }, userId },
-                { notebookId, updatedAt: new Date() }
+                { notebookId: effectiveNotebookId, updatedAt: new Date() }
             );
         }
     }
@@ -653,7 +722,8 @@ exports.moveNote = asyncHandler(async (req, res, next) => {
         code: 200,
         message: '移动成功',
         data: {
-            note: updatedNote
+            note: updatedNote,
+            targetNotebookId: effectiveNotebookId || note.notebookId.toString()
         }
     });
 });
