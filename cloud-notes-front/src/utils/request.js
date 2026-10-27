@@ -22,6 +22,9 @@ let authRedirectTimer = null;
  * @returns {Promise}
  */
 const handleAuthExpired = (customMessage, config) => {
+    if (config?.url && config.url.includes('/vault')) {
+        return Promise.reject(new Error(customMessage || '安全密码不正确'));
+    }
     // 1. 同步清空本地认证凭据
     clearAuth();
 

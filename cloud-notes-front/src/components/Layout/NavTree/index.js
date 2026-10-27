@@ -56,6 +56,7 @@ import {
     getTargetDestinations
 } from '@/api/notes';
 import { getUser } from '@/utils/auth';
+import { verifyVault } from '@/api/vault';
 import SettingsModal from '@/components/SettingsModal';
 import './index.less';
 
@@ -217,6 +218,19 @@ const NavTree = forwardRef(({
     onViewChange
 }, ref) => {
     const [notebooks, setNotebooks] = useState([]);
+    const [decryptModalVisible, setDecryptModalVisible] = useState(false);
+    const [decryptTargetNotebook, setDecryptTargetNotebook] = useState(null);
+    const [decryptInputPin, setDecryptInputPin] = useState('');
+    const [decryptLoading, setDecryptLoading] = useState(false);
+    const [decryptError, setDecryptError] = useState('');
+
+    // 私密笔记本置底排序
+    const sortedNotebooks = useMemo(() => {
+        return [...notebooks].sort((a, b) => {
+            if (!!a.isEncrypted === !!b.isEncrypted) return 0;
+            return a.isEncrypted ? 1 : -1;
+        });
+    }, [notebooks]);
     const [viewType, setViewType] = useState('all');
     const [treeData, setTreeData] = useState([]);
     const [flatListNotes, setFlatListNotes] = useState([]);
@@ -1102,14 +1116,46 @@ const NavTree = forwardRef(({
         const activeNbId = selectedNotebook || (notebooks.length > 0 ? (notebooks[0].id || notebooks[0]._id) : null);
         const activeNb = notebooks.find(n => (n.id || n._id) === activeNbId);
         if (!activeNb) return;
-        const nextEncrypted = !activeNb.isEncrypted;
+
+        // 若当前为私密笔记本，解除时必须二次验证安全密码
+        if (activeNb.isEncrypted) {
+            setDecryptTargetNotebook(activeNb);
+            setDecryptInputPin('');
+            setDecryptError('');
+            setDecryptModalVisible(true);
+            return;
+        }
+
         try {
-            await updateNotebook(activeNbId, { isEncrypted: nextEncrypted });
-            message.success(nextEncrypted ? '已将当前笔记本设为私密' : '已解除当前笔记本私密');
+            await updateNotebook(activeNbId, { isEncrypted: true });
+            message.success('已将当前笔记本设为私密');
             loadNotebooks();
             if (activeNbId) loadNotebookTree(activeNbId, true);
         } catch {
-            message.error('操作笔记本私密失败');
+            message.error('设置私密笔记本失败');
+        }
+    };
+
+    // 确认解除笔记本私密保护
+    const handleConfirmDecryptNotebook = async () => {
+        if (!decryptInputPin.trim()) {
+            setDecryptError('请输入安全密码');
+            return;
+        }
+        setDecryptLoading(true);
+        setDecryptError('');
+        try {
+            await verifyVault(decryptInputPin.trim());
+            const targetId = decryptTargetNotebook.id || decryptTargetNotebook._id;
+            await updateNotebook(targetId, { isEncrypted: false });
+            message.success('已成功解除当前笔记本私密保护');
+            setDecryptModalVisible(false);
+            loadNotebooks();
+            if (targetId) loadNotebookTree(targetId, true);
+        } catch (err) {
+            setDecryptError(err.message || '安全密码错误，解除失败');
+        } finally {
+            setDecryptLoading(false);
         }
     };
 
@@ -1505,7 +1551,7 @@ const NavTree = forwardRef(({
                                 className="notebook-select"
                                 variant="borderless"
                                 popupMatchSelectWidth={false}
-                                options={notebooks.map(nb => ({
+                                options={sortedNotebooks.map(nb => ({
                                     value: nb.id || nb._id,
                                     label: (
                                         <Space>
@@ -1842,7 +1888,53 @@ const NavTree = forwardRef(({
             </Modal>
 
             {/* 用户设置弹窗 */}
+            {/* 用户设置弹窗 */}
             <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} onCancel={() => setSettingsOpen(false)} />
+
+            {/* 解除笔记本私密鉴权弹窗 */}
+            <Modal
+                title={
+                    <Space>
+                        <LockFilled style={{ color: '#D97706' }} />
+                        <span>解除笔记本私密保护</span>
+                    </Space>
+                }
+                open={decryptModalVisible}
+                onOk={handleConfirmDecryptNotebook}
+                onCancel={() => {
+                    setDecryptModalVisible(false);
+                    setDecryptInputPin('');
+                    setDecryptError('');
+                }}
+                confirmLoading={decryptLoading}
+                okText="验证并解除"
+                cancelText="取消"
+                destroyOnClose
+                centered
+                width={420}
+            >
+                <div style={{ padding: '12px 0 6px 0' }}>
+                    <div style={{ fontSize: 13, color: '#64748b', marginBottom: 14 }}>
+                        您正在解除笔记本 <span style={{ fontWeight: 600, color: '#0f172a' }}>"{decryptTargetNotebook?.name}"</span> 的私密状态。此操作需要验证主安全密码。
+                    </div>
+                    <Input.Password
+                        placeholder="请输入主安全密码 (Master PIN)"
+                        value={decryptInputPin}
+                        onChange={e => {
+                            setDecryptInputPin(e.target.value);
+                            if (decryptError) setDecryptError('');
+                        }}
+                        onPressEnter={handleConfirmDecryptNotebook}
+                        autoFocus
+                        style={{ fontFamily: 'monospace', letterSpacing: '0.1em' }}
+                    />
+                    {decryptError && (
+                        <div style={{ color: '#dc2626', fontSize: 12, marginTop: 8 }}>
+                            {decryptError}
+                        </div>
+                    )}
+                </div>
+            </Modal>
         </div>
     );
 });

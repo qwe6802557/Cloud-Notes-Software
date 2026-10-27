@@ -25,6 +25,8 @@ import { updateUserInfo } from '@/api/user';
 import { getAIConfig, updateAIConfig, testAIConnection } from '@/api/ai';
 import { getUser, setUser } from '@/utils/auth';
 import { getEditorPreferences, setEditorPreferences, setCachedAIConfig } from '@/utils/preferences';
+import { getVaultStatus, updateVault } from '@/api/vault';
+import cryptoVault from '@/utils/cryptoVault';
 import './index.less';
 
 const FEATURED_SYSTEM_MODELS = [
@@ -98,6 +100,10 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
     const [testingAI, setTestingAI] = useState(false);
     const [testResult, setTestResult] = useState(null);
     const [systemModel, setSystemModel] = useState('grok-chat-fast');
+    const [vaultStatus, setVaultStatus] = useState({ enabled: false, hint: '' });
+    const [vaultLoading, setVaultLoading] = useState(false);
+    const [isChangingVaultPin, setIsChangingVaultPin] = useState(false);
+    const [vaultForm] = Form.useForm();
     const user = getUser() || {};
 
     const watchedPassword = Form.useWatch('password', form) || '';
@@ -143,8 +149,44 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                     setSystemModel(loadedSystemModel);
                 }
             }).catch(() => {});
+            getVaultStatus().then(res => {
+                if (res) {
+                    setVaultStatus({
+                        enabled: Boolean(res.enabled),
+                        hint: res.hint || ''
+                    });
+                }
+            }).catch(() => {});
+            setIsChangingVaultPin(false);
+            vaultForm.resetFields();
         }
-    }, [open, form]);
+    }, [open, form, vaultForm]);
+
+    // 修改私密安全密码（验证当前登录密码与原安全密码）
+    const handleUpdateVaultPin = async () => {
+        try {
+            const vals = await vaultForm.validateFields();
+            setVaultLoading(true);
+            await updateVault({
+                loginPassword: vals.loginPassword,
+                oldPin: vals.oldPin,
+                newPin: vals.newPin,
+                hint: vals.hint || ''
+            });
+            message.success('私密安全密码已成功修改');
+            cryptoVault.clearSessionKey();
+            setVaultStatus({
+                enabled: true,
+                hint: vals.hint || ''
+            });
+            setIsChangingVaultPin(false);
+            vaultForm.resetFields();
+        } catch (err) {
+            message.error(err.message || '修改安全密码失败');
+        } finally {
+            setVaultLoading(false);
+        }
+    };
 
     const handleOk = async () => {
         try {
@@ -540,9 +582,109 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                     iconRender={visible => (visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />)}
                                 />
                             </Form.Item>
+                                                    {/* 私密保险箱安全管理 */}
+                            <div className="panel-section-title" style={{ marginTop: 24, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <LockOutlined style={{ color: '#D97706' }} />
+                                    <span>私密保险箱安全管理</span>
+                                </span>
+                                {vaultStatus.enabled ? (
+                                    <Tag color="warning" style={{ margin: 0 }}>已启用端到端加密</Tag>
+                                ) : (
+                                    <Tag color="default" style={{ margin: 0 }}>未配置</Tag>
+                                )}
+                            </div>
+
+                            <div style={{ padding: '14px 16px', background: '#F8FAFC', borderRadius: 8, border: '1px solid #E2E8F0', marginTop: 10 }}>
+                                <div style={{ fontSize: 13, color: '#475569', lineHeight: 1.6 }}>
+                                    <div>用于对笔记本、文件夹和单篇笔记进行零知识端到端加密保护。</div>
+                                    {vaultStatus.enabled && vaultStatus.hint && (
+                                        <div style={{ marginTop: 6, color: '#64748b' }}>
+                                            当前密码提示词：<span style={{ color: '#0f172a', fontWeight: 500 }}>{vaultStatus.hint}</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {!isChangingVaultPin ? (
+                                    <div style={{ marginTop: 12 }}>
+                                        <Button
+                                            type="default"
+                                            size="middle"
+                                            onClick={() => setIsChangingVaultPin(true)}
+                                        >
+                                            {vaultStatus.enabled ? '修改私密安全密码' : '初始化安全密码'}
+                                        </Button>
+                                    </div>
+                                ) : (
+                                    <div style={{ marginTop: 16, borderTop: '1px dashed #CBD5E1', paddingTop: 14 }}>
+                                        <Form form={vaultForm} layout="vertical">
+                                            <Form.Item
+                                                name="loginPassword"
+                                                label="当前账号登录密码"
+                                                extra="需验证您的登录密码以确保本人操作"
+                                                rules={[{ required: true, message: '请输入当前账号登录密码' }]}
+                                            >
+                                                <Input.Password placeholder="请输入当前登录密码" />
+                                            </Form.Item>
+
+                                            {vaultStatus.enabled && (
+                                                <Form.Item
+                                                    name="oldPin"
+                                                    label="原私密安全密码"
+                                                    extra="需验证原密码以平滑解密旧笔记并重新加密"
+                                                    rules={[{ required: true, message: '请输入原私密安全密码' }]}
+                                                >
+                                                    <Input.Password placeholder="请输入原私密安全密码" />
+                                                </Form.Item>
+                                            )}
+
+                                            <Form.Item
+                                                name="newPin"
+                                                label="新私密安全密码"
+                                                rules={[
+                                                    { required: true, message: '请输入新安全密码' },
+                                                    { min: 6, message: '安全密码不能少于 6 位' }
+                                                ]}
+                                            >
+                                                <Input.Password placeholder="请输入新安全密码 (至少 6 位)" />
+                                            </Form.Item>
+
+                                            <Form.Item
+                                                name="confirmNewPin"
+                                                label="确认新安全密码"
+                                                dependencies={['newPin']}
+                                                rules={[
+                                                    { required: true, message: '请确认新安全密码' },
+                                                    ({ getFieldValue }) => ({
+                                                        validator(_, val) {
+                                                            if (!val || getFieldValue('newPin') === val) return Promise.resolve();
+                                                            return Promise.reject(new Error('两次输入的安全密码不一致'));
+                                                        }
+                                                    })
+                                                ]}
+                                            >
+                                                <Input.Password placeholder="请再次输入新安全密码" />
+                                            </Form.Item>
+
+                                            <Form.Item name="hint" label="新密码提示词 (可选)">
+                                                <Input placeholder="例如：生日后六位、常用数字" maxLength={30} />
+                                            </Form.Item>
+
+                                            <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+                                                <Button type="primary" loading={vaultLoading} onClick={handleUpdateVaultPin}>
+                                                    保存新安全密码
+                                                </Button>
+                                                <Button onClick={() => { setIsChangingVaultPin(false); vaultForm.resetFields(); }}>
+                                                    取消
+                                                </Button>
+                                            </div>
+                                        </Form>
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
-                        {/* 偏好设置面板 */}
+{/* 偏好设置面板 */}
                         <div className={`tab-panel ${activeTab === 'preferences' ? 'is-visible' : 'is-hidden'}`}>
                             <div className="panel-section-title">Markdown 编辑器视图习惯</div>
                             <Form.Item name="defaultMode" label="默认编辑模式">
@@ -603,9 +745,20 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                     <Radio.Button value="large">大 (18px)</Radio.Button>
                                 </Radio.Group>
                             </Form.Item>
+                        
+                            {/* 私密偏好状态指示 */}
+                            <div className="panel-section-title" style={{ marginTop: 24 }}>私密保护偏好</div>
+                            <div style={{ padding: '12px 14px', background: '#F8FAFC', borderRadius: 8, border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <div style={{ fontSize: 13, color: '#475569' }}>
+                                    🔒 私密保险箱已就绪（支持笔记本、文件夹及笔记单独加密）。安全密码修改请前往「账号安全」。
+                                </div>
+                                <Button type="link" size="small" onClick={() => setActiveTab('security')}>
+                                    前往设置
+                                </Button>
+                            </div>
                         </div>
 
-                        {/* AI 创作助手面板 */}
+{/* AI 创作助手面板 */}
                         <div className={`tab-panel ${activeTab === 'ai' ? 'is-visible' : 'is-hidden'}`}>
                             <div className="ai-system-card">
                                 <div className="ai-system-header">

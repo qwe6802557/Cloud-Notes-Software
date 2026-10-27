@@ -135,3 +135,17 @@ export const subscribeVaultLock = (listener) => {
     lockListeners.add(listener);
     return () => lockListeners.delete(listener);
 };
+
+const cryptoVault = {
+    deriveKeyFromPin,
+    encryptNote,
+    decryptNote,
+    setSessionKey,
+    getSessionKey,
+    getSessionSalt,
+    clearSessionKey,
+    hasSessionKey,
+    subscribeVaultLock
+};
+
+export default cryptoVault;

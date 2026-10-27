@@ -5,7 +5,7 @@ import { getVaultStatus, setupVault, verifyVault } from '@/api/vault';
 import { deriveKeyFromPin, setSessionKey } from '@/utils/cryptoVault';
 import './index.less';
 
-const VaultUnlockCard = ({ onUnlockSuccess, noteTitle }) => {
+const VaultUnlockCard = ({ onUnlockSuccess }) => {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [isConfigured, setIsConfigured] = useState(false);
@@ -112,7 +112,7 @@ const VaultUnlockCard = ({ onUnlockSuccess, noteTitle }) => {
 
                 <p className="vault-card-desc">
                     {isConfigured
-                        ? `「${noteTitle || '当前笔记'}」已采用端到端 AES-256-GCM 零知识加密。请输入安全密码解锁当前会话。`
+                        ? '已加密，请输入安全密码解锁'
                         : '首次使用私密功能，请设置一个主安全密码（Master PIN），对笔记本、文件夹和敏感笔记进行端到端加密保护。'}
                 </p>
 

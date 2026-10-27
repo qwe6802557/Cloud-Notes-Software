@@ -177,7 +177,7 @@ exports.verifyVault = async (userId, pin) => {
 
     const calculatedHash = crypto.scryptSync(String(pin).trim(), user.masterVault.salt, 32).toString('hex');
     if (calculatedHash !== user.masterVault.verifierHash) {
-        throw new AppError('安全密码错误', 401);
+        throw new AppError('安全密码错误', 400);
     }
 
     return {
@@ -187,7 +187,13 @@ exports.verifyVault = async (userId, pin) => {
 };
 
 // 更新安全箱密码
-exports.updateVault = async (userId, { oldPin, newPin, hint }) => {
+exports.updateVault = async (userId, { loginPassword, oldPin, newPin, hint }) => {
+    const user = await User.findById(userId).select('+password');
+    if (!user) throw new AppError('用户不存在', 404);
+
+    if (!loginPassword) throw new AppError('请输入当前登录密码以确认身份', 400);
+    const isLoginMatch = await user.comparePassword(loginPassword);
+    if (!isLoginMatch) throw new AppError('当前登录密码不正确', 400);
     await exports.verifyVault(userId, oldPin);
     return await exports.setupVault(userId, { pin: newPin, hint });
 };

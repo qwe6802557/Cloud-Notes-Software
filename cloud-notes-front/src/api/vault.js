@@ -19,10 +19,11 @@ export const setupVault = (data) => {
 
 // 验证安全箱密码
 export const verifyVault = (data) => {
+    const payload = typeof data === 'string' ? { pin: data } : data;
     return request({
         url: '/auth/vault-verify',
         method: 'post',
-        data
+        data: payload
     });
 };
 

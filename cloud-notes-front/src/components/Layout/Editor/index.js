@@ -2533,7 +2533,6 @@ const NoteEditor = ({
                         <div className="primary-editor-scroll-area">
                             {isVaultLocked && selectedNote ? (
                                 <VaultUnlockCard
-                                    noteTitle={noteTitle}
                                     onUnlockSuccess={async (derivedKey) => {
                                         setIsVaultLocked(false);
                                         setSessionUnlocked(true);
