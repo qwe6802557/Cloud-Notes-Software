@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Layout, Modal, message } from 'antd';
 import NavTree from '../NavTree';
 import NoteEditor from '../Editor';
+import DesktopTitleBar from '../DesktopTitleBar';
+import DesktopUpdateModal from '../DesktopUpdateModal';
+import syncManager from '@/utils/storage/syncManager';
 import FileStashBoard from '@/components/FileStashBoard';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import CommandPalette from '@/components/CommandPalette';
@@ -24,6 +27,7 @@ const MainLayout = () => {
         return localStorage.getItem(LAST_NOTE_KEY) || null;
     });
     const [editorDirty, setEditorDirty] = useState(false);
+    const [activeNoteTitle, setActiveNoteTitle] = useState('');
     const [editorSaving, setEditorSaving] = useState(false);
     const [savedNote, setSavedNote] = useState(null);
     const [syncVersion, setSyncVersion] = useState(0);
@@ -33,6 +37,11 @@ const MainLayout = () => {
     const [graphMounted, setGraphMounted] = useState(false);
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
     const [modal, contextHolder] = Modal.useModal();
+    const [updateInfo, setUpdateInfo] = useState(null);
+    const [updateModalOpen, setUpdateModalOpen] = useState(false);
+    const [downloadProgress, setDownloadProgress] = useState({ percent: 0, speed: 0, transferred: 0, total: 0 });
+    const [downloadStatus, setDownloadStatus] = useState('idle');
+    const [updateError, setUpdateError] = useState('');
 
     useEffect(() => {
         if (activeView === 'stash') setStashMounted(true);
@@ -199,6 +208,92 @@ const MainLayout = () => {
         navTreeRef.current?.triggerOpenSettings?.();
     }, []);
 
+    
+    // Electron 全局系统托盘热键监听与同步状态联动
+    useEffect(() => {
+        if (!window.electronAPI?.tray?.onQuickNewNote) return;
+        const unsubscribe = window.electronAPI.tray.onQuickNewNote(() => {
+            handleCreateNote();
+        });
+        return () => unsubscribe?.();
+    }, [handleCreateNote]);
+
+    useEffect(() => {
+        if (!window.electronAPI?.tray?.onOpenCommandPalette) return;
+        const unsubscribe = window.electronAPI.tray.onOpenCommandPalette(() => {
+            setCommandPaletteOpen(true);
+        });
+        return () => unsubscribe?.();
+    }, []);
+
+    useEffect(() => {
+        if (!window.electronAPI?.tray?.updateSyncStatus) return;
+        const unsubscribe = syncManager.subscribe(snapshot => {
+            window.electronAPI.tray.updateSyncStatus({
+                status: snapshot?.status || 'synced',
+                queuedCount: snapshot?.queuedCount || 0
+            });
+        });
+        return () => unsubscribe?.();
+    }, []);
+
+    // 监听 Electron 桌面端自动更新调度器生命周期
+    useEffect(() => {
+        if (!window.electronAPI?.updater) return;
+
+        const unsubs = [
+            window.electronAPI.updater.onUpdateAvailable(info => {
+                setUpdateInfo(info);
+                if (info?.isManual) {
+                    setUpdateModalOpen(true);
+                }
+            }),
+            window.electronAPI.updater.onUpdateNotAvailable(info => {
+                if (info?.isManual) {
+                    message.info(`当前已是最新版本 (v${info.currentVersion || '0.1.0'})`);
+                }
+            }),
+            window.electronAPI.updater.onDownloadProgress(prog => {
+                setDownloadProgress(prog);
+                setDownloadStatus('downloading');
+            }),
+            window.electronAPI.updater.onUpdateDownloaded(() => {
+                setDownloadStatus('downloaded');
+                setUpdateModalOpen(true);
+            }),
+            window.electronAPI.updater.onError(err => {
+                setDownloadStatus('error');
+                setUpdateError(err?.message || '更新处理失败');
+                if (err?.isManual) {
+                    message.error(err?.message || '检查更新失败');
+                }
+            })
+        ];
+
+        return () => {
+            unsubs.forEach(fn => fn?.());
+        };
+    }, []);
+
+    const handleStartDownload = useCallback(async () => {
+        try {
+            setDownloadStatus('downloading');
+            setUpdateError('');
+            await window.electronAPI?.updater?.download();
+        } catch (err) {
+            setDownloadStatus('error');
+            setUpdateError(err?.message || '下载启动失败');
+        }
+    }, []);
+
+    const handleInstallUpdate = useCallback(() => {
+        try {
+            window.electronAPI?.updater?.install();
+        } catch (err) {
+            message.error(err?.message || '安装更新失败');
+        }
+    }, []);
+
     const handleCommandToggleZenMode = useCallback(() => {
         setZenMode(prev => !prev);
     }, []);
@@ -206,7 +301,16 @@ const MainLayout = () => {
     return (
         <>
             {contextHolder}
-            <Layout hasSider className={`main-layout ${zenMode ? 'is-zen-mode' : ''}`}>
+            <div className="main-layout-container">
+                <DesktopTitleBar
+                    activeNoteTitle={activeNoteTitle}
+                    isDirty={editorDirty}
+                    updateInfo={updateInfo}
+                    downloadStatus={downloadStatus}
+                    downloadProgress={downloadProgress}
+                    onOpenUpdateModal={() => setUpdateModalOpen(true)}
+                />
+                <Layout hasSider className={`main-layout ${zenMode ? 'is-zen-mode' : ''}`}>
                 <NavTree
                     ref={navTreeRef}
                     collapsed={collapsed}
@@ -247,6 +351,7 @@ const MainLayout = () => {
                             zenMode={zenMode}
                             onToggleZenMode={setZenMode}
                             activeView={activeView}
+                            onNoteTitleChange={setActiveNoteTitle}
                         />
                     </div>
                     <div
@@ -288,6 +393,7 @@ const MainLayout = () => {
                     </div>
                 </Layout.Content>
             </Layout>
+            </div>
 
             <CommandPalette
                 open={commandPaletteOpen}
@@ -297,6 +403,16 @@ const MainLayout = () => {
                 onOpenAI={handleCommandOpenAI}
                 onToggleZenMode={handleCommandToggleZenMode}
                 onOpenSettings={handleCommandOpenSettings}
+            />
+                    <DesktopUpdateModal
+                open={updateModalOpen}
+                onClose={() => setUpdateModalOpen(false)}
+                updateInfo={updateInfo}
+                downloadProgress={downloadProgress}
+                downloadStatus={downloadStatus}
+                errorMessage={updateError}
+                onStartDownload={handleStartDownload}
+                onInstall={handleInstallUpdate}
             />
         </>
     );

@@ -681,3 +681,61 @@
     transform: translateY(0);
   }
 }
+
+[data-theme='dark'] {
+  .nav-tree-sidebar {
+    background-color: #090d16;
+    border-right-color: rgba(255, 255, 255, 0.08);
+
+    .collapse-trigger {
+      background: #0f172a;
+      border-color: rgba(255, 255, 255, 0.08);
+      color: #94a3b8;
+      &:hover {
+        background: #1e293b;
+        color: #38bdf8;
+      }
+    }
+
+    .nav-header {
+      border-bottom-color: rgba(255, 255, 255, 0.08);
+    }
+
+    .nav-footer {
+      background-color: #090d16;
+      border-top-color: rgba(255, 255, 255, 0.08);
+    }
+
+    .note-card-item {
+      background-color: transparent;
+      color: #f8fafc;
+
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.04);
+      }
+
+      &.is-active {
+        background-color: #1e293b;
+        color: #ffffff;
+      }
+    }
+
+    .nav-context-menu {
+      background-color: #0f172a;
+      border-color: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+
+      .context-menu-item {
+        color: #cbd5e1;
+        &:hover {
+          background-color: #1e293b;
+          color: #ffffff;
+        }
+      }
+
+      .context-menu-divider {
+        background-color: rgba(255, 255, 255, 0.08);
+      }
+    }
+  }
+}

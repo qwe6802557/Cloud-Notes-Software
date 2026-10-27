@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Modal, Form, Input, Upload, message, Button, Radio, Switch, Tag, Select } from 'antd';
 import {
     UserOutlined,
@@ -19,7 +19,11 @@ import {
     CloseCircleOutlined,
     RocketOutlined,
     BulbOutlined,
-    CodeOutlined
+    CodeOutlined,
+    InfoCircleOutlined,
+    DesktopOutlined,
+    SunOutlined,
+    MoonOutlined
 } from '@ant-design/icons';
 import { updateUserInfo } from '@/api/user';
 import { getAIConfig, updateAIConfig, testAIConnection } from '@/api/ai';
@@ -27,6 +31,7 @@ import { getUser, setUser } from '@/utils/auth';
 import { getEditorPreferences, setEditorPreferences, setCachedAIConfig } from '@/utils/preferences';
 import { getVaultStatus, updateVault } from '@/api/vault';
 import cryptoVault from '@/utils/cryptoVault';
+import themeManager from '@/utils/themeManager';
 import './index.less';
 
 const FEATURED_SYSTEM_MODELS = [
@@ -103,6 +108,35 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
     const [vaultStatus, setVaultStatus] = useState({ enabled: false, hint: '' });
     const [vaultLoading, setVaultLoading] = useState(false);
     const [isChangingVaultPin, setIsChangingVaultPin] = useState(false);
+    const initialThemeRef = useRef('system');
+
+    const handleThemeModeChange = e => {
+        const nextMode = e.target.value;
+        themeManager.setThemeMode(nextMode, false);
+    };
+    const [checkingUpdate, setCheckingUpdate] = useState(false);
+    const [updateStatusText, setUpdateStatusText] = useState('');
+
+    const handleCheckUpdate = async () => {
+        if (!window.electronAPI?.updater) {
+            message.info('当前运行于 Web 浏览器环境，桌面端更新仅在桌面应用内生效');
+            return;
+        }
+        setCheckingUpdate(true);
+        setUpdateStatusText('正在检查新版本...');
+        try {
+            const res = await window.electronAPI.updater.check(true);
+            if (res?.hasUpdate) {
+                setUpdateStatusText(`发现新版本 v${res.updateInfo?.version || ''}`);
+            } else {
+                setUpdateStatusText(`当前已是最新版本 (v${res?.currentVersion || '0.1.0'})`);
+            }
+        } catch (err) {
+            setUpdateStatusText('检查更新失败，请稍后重试');
+        } finally {
+            setCheckingUpdate(false);
+        }
+    };
     const [vaultForm] = Form.useForm();
     const user = getUser() || {};
 
@@ -115,6 +149,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
         if (open) {
             const currentUser = getUser() || {};
             const currentPrefs = getEditorPreferences();
+            initialThemeRef.current = currentPrefs.themeMode || 'system';
             form.resetFields();
             form.setFieldsValue({
                 username: currentUser.username || '',
@@ -124,6 +159,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                 defaultSyncScroll: currentPrefs.defaultSyncScroll ?? true,
                 fontFamily: currentPrefs.fontFamily || 'lxgw',
                 fontSize: currentPrefs.fontSize || 'medium',
+                themeMode: currentPrefs.themeMode || 'system',
                 aiEnabled: false,
                 aiBaseUrl: '',
                 aiApiKey: '',
@@ -216,12 +252,15 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
 
             // 保存偏好设置并分发事件
             const nextPrefs = {
+                themeMode: values.themeMode || 'system',
                 defaultMode: values.defaultMode,
                 defaultSyncScroll: values.defaultSyncScroll,
                 fontFamily: values.fontFamily,
                 fontSize: values.fontSize
             };
             setEditorPreferences(nextPrefs);
+            initialThemeRef.current = values.themeMode || 'system';
+            themeManager.setThemeMode(values.themeMode || 'system', true);
             window.dispatchEvent(new CustomEvent('editor-preferences-changed', { detail: nextPrefs }));
 
             // 仅在资料或密码发生实质变更时请求后端
@@ -335,6 +374,9 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
         if (submitting) {
             return;
         }
+        if (themeManager.getThemeMode() !== initialThemeRef.current) {
+            themeManager.setThemeMode(initialThemeRef.current, true);
+        }
         handleClose?.();
     };
 
@@ -383,6 +425,12 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             label: 'AI 创作助手',
             icon: <RobotOutlined />,
             desc: '大模型与驱动引擎'
+        },
+        {
+            key: 'about',
+            label: '关于系统',
+            icon: <InfoCircleOutlined />,
+            desc: '版本信息与静默更新'
         }
     ];
 
@@ -688,6 +736,23 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
 
 {/* 偏好设置面板 */}
                         <div className={`tab-panel ${activeTab === 'preferences' ? 'is-visible' : 'is-hidden'}`}>
+                            <div className="panel-section-title">应用外观与色彩</div>
+                            <Form.Item name="themeMode" label="色彩主题">
+                                <Radio.Group className="preference-mode-group" onChange={handleThemeModeChange}>
+                                    <Radio.Button value="system" className="mode-option">
+                                        <DesktopOutlined /> 跟随系统
+                                    </Radio.Button>
+                                    <Radio.Button value="light" className="mode-option">
+                                        <SunOutlined /> 纯净浅色
+                                    </Radio.Button>
+                                    <Radio.Button value="dark" className="mode-option">
+                                        <MoonOutlined /> 墨炭深色
+                                    </Radio.Button>
+                                </Radio.Group>
+                            </Form.Item>
+
+                            <div className="panel-divider" />
+
                             <div className="panel-section-title">Markdown 编辑器视图习惯</div>
                             <Form.Item name="defaultMode" label="默认编辑模式">
                                 <Radio.Group className="preference-mode-group">
@@ -911,6 +976,67 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                     </div>
                                 </div>
                             )}
+                        </div>
+
+                        {/* 关于与系统面板 */}
+                        <div className={`tab-panel ${activeTab === 'about' ? 'is-visible' : 'is-hidden'}`}>
+                            <div className="about-system-card">
+                                <div className="about-app-header">
+                                    <div className="about-brand-logo">
+                                        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+                                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+                                        </svg>
+                                    </div>
+                                    <div className="about-brand-details">
+                                        <h4 className="app-name">云笔记 Cloud Notes</h4>
+                                        <div className="app-version-line">
+                                            <span className="version-tag">v0.1.0</span>
+                                            <span className="build-channel">Stable Release</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="about-info-rows">
+                                    <div className="about-info-row">
+                                        <span className="info-label">客户端形态</span>
+                                        <span className="info-value">
+                                            {window.electronAPI?.isElectron
+                                                ? `Electron v${window.electronAPI.versions?.electron || '33.4'} (Chromium v${window.electronAPI.versions?.chrome || '130'})`
+                                                : 'Web 浏览器现代端'}
+                                        </span>
+                                    </div>
+                                    <div className="about-info-row">
+                                        <span className="info-label">运行架构</span>
+                                        <span className="info-value">
+                                            {window.electronAPI?.platform === 'win32'
+                                                ? 'Windows x64'
+                                                : (window.electronAPI?.platform || navigator.platform || 'Unknown')}
+                                        </span>
+                                    </div>
+                                    <div className="about-info-row">
+                                        <span className="info-label">数据同步通道</span>
+                                        <span className="info-value">端对端 AES-GCM + 离线静默队列</span>
+                                    </div>
+                                </div>
+
+                                <div className="about-update-action-card">
+                                    <div className="update-status-section">
+                                        <div className="update-status-label">自动静默更新</div>
+                                        <div className="update-status-desc">
+                                            {updateStatusText || '启动 5 秒后静默检测新版本，有可用更新时在沉浸式顶栏展示非阻断提示。'}
+                                        </div>
+                                    </div>
+                                    <Button
+                                        type="primary"
+                                        loading={checkingUpdate}
+                                        onClick={handleCheckUpdate}
+                                        className="check-update-btn"
+                                    >
+                                        {checkingUpdate ? '正在检测...' : '检查新版本'}
+                                    </Button>
+                                </div>
+                            </div>
                         </div>
                     </Form>
                 </div>

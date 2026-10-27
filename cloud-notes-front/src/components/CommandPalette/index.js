@@ -5,8 +5,13 @@ import {
     ThunderboltOutlined,
     FullscreenOutlined,
     SettingOutlined,
-    PlusOutlined
+    PlusOutlined,
+    DesktopOutlined,
+    SunOutlined,
+    MoonOutlined
 } from '@ant-design/icons';
+import { message } from 'antd';
+import themeManager from '@/utils/themeManager';
 import { getRecentNotes } from '@/api/notes';
 import { localSearchEngine } from '@/utils/search/localSearchEngine';
 import './CommandPalette.less';
@@ -135,6 +140,42 @@ const CommandPalette = ({
             category: '快捷操作',
             action: () => {
                 onOpenSettings?.();
+                onClose?.();
+            }
+        },
+        {
+            id: 'cmd-theme-system',
+            type: 'command',
+            title: '外观模式：跟随系统',
+            icon: <DesktopOutlined style={{ color: '#64748b' }} />,
+            category: '外观偏好',
+            action: () => {
+                themeManager.setThemeMode('system');
+                message.success('已切换为跟随系统外观');
+                onClose?.();
+            }
+        },
+        {
+            id: 'cmd-theme-dark',
+            type: 'command',
+            title: '外观模式：墨炭深色 (Slate Dark)',
+            icon: <MoonOutlined style={{ color: '#8b5cf6' }} />,
+            category: '外观偏好',
+            action: () => {
+                themeManager.setThemeMode('dark');
+                message.success('已切换为墨炭深色模式');
+                onClose?.();
+            }
+        },
+        {
+            id: 'cmd-theme-light',
+            type: 'command',
+            title: '外观模式：纯净浅色 (Light)',
+            icon: <SunOutlined style={{ color: '#f59e0b' }} />,
+            category: '外观偏好',
+            action: () => {
+                themeManager.setThemeMode('light');
+                message.success('已切换为纯净浅色模式');
                 onClose?.();
             }
         }

@@ -1,23 +1,35 @@
-.main-layout {
+.main-layout-container {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
   height: 100vh;
   min-height: 100vh;
-  display: flex !important;
-  flex-direction: row !important;
   overflow: hidden;
+  background-color: var(--bg-app);
 
-  .nav-tree-sidebar {
-    height: 100%;
-    min-height: 0;
-  }
-
-  .main-content {
+  .main-layout {
     flex: 1;
-    height: 100%;
     min-height: 0;
-    min-width: 0;
-    padding: 12px;
-    background-color: #f1f5f9;
-    display: flex;
+    height: auto;
+    display: flex !important;
+    flex-direction: row !important;
     overflow: hidden;
+    background-color: transparent;
+
+    .nav-tree-sidebar {
+      height: 100%;
+      min-height: 0;
+    }
+
+    .main-content {
+      flex: 1;
+      height: 100%;
+      min-height: 0;
+      min-width: 0;
+      padding: 12px;
+      background-color: var(--bg-app);
+      display: flex;
+      overflow: hidden;
+    }
   }
 }

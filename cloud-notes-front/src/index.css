@@ -1,7 +1,40 @@
+:root {
+  --bg-app: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-subtle: #f1f5f9;
+  --bg-hover: #f1f5f9;
+  --border-whisper: rgba(226, 232, 240, 0.85);
+  --border-subtle: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #64748b;
+  --text-muted: #94a3b8;
+  --code-bg: #f1f5f9;
+  --titlebar-bg: #f8fafc;
+  --titlebar-border: rgba(226, 232, 240, 0.85);
+}
+
+[data-theme='dark'] {
+  --bg-app: #020617;
+  --bg-surface: #0f172a;
+  --bg-subtle: #1e293b;
+  --bg-hover: #1e293b;
+  --border-whisper: rgba(255, 255, 255, 0.08);
+  --border-subtle: #334155;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --code-bg: #0b1120;
+  --titlebar-bg: #020617;
+  --titlebar-border: rgba(255, 255, 255, 0.08);
+}
+
 html,
 body,
 #root {
   height: 100%;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  transition: background-color 150ms ease, color 150ms ease;
 }
 
 body {

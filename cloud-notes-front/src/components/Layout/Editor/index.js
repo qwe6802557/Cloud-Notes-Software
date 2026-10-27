@@ -427,9 +427,14 @@ const NoteEditor = ({
     onCreateNote,
     zenMode = false,
     onToggleZenMode,
-    activeView = 'notes'
+    activeView = 'notes',
+    onNoteTitleChange
 }) => {
     const [noteTitle, setNoteTitle] = useState('');
+
+    useEffect(() => {
+        onNoteTitleChange?.(noteTitle);
+    }, [noteTitle, onNoteTitleChange]);
     const [content, setContent] = useState('');
     const [mode, setMode] = useState(() => getEditorPreferences().defaultMode || 'split');
     const [fontFamily, setFontFamily] = useState(() => getEditorPreferences().fontFamily || 'lxgw');

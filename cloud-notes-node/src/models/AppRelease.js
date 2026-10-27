@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const appReleaseSchema = new mongoose.Schema({
     platform: {
         type: String,
-        enum: ['android', 'ios', 'all'],
+        enum: ['android', 'ios', 'windows', 'mac', 'linux', 'all'],
         default: 'android',
         index: true
     },

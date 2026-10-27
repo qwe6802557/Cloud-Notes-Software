@@ -2177,3 +2177,161 @@
 
 
 
+
+[data-theme='dark'] {
+  .note-editor {
+    background-color: #0f172a;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+
+    .editor-toolbar {
+      background-color: #0b1120;
+      border-bottom-color: rgba(255, 255, 255, 0.08);
+
+      .mode-segmented {
+        background-color: #1e293b;
+        .mode-segmented-thumb {
+          background-color: #0f172a;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+        }
+        .mode-segmented-item {
+          color: #94a3b8;
+          &.is-active {
+            color: #f8fafc;
+          }
+        }
+      }
+
+      .toolbar-tool-btn {
+        color: #94a3b8;
+        &:hover {
+          color: #f8fafc;
+          background-color: #1e293b;
+        }
+      }
+    }
+
+    .editor-body-wrapper {
+      background-color: #0f172a;
+    }
+
+    .bytemd {
+      background-color: #0f172a;
+      border-color: rgba(255, 255, 255, 0.08);
+
+      .bytemd-toolbar {
+        background-color: #0b1120;
+        border-bottom-color: rgba(255, 255, 255, 0.08);
+
+        .bytemd-toolbar-icon {
+          color: #94a3b8;
+          &:hover {
+            color: #f8fafc;
+            background-color: #1e293b;
+          }
+        }
+      }
+
+      .bytemd-body {
+        .bytemd-editor {
+          background-color: #0b1120;
+
+          .CodeMirror {
+            background-color: #0b1120 !important;
+            color: #f8fafc !important;
+
+            .CodeMirror-gutters {
+              background-color: #0b1120 !important;
+              border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+            }
+            .CodeMirror-linenumber {
+              color: #475569 !important;
+            }
+            .CodeMirror-cursor {
+              border-left: 2px solid #38bdf8 !important;
+            }
+            .CodeMirror-selected,
+            .CodeMirror-line::selection,
+            .CodeMirror-line > span::selection {
+              background: rgba(56, 189, 248, 0.25) !important;
+            }
+          }
+        }
+
+        .bytemd-preview {
+          background-color: #0f172a;
+          border-left: 1px solid rgba(255, 255, 255, 0.08);
+
+          .markdown-body {
+            color: #e2e8f0;
+            background-color: transparent;
+
+            h1, h2, h3, h4, h5, h6 {
+              color: #f8fafc;
+              border-bottom-color: rgba(255, 255, 255, 0.08);
+            }
+            a {
+              color: #38bdf8;
+            }
+            hr {
+              background-color: rgba(255, 255, 255, 0.08);
+            }
+            blockquote {
+              color: #94a3b8;
+              border-left-color: #334155;
+              background: rgba(255, 255, 255, 0.02);
+            }
+            table {
+              tr {
+                background-color: transparent;
+                border-top-color: rgba(255, 255, 255, 0.08);
+                &:nth-child(2n) {
+                  background-color: rgba(255, 255, 255, 0.03);
+                }
+              }
+              th, td {
+                border-color: rgba(255, 255, 255, 0.08);
+                color: #e2e8f0;
+              }
+            }
+            code {
+              background-color: #0b1120;
+              color: #f8fafc;
+              border: 1px solid rgba(255, 255, 255, 0.06);
+            }
+            pre {
+              background-color: #090d16;
+              border: 1px solid rgba(255, 255, 255, 0.08);
+              code {
+                background-color: transparent;
+                border: none;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    .note-tab-bar {
+      background-color: #0b1120;
+      border-bottom-color: rgba(255, 255, 255, 0.08);
+
+      .note-tab-item {
+        color: #94a3b8;
+        border-color: rgba(255, 255, 255, 0.08);
+        background: transparent;
+
+        &.is-active {
+          background-color: #0f172a;
+          color: #f8fafc;
+          border-bottom-color: #0f172a;
+        }
+
+        &:hover:not(.is-active) {
+          background-color: #1e293b;
+          color: #cbd5e1;
+        }
+      }
+    }
+  }
+}

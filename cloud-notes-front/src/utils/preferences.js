@@ -4,7 +4,8 @@ export const DEFAULT_PREFERENCES = {
     defaultMode: 'split',
     defaultSyncScroll: true,
     fontFamily: 'lxgw',
-    fontSize: 'medium'
+    fontSize: 'medium',
+    themeMode: 'system'
 };
 
 export const getEditorPreferences = () => {
@@ -18,7 +19,8 @@ export const getEditorPreferences = () => {
             defaultMode: parsed.defaultMode || DEFAULT_PREFERENCES.defaultMode,
             defaultSyncScroll: typeof parsed.defaultSyncScroll === 'boolean' ? parsed.defaultSyncScroll : DEFAULT_PREFERENCES.defaultSyncScroll,
             fontFamily: parsed.fontFamily || DEFAULT_PREFERENCES.fontFamily,
-            fontSize: parsed.fontSize || DEFAULT_PREFERENCES.fontSize
+            fontSize: parsed.fontSize || DEFAULT_PREFERENCES.fontSize,
+            themeMode: ['system', 'light', 'dark'].includes(parsed.themeMode) ? parsed.themeMode : DEFAULT_PREFERENCES.themeMode
         };
     } catch {
         return { ...DEFAULT_PREFERENCES };

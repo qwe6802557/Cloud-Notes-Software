@@ -751,3 +751,237 @@
     text-align: right;
   }
 }
+
+/* 关于与系统面板样式 (遵循 Stitch Design Taste) */
+.about-system-card {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 4px 0;
+
+  .about-app-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 16px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+
+    .about-brand-logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 48px;
+      height: 48px;
+      background: #0f172a;
+      color: #ffffff;
+      border-radius: 8px;
+      flex-shrink: 0;
+    }
+
+    .about-brand-details {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+
+      .app-name {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: #0f172a;
+      }
+
+      .app-version-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        .version-tag {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: 12px;
+          color: #0f172a;
+          background: #e2e8f0;
+          padding: 1px 6px;
+          border-radius: 4px;
+          font-weight: 600;
+        }
+
+        .build-channel {
+          font-size: 12px;
+          color: #64748b;
+        }
+      }
+    }
+  }
+
+  .about-info-rows {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #f1f5f9;
+    border-radius: 8px;
+    overflow: hidden;
+
+    .about-info-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 11px 16px;
+      background: #ffffff;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 13px;
+
+      &:last-child {
+        border-bottom: none;
+      }
+
+      .info-label {
+        color: #64748b;
+      }
+
+      .info-value {
+        color: #1e293b;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 12px;
+      }
+    }
+  }
+
+  .about-update-action-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+
+    .update-status-section {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      max-width: 320px;
+
+      .update-status-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #0f172a;
+      }
+
+      .update-status-desc {
+        font-size: 12px;
+        color: #64748b;
+        line-height: 1.4;
+      }
+    }
+
+    .check-update-btn {
+      background: #0f172a !important;
+      border-color: #0f172a !important;
+      border-radius: 6px;
+      font-weight: 500;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+      &:hover {
+        background: #1e293b !important;
+        border-color: #1e293b !important;
+      }
+    }
+  }
+}
+
+[data-theme='dark'] .modern-settings-modal {
+  .ant-modal-content {
+    background: #0f172a;
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .ant-modal-header {
+    background: #0f172a;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+
+    .settings-header .header-title {
+      color: #f8fafc;
+    }
+  }
+
+  .settings-layout {
+    .settings-sidebar {
+      background-color: #0b1120;
+      border-right-color: rgba(255, 255, 255, 0.08);
+
+      .settings-tab-btn {
+        color: #94a3b8;
+
+        &:hover {
+          background-color: #1e293b;
+          color: #f8fafc;
+        }
+
+        &.is-active {
+          background-color: #1e293b;
+          color: #ffffff;
+
+          .tab-icon {
+            color: #38bdf8;
+          }
+          .tab-text .tab-label {
+            color: #ffffff;
+          }
+        }
+      }
+    }
+
+    .settings-content {
+      background: #0f172a;
+
+      .panel-section-title {
+        color: #f8fafc;
+      }
+
+      .panel-divider {
+        background-color: rgba(255, 255, 255, 0.08);
+      }
+
+      .readonly-field-box {
+        background: #0b1120;
+        border-color: rgba(255, 255, 255, 0.08);
+        color: #e2e8f0;
+      }
+    }
+  }
+
+  .settings-footer {
+    background: #0b1120;
+    border-top-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .about-system-card {
+    .about-app-header {
+      background: #0b1120;
+      border-color: rgba(255, 255, 255, 0.08);
+      .app-name {
+        color: #f8fafc;
+      }
+    }
+
+    .about-info-rows {
+      border-color: rgba(255, 255, 255, 0.08);
+      .about-info-row {
+        background: #0b1120;
+        border-bottom-color: rgba(255, 255, 255, 0.08);
+        .info-value {
+          color: #f8fafc;
+        }
+      }
+    }
+
+    .about-update-action-card {
+      background: #0b1120;
+      border-color: rgba(255, 255, 255, 0.08);
+      .update-status-label {
+        color: #f8fafc;
+      }
+    }
+  }
+}
