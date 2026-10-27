@@ -28,6 +28,8 @@ import GhostLinkSuggestStrip from '../../components/GhostLinkSuggestStrip';
 import SyncStatusPill from '../../components/SyncStatusPill';
 import { getNoteCache, saveNoteCache, resolveNoteId } from '../../utils/storage/mobileNotesDB';
 import mobileSyncManager from '../../utils/storage/mobileSyncManager';
+import * as cryptoVault from '../../utils/cryptoVault';
+import VaultUnlockModal from '../../components/VaultUnlockModal';
 
 export default function NoteEditScreen() {
   const router = useRouter();
@@ -55,6 +57,17 @@ export default function NoteEditScreen() {
 
   const [showAIModal, setShowAIModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [isEncrypted, setIsEncrypted] = useState(false);
+  const [showVaultModal, setShowVaultModal] = useState(false);
+
+  const handleToggleEncryption = () => {
+    if (!isEncrypted && !cryptoVault.hasSessionKey()) {
+      setShowVaultModal(true);
+      return;
+    }
+    setIsEncrypted(!isEncrypted);
+    setIsDirty(true);
+  };
 
   // 行内 AI 状态
   const [inlineCardVisible, setInlineCardVisible] = useState(false);
@@ -258,11 +271,23 @@ export default function NoteEditScreen() {
       try {
         const res = await notesApi.getNoteDetail(targetId);
         if (res.code === 200 && res.data) {
-          mobileSyncManager.setLastKnownRemoteUpdatedAt(targetId, res.data.updatedAt, res.data.content || '');
-          // 若用户已在本地产生编辑脏数据，严格保护本地输入现场
+          setIsEncrypted(Boolean(res.data.isEncrypted));
+          let noteContent = res.data.content || '';
+          if (res.data.isEncrypted && res.data.encryptedData) {
+            if (cryptoVault.hasSessionKey()) {
+              try {
+                noteContent = await cryptoVault.decryptNote(res.data.encryptedData, cryptoVault.getSessionKey()!);
+              } catch (err) {
+                console.warn('Failed to decrypt:', err);
+              }
+            } else {
+              setShowVaultModal(true);
+            }
+          }
+          mobileSyncManager.setLastKnownRemoteUpdatedAt(targetId, res.data.updatedAt, noteContent);
           if (!isDirtyRef.current) {
             setTitle(res.data.title || '');
-            setContent(res.data.content || '');
+            setContent(noteContent);
             setBaseUpdatedAt(res.data.updatedAt || null);
             setIsDirty(false);
           }
@@ -558,11 +583,25 @@ export default function NoteEditScreen() {
       if (id) {
         const targetId = await resolveNoteId(id);
         // 更新现有笔记：通过 mobileSyncManager 执行本地持久化、防抖队列与安全分叉
+        let encryptedData: string | null = null;
+        if (isEncrypted) {
+          if (!cryptoVault.hasSessionKey()) {
+            setIsSaving(false);
+            setShowVaultModal(true);
+            return;
+          }
+          const pin = cryptoVault.getSessionKey()!;
+          const salt = cryptoVault.getSessionSalt() || '00'.repeat(16);
+          encryptedData = await cryptoVault.encryptNote(content, pin, salt);
+        }
+
         const syncRes = await mobileSyncManager.syncNote(targetId, {
           title: title.trim(),
           content,
           baseUpdatedAt,
           notebookId,
+          isEncrypted,
+          encryptedData,
         });
 
         setIsDirty(false);
@@ -609,11 +648,25 @@ export default function NoteEditScreen() {
         }
 
         try {
+          let createEncryptedData: string | null = null;
+          if (isEncrypted) {
+            if (!cryptoVault.hasSessionKey()) {
+              setIsSaving(false);
+              setShowVaultModal(true);
+              return;
+            }
+            const pin = cryptoVault.getSessionKey()!;
+            const salt = cryptoVault.getSessionSalt() || '00'.repeat(16);
+            createEncryptedData = await cryptoVault.encryptNote(content, pin, salt);
+          }
+
           const res = await notesApi.createNote({
             title: title.trim(),
-            content,
+            content: isEncrypted ? '' : content,
             notebookId: targetNbId,
             parentId: initialParentId || null,
+            isEncrypted,
+            encryptedData: createEncryptedData,
           });
 
           if (res.code === 200 && res.data) {
@@ -659,6 +712,21 @@ export default function NoteEditScreen() {
           headerRight: () => (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <SyncStatusPill />
+              <TouchableOpacity
+                style={{
+                  padding: 6,
+                  borderRadius: 6,
+                  backgroundColor: isEncrypted ? 'rgba(217, 119, 6, 0.12)' : 'transparent',
+                }}
+                onPress={handleToggleEncryption}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={isEncrypted ? 'lock-closed' : 'lock-open-outline'}
+                  size={18}
+                  color={isEncrypted ? '#d97706' : '#64748b'}
+                />
+              </TouchableOpacity>
               {Boolean(id) && (
                 <TouchableOpacity
                   style={styles.historyHeaderBtn}

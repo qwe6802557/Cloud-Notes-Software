@@ -114,25 +114,27 @@ class SyncManager {
     /**
      * 按键实时通知本地脏数据（无防抖，立即落盘本地 IndexedDB）
      */
-    async notifyLocalDirty(noteId, { title, content, baseUpdatedAt }) {
+    async notifyLocalDirty(noteId, { title, content, baseUpdatedAt, isEncrypted, encryptedData }) {
         if (!noteId) return;
 
-        // 1. 立即持久化到本地快照表
         await saveNoteCache({
             id: noteId,
             title,
-            content,
+            content: isEncrypted ? '' : content,
+            isEncrypted: Boolean(isEncrypted),
+            encryptedData: encryptedData || null,
             updatedAt: new Date().toISOString(),
             isDirty: true
         });
 
-        // 立即增量更新离线检索倒排索引
-        localSearchEngine.upsertDocument({
-            id: noteId,
-            title,
-            snippet: content,
-            updatedAt: new Date().toISOString()
-        });
+        if (!isEncrypted) {
+            localSearchEngine.upsertDocument({
+                id: noteId,
+                title,
+                snippet: content,
+                updatedAt: new Date().toISOString()
+            });
+        }
 
         // 2. 更新状态指示
         if (!this.isOnline) {
@@ -173,7 +175,7 @@ class SyncManager {
     /**
      * 核心保存同步逻辑 (支持手动与自动)
      */
-    async syncNote(noteId, { title, content, baseUpdatedAt }, options = {}) {
+    async syncNote(noteId, { title, content, baseUpdatedAt, isEncrypted, encryptedData }, options = {}) {
         if (!noteId) return { success: false, error: 'Note ID required' };
 
         // 取消该 note 正在排队的防抖计时器
@@ -186,18 +188,21 @@ class SyncManager {
         await saveNoteCache({
             id: noteId,
             title,
-            content,
+            content: isEncrypted ? '' : content,
+            isEncrypted: Boolean(isEncrypted),
+            encryptedData: encryptedData || null,
             updatedAt: new Date().toISOString(),
             isDirty: true
         });
 
-        // 立即增量更新离线检索倒排索引
-        localSearchEngine.upsertDocument({
-            id: noteId,
-            title,
-            snippet: content,
-            updatedAt: new Date().toISOString()
-        });
+        if (!isEncrypted) {
+            localSearchEngine.upsertDocument({
+                id: noteId,
+                title,
+                snippet: content,
+                updatedAt: new Date().toISOString()
+            });
+        }
 
         // 1. 若当前离线，直接入队，保证零丢稿
         if (!this.isOnline) {
@@ -273,10 +278,11 @@ class SyncManager {
             }
 
             // 正式向云端保存
-            const saveRes = await updateNote(noteId, {
-                title,
-                content
-            });
+            const savePayload = { title, content: isEncrypted ? '' : content };
+            if (isEncrypted !== undefined) savePayload.isEncrypted = isEncrypted;
+            if (encryptedData !== undefined) savePayload.encryptedData = encryptedData;
+
+            const saveRes = await updateNote(noteId, savePayload);
 
             const savedUpdatedAt = saveRes?.note?.updatedAt || new Date().toISOString();
             this.lastKnownRemoteUpdatedAt.set(noteId, savedUpdatedAt);
@@ -286,7 +292,9 @@ class SyncManager {
             await saveNoteCache({
                 id: noteId,
                 title,
-                content,
+                content: isEncrypted ? '' : content,
+                isEncrypted: Boolean(isEncrypted),
+                encryptedData: encryptedData || null,
                 updatedAt: savedUpdatedAt,
                 lastSavedContent: content,
                 lastSyncedAt: new Date().toISOString(),

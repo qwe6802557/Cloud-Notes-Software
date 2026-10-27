@@ -21,6 +21,10 @@ const notebookSchema = new mongoose.Schema({
         type: String,
         default: 'default-notebook.png'
     },
+    isEncrypted: {
+        type: Boolean,
+        default: false
+    },
     isDefault: {
         type: Boolean,
         default: false

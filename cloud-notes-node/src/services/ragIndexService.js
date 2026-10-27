@@ -10,7 +10,7 @@ const indexSingleNote = async (noteId, user) => {
     const userId = user._id;
     const note = await Note.findOne({ _id: noteId, userId });
 
-    if (!note || note.isDeleted) {
+    if (!note || note.isDeleted || note.isEncrypted) {
         await NoteChunk.deleteMany({ userId, noteId });
         return { chunkCount: 0 };
     }
@@ -74,7 +74,7 @@ const getIndexStats = async userId => {
  */
 const reindexAllNotes = async user => {
     const userId = user._id;
-    const notes = await Note.find({ userId, isDeleted: false })
+    const notes = await Note.find({ userId, isDeleted: false, isEncrypted: { $ne: true } })
         .select('_id title content notebookId')
         .lean();
 

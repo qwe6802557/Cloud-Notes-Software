@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const User = require('../models/User');
 const Notebook = require('../models/Notebook');
 const AppError = require('../utils/AppError');
@@ -127,4 +128,66 @@ exports.updateCurrentUser = async (userId, updateData) => {
     return {
         user: formatUser(user)
     };
+};
+
+// 获取安全箱状态
+exports.getVaultStatus = async (userId) => {
+    const user = await User.findById(userId);
+    if (!user) throw new AppError('用户不存在', 404);
+    return {
+        enabled: Boolean(user.masterVault && user.masterVault.enabled),
+        salt: user.masterVault && user.masterVault.salt ? user.masterVault.salt : null,
+        hint: (user.masterVault && user.masterVault.hint) || ''
+    };
+};
+
+// 初始化设置安全箱
+exports.setupVault = async (userId, { pin, hint }) => {
+    if (!pin || String(pin).trim().length < 4) {
+        throw new AppError('安全密码至少4位', 400);
+    }
+    const user = await User.findById(userId);
+    if (!user) throw new AppError('用户不存在', 404);
+
+    const salt = crypto.randomBytes(16).toString('hex');
+    const verifierHash = crypto.scryptSync(String(pin).trim(), salt, 32).toString('hex');
+
+    user.masterVault = {
+        enabled: true,
+        salt,
+        verifierHash,
+        hint: hint ? String(hint).trim() : ''
+    };
+    await user.save();
+
+    return {
+        enabled: true,
+        salt,
+        hint: user.masterVault.hint
+    };
+};
+
+// 校验安全箱密码
+exports.verifyVault = async (userId, pin) => {
+    const user = await User.findById(userId);
+    if (!user) throw new AppError('用户不存在', 404);
+    if (!user.masterVault || !user.masterVault.enabled) {
+        throw new AppError('未启用安全箱', 400);
+    }
+
+    const calculatedHash = crypto.scryptSync(String(pin).trim(), user.masterVault.salt, 32).toString('hex');
+    if (calculatedHash !== user.masterVault.verifierHash) {
+        throw new AppError('安全密码错误', 401);
+    }
+
+    return {
+        verified: true,
+        salt: user.masterVault.salt
+    };
+};
+
+// 更新安全箱密码
+exports.updateVault = async (userId, { oldPin, newPin, hint }) => {
+    await exports.verifyVault(userId, oldPin);
+    return await exports.setupVault(userId, { pin: newPin, hint });
 };

@@ -18,6 +18,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as notesApi from '../../api/notesApi';
 import { Notebook } from '../../api/types';
 import { Config } from '../../constants/Config';
+import * as cryptoVault from '../../utils/cryptoVault';
+import VaultUnlockModal from '../../components/VaultUnlockModal';
 
 export default function NotebooksScreen() {
   const router = useRouter();
@@ -34,6 +36,46 @@ export default function NotebooksScreen() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newNotebookTitle, setNewNotebookTitle] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+
+  // 安全箱解锁弹窗
+  const [showVaultModal, setShowVaultModal] = useState(false);
+  const [pendingEncryptNotebook, setPendingEncryptNotebook] = useState<Notebook | null>(null);
+
+  const handleToggleNotebookEncryption = async (notebook: Notebook) => {
+    const nextStatus = !notebook.isEncrypted;
+    if (nextStatus && !cryptoVault.hasSessionKey()) {
+      setPendingEncryptNotebook(notebook);
+      setShowVaultModal(true);
+      return;
+    }
+
+    try {
+      const res = await notesApi.updateNotebook(notebook._id, { isEncrypted: nextStatus });
+      if (res.code === 200) {
+        Alert.alert('提示', nextStatus ? '已设为私密笔记本' : '已解除私密保护');
+        loadNotebooks(true);
+      } else {
+        throw new Error(res.message);
+      }
+    } catch (err: any) {
+      Alert.alert('操作失败', err.message || '网络异常');
+    }
+  };
+
+  const handleNotebookLongPress = (notebook: Notebook) => {
+    const isEncrypted = Boolean(notebook.isEncrypted);
+    Alert.alert(
+      notebook.title || notebook.name || '笔记本',
+      '快捷操作',
+      [
+        {
+          text: isEncrypted ? '🔓 解除私密保护' : '🔒 设为私密笔记本',
+          onPress: () => handleToggleNotebookEncryption(notebook),
+        },
+        { text: '取消', style: 'cancel' },
+      ]
+    );
+  };
 
   const loadNotebooks = useCallback(async (isRefresh = false) => {
     const isFirstLoad = !hasLoadedOnceRef.current;
@@ -112,6 +154,7 @@ export default function NotebooksScreen() {
           !isLast && styles.itemRowBorder,
         ]}
         onPress={() => handleSelectNotebook(item)}
+        onLongPress={() => handleNotebookLongPress(item)}
         activeOpacity={0.65}
       >
         <View style={styles.iconContainer}>
@@ -119,10 +162,15 @@ export default function NotebooksScreen() {
         </View>
 
         <View style={styles.itemInfo}>
-          <Text style={styles.itemTitle} numberOfLines={1}>
-            {item.title || item.name}
-          </Text>
-          <Text style={styles.itemSub}>点击查看笔记</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={styles.itemTitle} numberOfLines={1}>
+              {item.title || item.name}
+            </Text>
+            {item.isEncrypted && (
+              <Ionicons name="lock-closed" size={13} color="#d97706" />
+            )}
+          </View>
+          <Text style={styles.itemSub}>长按加锁 / 点击查看</Text>
         </View>
 
         <View style={styles.rightAction}>
@@ -217,6 +265,21 @@ export default function NotebooksScreen() {
           </View>
         </Modal>
       )}
+      {/* 安全箱解锁弹窗 */}
+      <VaultUnlockModal
+        visible={showVaultModal}
+        onClose={() => {
+          setShowVaultModal(false);
+          setPendingEncryptNotebook(null);
+        }}
+        onSuccess={() => {
+          setShowVaultModal(false);
+          if (pendingEncryptNotebook) {
+            handleToggleNotebookEncryption(pendingEncryptNotebook);
+            setPendingEncryptNotebook(null);
+          }
+        }}
+      />
     </View>
   );
 }

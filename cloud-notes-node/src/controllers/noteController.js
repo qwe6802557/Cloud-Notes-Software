@@ -88,7 +88,7 @@ const findDescendantIds = async (parentIds, userId, queryDeleted = false) => {
 
 // 创建笔记或目录
 exports.createNote = asyncHandler(async (req, res, next) => {
-    const { title, content, notebookId, tags, type = 'note', parentId = null } = req.body;
+    const { title, content, notebookId, tags, type = 'note', parentId = null, isEncrypted, encryptedData } = req.body;
     const userId = req.user._id;
 
     // 校验父级节点归属
@@ -103,6 +103,18 @@ exports.createNote = asyncHandler(async (req, res, next) => {
         }
     }
 
+    let finalIsEncrypted = Boolean(isEncrypted);
+    if (!finalIsEncrypted) {
+        if (safeParentId) {
+            const parentNode = await Note.findOne({ _id: safeParentId, userId, isDeleted: false });
+            if (parentNode && parentNode.isEncrypted) finalIsEncrypted = true;
+        } else if (notebookId) {
+            const Notebook = require('../models/Notebook');
+            const nb = await Notebook.findById(notebookId);
+            if (nb && nb.isEncrypted) finalIsEncrypted = true;
+        }
+    }
+
     const note = await Note.create({
         title: (title || '').trim() || (type === 'folder' ? '新建文件夹' : '无标题笔记'),
         content: type === 'folder' ? '' : (content || ''),
@@ -111,7 +123,9 @@ exports.createNote = asyncHandler(async (req, res, next) => {
         userId,
         type,
         parentId: safeParentId,
-        tags: tags || []
+        tags: tags || [],
+        isEncrypted: finalIsEncrypted,
+        encryptedData: encryptedData || null
     });
 
     if (tags && tags.length > 0) {
@@ -326,6 +340,21 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
         updateData.unresolvedLinks = linkResult.unresolvedLinks;
     }
 
+    if (currentNote.type === 'folder' && updateData.isEncrypted !== undefined) {
+        const descendantIds = await findDescendantIds([noteId], userId);
+        if (descendantIds.length > 0) {
+            await Note.updateMany(
+                { _id: { $in: descendantIds }, userId },
+                { isEncrypted: Boolean(updateData.isEncrypted) }
+            );
+        }
+    }
+
+    if (updateData.isEncrypted === true) {
+        const NoteChunk = require('../models/NoteChunk');
+        await NoteChunk.deleteMany({ userId, noteId });
+    }
+
     const note = await Note.findOneAndUpdate(
         { _id: noteId, userId },
         updateData,
@@ -366,7 +395,9 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
                 title: note.title,
                 content: note.content,
                 saveType: currentSaveType,
-                wordCount: countWords(note.content)
+                wordCount: countWords(note.content),
+                isEncrypted: Boolean(note.isEncrypted),
+                encryptedData: note.encryptedData || null
             });
 
             const totalHistories = await NoteHistory.countDocuments({ noteId: note._id, userId });

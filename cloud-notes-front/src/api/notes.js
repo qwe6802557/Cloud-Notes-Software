@@ -30,6 +30,15 @@ export const createNotebook = data => {
     });
 };
 
+// 更新笔记本
+export const updateNotebook = (notebookId, data) => {
+    return request({
+        url: `/notebooks/${notebookId}`,
+        method: 'put',
+        data
+    });
+};
+
 // 获取指定笔记本下的笔记列表
 export const getNotebookNotes = (notebookId, params) => {
     return request({

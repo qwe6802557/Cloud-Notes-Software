@@ -38,6 +38,14 @@ const noteSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Tag'
     }],
+    isEncrypted: {
+        type: Boolean,
+        default: false
+    },
+    encryptedData: {
+        type: String,
+        default: null
+    },
     isStarred: {
         type: Boolean,
         default: false

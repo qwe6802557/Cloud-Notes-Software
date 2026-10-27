@@ -21,6 +21,14 @@ const noteHistorySchema = new mongoose.Schema({
         type: String,
         default: ''
     },
+    isEncrypted: {
+        type: Boolean,
+        default: false
+    },
+    encryptedData: {
+        type: String,
+        default: null
+    },
     saveType: {
         type: String,
         enum: ['manual', 'auto', 'rollback'],

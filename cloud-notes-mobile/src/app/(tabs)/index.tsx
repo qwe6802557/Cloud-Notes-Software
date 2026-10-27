@@ -20,6 +20,8 @@ import { Note, Notebook } from '../../api/types';
 import { Config } from '../../constants/Config';
 import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 import MoveNoteBottomSheet from '../../components/MoveNoteBottomSheet';
+import VaultUnlockModal from '../../components/VaultUnlockModal';
+import * as cryptoVault from '../../utils/cryptoVault';
 import { mobileSearchEngine, SearchResultItem } from '../../utils/search/mobileSearchEngine';
 import { getAllCachedNotes } from '../../utils/storage/mobileNotesDB';
 
@@ -79,6 +81,74 @@ export default function NotesScreen() {
   const [showRAGModal, setShowRAGModal] = useState(false);
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [moveTargetNote, setMoveTargetNote] = useState<any>(null);
+  const [showVaultModal, setShowVaultModal] = useState(false);
+  const [pendingEncryptItem, setPendingEncryptItem] = useState<any>(null);
+
+  // 切换笔记或文件夹加密状态
+  const handleToggleEncryption = async (item: any) => {
+    const isEncrypted = Boolean(item.isEncrypted);
+    const nextStatus = !isEncrypted;
+    const noteId = item._id || item.id;
+
+    if (nextStatus && !cryptoVault.hasSessionKey()) {
+      setPendingEncryptItem(item);
+      setShowVaultModal(true);
+      return;
+    }
+
+    try {
+      if (item.type === 'folder') {
+        const res = await notesApi.updateNote(noteId, { isEncrypted: nextStatus });
+        if (res.code === 200) {
+          Alert.alert('提示', nextStatus ? '文件夹已设为私密' : '文件夹已解除私密');
+          loadData(true);
+        } else {
+          throw new Error(res.message);
+        }
+      } else {
+        if (nextStatus) {
+          const detailRes = await notesApi.getNoteDetail(noteId);
+          const rawContent = detailRes?.data?.content || item.content || '';
+          const pin = cryptoVault.getSessionKey();
+          const salt = cryptoVault.getSessionSalt() || '00'.repeat(16);
+          const encryptedData = await cryptoVault.encryptNote(rawContent, pin!, salt);
+          const res = await notesApi.updateNote(noteId, {
+            isEncrypted: true,
+            encryptedData,
+            content: '',
+          });
+          if (res.code === 200) {
+            Alert.alert('提示', '笔记已加密设为私密');
+            loadData(true);
+          } else {
+            throw new Error(res.message);
+          }
+        } else {
+          const detailRes = await notesApi.getNoteDetail(noteId);
+          let plainContent = detailRes?.data?.content || '';
+          if (detailRes?.data?.encryptedData) {
+            const pin = cryptoVault.getSessionKey();
+            if (pin) {
+              plainContent = await cryptoVault.decryptNote(detailRes.data.encryptedData, pin);
+            }
+          }
+          const res = await notesApi.updateNote(noteId, {
+            isEncrypted: false,
+            encryptedData: null,
+            content: plainContent,
+          });
+          if (res.code === 200) {
+            Alert.alert('提示', '笔记已解除私密保护');
+            loadData(true);
+          } else {
+            throw new Error(res.message);
+          }
+        }
+      }
+    } catch (err: any) {
+      Alert.alert('操作失败', err.message || '网络异常');
+    }
+  };
 
   // 长按卡片唤起快捷操作菜单
   const handleNoteLongPress = (item: any) => {
@@ -88,6 +158,10 @@ export default function NotesScreen() {
       item.title || (isFolder ? '未命名文件夹' : '无标题笔记'),
       '快捷操作',
       [
+        {
+          text: item.isEncrypted ? '🔓 解除私密保护' : '🔒 设为私密',
+          onPress: () => handleToggleEncryption(item),
+        },
         {
           text: '移动到...',
           onPress: () => {
@@ -407,6 +481,9 @@ export default function NotesScreen() {
                 {item.title || (isFolder ? '未命名文件夹' : '无标题笔记')}
               </Text>
             )}
+            {item.isEncrypted && (
+              <Ionicons name="lock-closed" size={13} color="#d97706" style={{ marginLeft: 5 }} />
+            )}
           </View>
           {isFolder ? (
             <View style={styles.folderBadge}>
@@ -437,7 +514,11 @@ export default function NotesScreen() {
           </Text>
         ) : (
           <Text style={[styles.cardSnippet, isFolder && styles.folderSnippet]} numberOfLines={2}>
-            {isFolder ? '📁 点击浏览文件夹内容' : cleanSnippet(item.content)}
+            {item.isEncrypted && !cryptoVault.hasSessionKey()
+              ? '🔒 私密内容（端到端加密保护）'
+              : isFolder
+              ? '📁 点击浏览文件夹内容'
+              : cleanSnippet(item.content)}
           </Text>
         )}
 
@@ -593,6 +674,21 @@ export default function NotesScreen() {
           }}
         />
       )}
+      {/* 安全箱解锁弹窗 */}
+      <VaultUnlockModal
+        visible={showVaultModal}
+        onClose={() => {
+          setShowVaultModal(false);
+          setPendingEncryptItem(null);
+        }}
+        onSuccess={() => {
+          setShowVaultModal(false);
+          if (pendingEncryptItem) {
+            handleToggleEncryption(pendingEncryptItem);
+            setPendingEncryptItem(null);
+          }
+        }}
+      />
     </View>
   );
 }

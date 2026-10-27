@@ -161,7 +161,19 @@ class MobileSyncManager {
    */
   public async notifyLocalDirty(
     noteId: string,
-    { title, content, baseUpdatedAt }: { title: string; content: string; baseUpdatedAt?: string | null }
+    {
+      title,
+      content,
+      baseUpdatedAt,
+      isEncrypted,
+      encryptedData,
+    }: {
+      title: string;
+      content: string;
+      baseUpdatedAt?: string | null;
+      isEncrypted?: boolean;
+      encryptedData?: string | null;
+    }
   ) {
     if (!noteId) return;
 
@@ -169,25 +181,34 @@ class MobileSyncManager {
     await saveNoteCache({
       id: noteId,
       title,
-      content,
+      content: isEncrypted ? '' : content,
+      isEncrypted: Boolean(isEncrypted),
+      encryptedData: encryptedData || null,
       updatedAt: new Date().toISOString(),
       isDirty: true,
     });
 
-    // 立即增量更新移动端离线检索倒排索引
-    mobileSearchEngine.upsertDocument({
-      id: noteId,
-      title,
-      snippet: content,
-      updatedAt: new Date().toISOString(),
-    });
+    // 立即增量更新移动端离线检索倒排索引（私密笔记跳过明文索引）
+    if (!isEncrypted) {
+      mobileSearchEngine.upsertDocument({
+        id: noteId,
+        title,
+        snippet: content,
+        updatedAt: new Date().toISOString(),
+      });
+    }
 
     // 2. 状态迁移
     if (!this.isOnline) {
       await enqueueMutation({
         noteId,
         action: 'update',
-        payload: { title, content },
+        payload: {
+          title,
+          content: isEncrypted ? '' : content,
+          isEncrypted: Boolean(isEncrypted),
+          encryptedData: encryptedData || null,
+        },
         baseUpdatedAt,
       });
       await this.refreshQueuedCount();
@@ -207,6 +228,8 @@ class MobileSyncManager {
       content: string;
       baseUpdatedAt?: string | null;
       notebookId?: string;
+      isEncrypted?: boolean;
+      encryptedData?: string | null;
       onSyncSuccess?: (res: any) => void;
     },
     delay = 1500
@@ -238,7 +261,16 @@ class MobileSyncManager {
       content,
       baseUpdatedAt,
       notebookId,
-    }: { title: string; content: string; baseUpdatedAt?: string | null; notebookId?: string },
+      isEncrypted,
+      encryptedData,
+    }: {
+      title: string;
+      content: string;
+      baseUpdatedAt?: string | null;
+      notebookId?: string;
+      isEncrypted?: boolean;
+      encryptedData?: string | null;
+    },
     options: { auto?: boolean; silent?: boolean } = {}
   ): Promise<{ success: boolean; localOnly?: boolean; offline?: boolean; forked?: boolean; forkedNote?: any; updatedAt?: string; error?: any }> {
     if (!noteId) return { success: false, error: 'Note ID required' };
@@ -252,26 +284,36 @@ class MobileSyncManager {
     await saveNoteCache({
       id: noteId,
       title,
-      content,
+      content: isEncrypted ? '' : content,
+      isEncrypted: Boolean(isEncrypted),
+      encryptedData: encryptedData || null,
       updatedAt: new Date().toISOString(),
       isDirty: true,
     });
 
-    // 立即增量更新移动端离线检索倒排索引
-    mobileSearchEngine.upsertDocument({
-      id: noteId,
-      title,
-      snippet: content,
-      notebookId,
-      updatedAt: new Date().toISOString(),
-    });
+    // 立即增量更新移动端离线检索倒排索引（私密笔记跳过明文索引）
+    if (!isEncrypted) {
+      mobileSearchEngine.upsertDocument({
+        id: noteId,
+        title,
+        snippet: content,
+        notebookId,
+        updatedAt: new Date().toISOString(),
+      });
+    }
 
     // 1. 离线状态保底入队
     if (!this.isOnline) {
       await enqueueMutation({
         noteId,
         action: 'update',
-        payload: { title, content, notebookId },
+        payload: {
+          title,
+          content: isEncrypted ? '' : content,
+          notebookId,
+          isEncrypted: Boolean(isEncrypted),
+          encryptedData: encryptedData || null,
+        },
         baseUpdatedAt,
       });
       await this.refreshQueuedCount();
@@ -338,10 +380,14 @@ class MobileSyncManager {
       }
 
       // 正式上云更新
-      const saveRes = await updateNote(noteId, {
+      const savePayload: any = {
         title,
-        content,
-      });
+        content: isEncrypted ? '' : content,
+      };
+      if (isEncrypted !== undefined) savePayload.isEncrypted = isEncrypted;
+      if (encryptedData !== undefined) savePayload.encryptedData = encryptedData;
+
+      const saveRes = await updateNote(noteId, savePayload);
 
       const savedUpdatedAt = saveRes?.data?.updatedAt || new Date().toISOString();
       this.lastKnownRemoteUpdatedAt.set(noteId, savedUpdatedAt);
@@ -350,7 +396,9 @@ class MobileSyncManager {
       await saveNoteCache({
         id: noteId,
         title,
-        content,
+        content: isEncrypted ? '' : content,
+        isEncrypted: Boolean(isEncrypted),
+        encryptedData: encryptedData || null,
         updatedAt: savedUpdatedAt,
         lastSavedContent: content,
         lastSyncedAt: new Date().toISOString(),
@@ -371,7 +419,13 @@ class MobileSyncManager {
       await enqueueMutation({
         noteId,
         action: 'update',
-        payload: { title, content, notebookId },
+        payload: {
+          title,
+          content: isEncrypted ? '' : content,
+          notebookId,
+          isEncrypted: Boolean(isEncrypted),
+          encryptedData: encryptedData || null,
+        },
         baseUpdatedAt,
       });
       await this.refreshQueuedCount();
@@ -548,6 +602,8 @@ class MobileSyncManager {
                 content: payload.content || '',
                 baseUpdatedAt,
                 notebookId: payload.notebookId,
+                isEncrypted: payload.isEncrypted,
+                encryptedData: payload.encryptedData,
               },
               { auto: true }
             );

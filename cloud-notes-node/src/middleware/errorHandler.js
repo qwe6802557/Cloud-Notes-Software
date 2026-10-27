@@ -2,33 +2,26 @@ const AppError = require('../utils/AppError');
 
 // 开发环境错误响应
 const sendErrorDev = (err, res) => {
-    // 错误响应对象
     const errorResponse = {
-        code: err.statusCode || 500, // 确保 statusCode 有默认值
+        code: err.statusCode || 500,
         data: err.data || null,
         message: err.message,
         stack: err.stack
     };
 
-    // 控制台打印
     console.error('DETAILED_ERROR (Dev):\n', JSON.stringify(errorResponse, null, 2));
-
-    // 错误响应客户端
     res.status(errorResponse.code).json(errorResponse);
 };
 
 // 生产环境错误响应
 const sendErrorProd = (err, res) => {
-    // 操作型错误，发送给客户端
     if (err.isOperational) {
         res.status(err.statusCode).json({
             code: err.statusCode,
             data: err.data || null,
             message: err.message
         });
-    }
-    // 编程错误或未知错误，不泄露详情
-    else {
+    } else {
         console.error('ERROR 💥', err);
         res.status(500).json({
             code: 500,
@@ -61,12 +54,14 @@ const handleJWTExpiredError = () => new AppError('令牌已过期，请重新登
 
 // 全局错误处理中间件
 module.exports = (err, req, res, next) => {
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+        err.statusCode = 401;
+        err.message = '登录状态已失效，请重新登录';
+    }
     err.statusCode = err.statusCode || 500;
     err.status = err.status || 'error';
 
-    if (process.env.NODE_ENV === 'development') {
-        sendErrorDev(err, res);
-    } else if (process.env.NODE_ENV === 'production') {
+    if (process.env.NODE_ENV === 'production') {
         let error = { ...err };
         error.message = err.message;
 
@@ -77,5 +72,7 @@ module.exports = (err, req, res, next) => {
         if (error.name === 'TokenExpiredError') error = handleJWTExpiredError();
 
         sendErrorProd(error, res);
+    } else {
+        sendErrorDev(err, res);
     }
 };

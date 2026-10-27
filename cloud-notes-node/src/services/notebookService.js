@@ -95,6 +95,13 @@ exports.updateNotebook = async (id, updateData, userId) => {
     }
 
     // 如果设置为默认，则取消其他默认笔记本
+    if (updateData.isEncrypted !== undefined) {
+        await Note.updateMany(
+            { notebookId: id, userId },
+            { isEncrypted: Boolean(updateData.isEncrypted) }
+        );
+    }
+
     if (updateData.isDefault) {
         await Notebook.updateMany(
             { userId, isDefault: true, _id: { $ne: id } },

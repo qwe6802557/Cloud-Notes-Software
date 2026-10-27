@@ -28,6 +28,8 @@ import NotePeekBottomSheet from '../../components/NotePeekBottomSheet';
 import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 import NoteCompanionBottomSheet, { CompanionTab } from '../../components/NoteCompanionBottomSheet';
 import MoveNoteBottomSheet from '../../components/MoveNoteBottomSheet';
+import VaultUnlockModal from '../../components/VaultUnlockModal';
+import * as cryptoVault from '../../utils/cryptoVault';
 import { weaveBacklinksToText, isItemWeaved } from '../../utils/weavingUtils';
 import { mobileSearchEngine } from '../../utils/search/mobileSearchEngine';
 import { getNoteCache, saveNoteCache, resolveNoteId, deleteNoteCache } from '../../utils/storage/mobileNotesDB';
@@ -221,6 +223,40 @@ export default function NoteDetailScreen() {
     targetNoteId?: string;
   }>({ visible: false });
 
+  // 私密保险箱状态与正文解密状态
+  const [isVaultUnlocked, setIsVaultUnlocked] = useState(cryptoVault.hasSessionKey());
+  const [showVaultModal, setShowVaultModal] = useState(false);
+  const [decryptedContent, setDecryptedContent] = useState<string>('');
+
+  useEffect(() => {
+    const unsubscribe = cryptoVault.subscribeVaultLock(unlocked => {
+      setIsVaultUnlocked(unlocked);
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const decryptCurrent = async () => {
+      if (note?.isEncrypted && note.encryptedData) {
+        if (isVaultUnlocked) {
+          const pin = cryptoVault.getSessionKey();
+          if (pin) {
+            try {
+              const plain = await cryptoVault.decryptNote(note.encryptedData, pin);
+              setDecryptedContent(plain);
+              parseToc(plain);
+            } catch (err) {
+              console.warn('Failed to decrypt note:', err);
+            }
+          }
+        } else {
+          setDecryptedContent('');
+        }
+      }
+    };
+    decryptCurrent();
+  }, [note?.isEncrypted, note?.encryptedData, isVaultUnlocked]);
+
   // 智能伴侣抽屉状态
   const [showCompanionSheet, setShowCompanionSheet] = useState(false);
   const [companionInitialTab, setCompanionInitialTab] = useState<CompanionTab>('backlinks');
@@ -287,8 +323,9 @@ export default function NoteDetailScreen() {
   };
 
   const processedContent = useMemo(() => {
-    if (!note?.content) return '*该笔记暂无正文内容*';
-    return note.content.replace(/\[\[([^[\]\r\n]+)\]\]/g, (match, p1) => {
+    const rawContent = note?.isEncrypted ? (isVaultUnlocked ? decryptedContent : '') : note?.content;
+    if (!rawContent) return '*该笔记暂无正文内容*';
+    return rawContent.replace(/\[\[([^[\]\r\n]+)\]\]/g, (match, p1) => {
       const raw = p1.trim();
       let title = raw;
       let alias = raw;
@@ -305,7 +342,7 @@ export default function NoteDetailScreen() {
       const protocol = exists ? 'wikilink' : 'ghostlink';
       return `[${alias}](${protocol}://${encodeURIComponent(title)})`;
     });
-  }, [note?.content]);
+  }, [note?.content, note?.isEncrypted, decryptedContent, isVaultUnlocked]);
 
   const handleWikiLinkPress = (targetTitle: string) => {
     setPeekConfig({
@@ -325,7 +362,7 @@ export default function NoteDetailScreen() {
 
   const handleExecuteCreateWikiNote = async (targetTitle: string) => {
     try {
-      let targetNbId = note?.notebookId;
+      let targetNbId = note ? note.notebookId : undefined;
       if (!targetNbId) {
         const nbRes = await notesApi.getNotebooks();
         targetNbId = nbRes?.data?.[0]?._id;
@@ -355,11 +392,12 @@ export default function NoteDetailScreen() {
 
   // 提取正文所有图片，组成连续画廊数组
   const docImages = useMemo(() => {
-    if (!note?.content) return [];
+    const rawContent = note?.isEncrypted ? (isVaultUnlocked ? decryptedContent : '') : note?.content;
+    if (!rawContent) return [];
     const regex = /!\[.*?\]\((.*?)\)/g;
     const images: string[] = [];
     let match;
-    while ((match = regex.exec(note.content)) !== null) {
+    while ((match = regex.exec(rawContent)) !== null) {
       const rawTarget = match[1]?.trim();
       if (rawTarget) {
         const urlMatch = rawTarget.match(/^(?:<([^>]+)>|([^\s\)\"']+))/);
@@ -371,7 +409,7 @@ export default function NoteDetailScreen() {
       }
     }
     return images;
-  }, [note?.content, serverUrl]);
+  }, [note?.content, note?.isEncrypted, decryptedContent, isVaultUnlocked, serverUrl]);
 
   const handleOpenImage = (imageUrl: string) => {
     const index = docImages.findIndex(img => img === imageUrl);
@@ -756,6 +794,26 @@ export default function NoteDetailScreen() {
           headerTitle: note?.title ? note.title : '笔记详情',
           headerRight: () => (
             <View style={styles.headerRightActions}>
+              {note?.isEncrypted && (
+                <TouchableOpacity
+                  style={styles.headerActionBtn}
+                  onPress={() => {
+                    if (isVaultUnlocked) {
+                      cryptoVault.clearSessionKey();
+                      Alert.alert('已锁定', '已安全锁定本次会话加密箱');
+                    } else {
+                      setShowVaultModal(true);
+                    }
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                >
+                  <Ionicons
+                    name={isVaultUnlocked ? 'lock-open' : 'lock-closed'}
+                    size={20}
+                    color={isVaultUnlocked ? '#10b981' : '#d97706'}
+                  />
+                </TouchableOpacity>
+              )}
               {/* 收藏按钮 */}
               <TouchableOpacity
                 style={styles.headerActionBtn}
@@ -846,11 +904,31 @@ export default function NoteDetailScreen() {
           </View>
 
           {/* 原生 Markdown 渲染主体 */}
-          <View style={styles.markdownWrapper}>
-            <Markdown style={markdownStyles} rules={markdownRules}>
-              {processedContent}
-            </Markdown>
-          </View>
+          {note.isEncrypted && !isVaultUnlocked ? (
+            <View style={styles.vaultLockedCard}>
+              <View style={styles.vaultIconCircle}>
+                <Ionicons name="lock-closed" size={32} color="#d97706" />
+              </View>
+              <Text style={styles.vaultLockedTitle}>此笔记已端到端加密保护</Text>
+              <Text style={styles.vaultLockedDesc}>
+                正文已由零知识 AES-256-GCM 封装，请验证主密码以查看
+              </Text>
+              <TouchableOpacity
+                style={styles.vaultUnlockBtn}
+                onPress={() => setShowVaultModal(true)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="key-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                <Text style={styles.vaultUnlockBtnText}>解锁保险箱</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.markdownWrapper}>
+              <Markdown style={markdownStyles} rules={markdownRules}>
+                {processedContent}
+              </Markdown>
+            </View>
+          )}
 
           {/* 反向链接面板 (Backlinks) */}
           {backlinksData.totalCount > 0 && (
@@ -1132,6 +1210,15 @@ export default function NoteDetailScreen() {
           });
         }}
         onCreateAndEdit={handleExecuteCreateWikiNote}
+      />
+
+      {/* 安全箱解锁弹窗 */}
+      <VaultUnlockModal
+        visible={showVaultModal}
+        onClose={() => setShowVaultModal(false)}
+        onSuccess={() => {
+          setShowVaultModal(false);
+        }}
       />
     </View>
   );
@@ -1496,5 +1583,60 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  vaultLockedCard: {
+    marginVertical: 40,
+    padding: 32,
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  vaultIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(217, 119, 6, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  vaultLockedTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  vaultLockedDesc: {
+    fontSize: 13,
+    color: '#64748b',
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 20,
+    paddingHorizontal: 16,
+  },
+  vaultUnlockBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#d97706',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    shadowColor: '#d97706',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  vaultUnlockBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

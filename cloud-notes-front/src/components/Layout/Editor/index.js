@@ -38,7 +38,10 @@ import {
     ApartmentOutlined,
     SplitCellsOutlined,
     PushpinOutlined,
-    LinkOutlined
+    LinkOutlined,
+    UnlockOutlined
+
+
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -72,6 +75,16 @@ import SecondaryNotePane from './SecondaryNotePane';
 import NoteTabBar from './NoteTabBar';
 import { useNoteTabs } from '@/hooks/useNoteTabs';
 import SyncStatusPill from './SyncStatusPill';
+import VaultUnlockCard from './VaultUnlockCard';
+import {
+    hasSessionKey,
+    getSessionKey,
+    getSessionSalt,
+    encryptNote,
+    decryptNote,
+    clearSessionKey,
+    subscribeVaultLock
+} from '@/utils/cryptoVault';
 import { getNoteCache, saveNoteCache } from '@/utils/storage/localNotesDB';
 import syncManager from '@/utils/storage/syncManager';
 
@@ -456,6 +469,19 @@ const NoteEditor = ({
     const closingNoteIdRef = useRef(null);
     const [statusAnchorEl, setStatusAnchorEl] = useState(null);
     const [backlinksAnchorEl, setBacklinksAnchorEl] = useState(null);
+    const [isVaultLocked, setIsVaultLocked] = useState(false);
+    const [noteIsEncrypted, setNoteIsEncrypted] = useState(false);
+    const [sessionUnlocked, setSessionUnlocked] = useState(() => hasSessionKey());
+
+    useEffect(() => {
+        const unsub = subscribeVaultLock(unlocked => {
+            setSessionUnlocked(unlocked);
+            if (!unlocked && noteIsEncrypted) {
+                setIsVaultLocked(true);
+            }
+        });
+        return unsub;
+    }, [noteIsEncrypted]);
 
     // 多标签页与双栏分屏联动状态 (useNoteTabs)
     const {
@@ -1604,6 +1630,13 @@ const NoteEditor = ({
 
                 // 异步从 IndexedDB 极速提纯 (<10ms)，若内存无缓存则用本地快照先行上屏
                 getNoteCache(selectedNote).then(idbCached => {
+                    if (idbCached?.isEncrypted && !hasSessionKey()) {
+                        setIsVaultLocked(true);
+                        setNoteIsEncrypted(true);
+                        if (idbCached.title) setNoteTitle(idbCached.title);
+                        setLoading(false);
+                        return;
+                    }
                     if (idbCached && mounted && currentLoadedNoteIdRef.current === selectedNote) {
                         contentRef.current = idbCached.content || '';
                         setContent(idbCached.content || '');
@@ -1618,9 +1651,24 @@ const NoteEditor = ({
             }
 
             getNoteDetail(selectedNote)
-                .then(result => {
+                .then(async result => {
                     if (!mounted || currentLoadedNoteIdRef.current !== selectedNote) {
                         return;
+                    }
+
+                    const isEnc = Boolean(result?.note?.isEncrypted);
+                    setNoteIsEncrypted(isEnc);
+
+                    if (isEnc) {
+                        if (!hasSessionKey()) {
+                            setIsVaultLocked(true);
+                            setLoading(false);
+                            if (result?.note?.title) setNoteTitle(result.note.title);
+                            return;
+                        }
+                        setIsVaultLocked(false);
+                    } else {
+                        setIsVaultLocked(false);
                     }
 
                     // SWR 安全保稿: 若用户已在当前篇产生未保存编辑（isDirty），严格保护本地输入现场
@@ -1628,7 +1676,14 @@ const NoteEditor = ({
                         return;
                     }
 
-                    const noteContent = result?.note?.content || '';
+                    let noteContent = result?.note?.content || '';
+                    if (isEnc && result?.note?.encryptedData) {
+                        try {
+                            noteContent = await decryptNote(result.note.encryptedData, getSessionKey());
+                        } catch {
+                            noteContent = result?.note?.content || '';
+                        }
+                    }
                     const loadedTitle = result?.note?.title || '';
 
                     contentRef.current = noteContent;
@@ -1790,9 +1845,18 @@ const NoteEditor = ({
 
         try {
             // 调度 syncManager 执行双层持久化、并发冲突检测与安全分叉
+            let saveContent = content;
+            let saveEncryptedData = undefined;
+            if (noteIsEncrypted && hasSessionKey()) {
+                saveEncryptedData = await encryptNote(content, getSessionKey(), getSessionSalt());
+                saveContent = '';
+            }
+
             const syncRes = await syncManager.syncNote(selectedNote, {
+                isEncrypted: noteIsEncrypted,
+                encryptedData: saveEncryptedData,
                 title: noteTitle,
-                content,
+                content: saveContent,
                 baseUpdatedAt: lastSavedAt
             }, options);
 
@@ -1840,7 +1904,7 @@ const NoteEditor = ({
                 setSaving(false);
             }
         }
-    }, [autoSaving, content, isDirty, lastSavedAt, noteTitle, onSave, saving, selectedNote]);
+    }, [autoSaving, content, isDirty, lastSavedAt, noteTitle, onSave, saving, selectedNote, noteIsEncrypted]);
     handleSaveRef.current = handleSave;
 
     const handleRollbackSuccess = useCallback(rolledBackNote => {
@@ -2221,6 +2285,21 @@ const NoteEditor = ({
                     </Button>
                 </Tooltip>
                 <SyncStatusPill />
+                {sessionUnlocked && (
+                    <Tooltip title="安全箱已解锁 (点击锁定会话)">
+                        <Button
+                            type="text"
+                            size="small"
+                            className="vault-lock-btn"
+                            icon={<UnlockOutlined style={{ color: '#D97706' }} />}
+                            onClick={() => {
+                                clearSessionKey();
+                                setIsVaultLocked(true);
+                                message.info('安全箱已锁定，私密笔记已脱敏');
+                            }}
+                        />
+                    </Tooltip>
+                )}
                 <Button
                     className="save-btn"
                     type="primary"
@@ -2452,6 +2531,24 @@ const NoteEditor = ({
                             renderToolbar()
                         )}
                         <div className="primary-editor-scroll-area">
+                            {isVaultLocked && selectedNote ? (
+                                <VaultUnlockCard
+                                    noteTitle={noteTitle}
+                                    onUnlockSuccess={async (derivedKey) => {
+                                        setIsVaultLocked(false);
+                                        setSessionUnlocked(true);
+                                        try {
+                                            const res = await getNoteDetail(selectedNote);
+                                            if (res?.note?.encryptedData) {
+                                                const dec = await decryptNote(res.note.encryptedData, derivedKey);
+                                                contentRef.current = dec;
+                                                setContent(dec);
+                                                lastSavedContentRef.current = dec;
+                                            }
+                                        } catch {}
+                                    }}
+                                />
+                            ) : (
                             <Spin spinning={loading} tip="加载中...">
                                 <div
                                     className={`editor-container editor-container-${mode} font-family-${fontFamily} font-size-${fontSize}`}
@@ -2503,6 +2600,7 @@ const NoteEditor = ({
                                     )}
                                 </div>
                             </Spin>
+                            )}
                         </div>
                     </div>
 

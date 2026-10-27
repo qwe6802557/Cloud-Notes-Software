@@ -9,6 +9,8 @@ export interface NoteCache {
   id: string;
   title: string;
   content: string;
+  isEncrypted?: boolean;
+  encryptedData?: string | null;
   updatedAt: string;
   lastSavedContent: string;
   lastSyncedAt: string;
@@ -23,6 +25,8 @@ export interface OfflineMutation {
     title?: string;
     content?: string;
     notebookId?: string;
+    isEncrypted?: boolean;
+    encryptedData?: string | null;
   };
   baseUpdatedAt?: string | null;
   timestamp: number;

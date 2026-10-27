@@ -99,6 +99,43 @@ exports.updateCurrentUser = asyncHandler(async (req, res) => {
 });
 
 // 退出登录保持不变
+exports.getVaultStatus = asyncHandler(async (req, res) => {
+    const data = await authService.getVaultStatus(req.user._id);
+    res.status(200).json({
+        code: 200,
+        message: '获取安全箱状态成功',
+        data
+    });
+});
+
+exports.setupVault = asyncHandler(async (req, res) => {
+    const data = await authService.setupVault(req.user._id, req.body);
+    res.status(200).json({
+        code: 200,
+        message: '设置安全箱成功',
+        data
+    });
+});
+
+exports.verifyVault = asyncHandler(async (req, res) => {
+    const { pin } = req.body;
+    const data = await authService.verifyVault(req.user._id, pin);
+    res.status(200).json({
+        code: 200,
+        message: '安全箱验证通过',
+        data
+    });
+});
+
+exports.updateVault = asyncHandler(async (req, res) => {
+    const data = await authService.updateVault(req.user._id, req.body);
+    res.status(200).json({
+        code: 200,
+        message: '修改安全箱密码成功',
+        data
+    });
+});
+
 exports.logout = (req, res) => {
     res.status(200).json({
         code: 200,

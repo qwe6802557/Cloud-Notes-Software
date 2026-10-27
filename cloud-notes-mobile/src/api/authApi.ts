@@ -44,6 +44,32 @@ export const getCurrentUser = async (): Promise<ApiResponse<User>> => {
   };
 };
 
+// 获取安全箱配置状态
+export const getVaultStatus = (): Promise<ApiResponse<{ enabled: boolean; salt?: string; hint?: string }>> => {
+  return request({
+    url: '/auth/vault-status',
+    method: 'get',
+  });
+};
+
+// 初始化设置安全箱
+export const setupVault = (data: { pin: string; hint?: string }): Promise<ApiResponse<any>> => {
+  return request({
+    url: '/auth/vault-setup',
+    method: 'post',
+    data,
+  });
+};
+
+// 验证安全箱密码
+export const verifyVault = (data: { pin: string }): Promise<ApiResponse<{ verified: boolean; salt: string }>> => {
+  return request({
+    url: '/auth/vault-verify',
+    method: 'post',
+    data,
+  });
+};
+
 // 退出登录
 export const logout = (): Promise<ApiResponse<any>> => {
   return request({

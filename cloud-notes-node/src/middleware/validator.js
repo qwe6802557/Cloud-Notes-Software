@@ -154,7 +154,15 @@ const schemas = {
             .messages({
                 'string.max': '描述最多500个字符'
             }),
-        isDefault: Joi.boolean()
+        isDefault: Joi.boolean(),
+        isEncrypted: Joi.boolean().optional()
+    }),
+    notebookUpdate: Joi.object({
+        name: Joi.string().trim().max(100).optional(),
+        title: Joi.string().trim().max(100).optional(),
+        description: Joi.string().trim().max(500).allow('', null).optional(),
+        isDefault: Joi.boolean().optional(),
+        isEncrypted: Joi.boolean().optional()
     }),
 
     // 笔记与目录创建验证

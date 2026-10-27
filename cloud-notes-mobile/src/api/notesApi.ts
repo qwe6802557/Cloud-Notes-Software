@@ -92,6 +92,8 @@ export const createNote = async (data: {
   notebookId: string;
   parentId?: string | null;
   type?: 'note' | 'folder';
+  isEncrypted?: boolean;
+  encryptedData?: string | null;
 }): Promise<ApiResponse<Note>> => {
   const res: any = await request({
     url: '/notes',
@@ -102,7 +104,16 @@ export const createNote = async (data: {
 };
 
 // 更新笔记
-export const updateNote = async (noteId: string, data: { title?: string; content?: string }): Promise<ApiResponse<Note>> => {
+export const updateNotebook = async (notebookId: string, data: { title?: string; name?: string; isEncrypted?: boolean }): Promise<ApiResponse<Notebook>> => {
+  const res: any = await request({
+    url: `/notebooks/${notebookId}`,
+    method: 'put',
+    data,
+  });
+  return { ...res, data: res?.data?.notebook || res?.data };
+};
+
+export const updateNote = async (noteId: string, data: { title?: string; content?: string; isEncrypted?: boolean; encryptedData?: string | null }): Promise<ApiResponse<Note>> => {
   const res: any = await request({
     url: `/notes/${noteId}`,
     method: 'put',

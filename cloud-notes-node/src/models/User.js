@@ -45,6 +45,25 @@ const userSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
+    masterVault: {
+        enabled: {
+            type: Boolean,
+            default: false
+        },
+        salt: {
+            type: String,
+            default: null
+        },
+        verifierHash: {
+            type: String,
+            default: null
+        },
+        hint: {
+            type: String,
+            trim: true,
+            default: ''
+        }
+    },
     aiConfig: {
         enabled: {
             type: Boolean,

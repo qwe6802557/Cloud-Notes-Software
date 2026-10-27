@@ -16,7 +16,7 @@ router
 router
     .route('/:id')
     .get(checkOwnership(Notebook), notebookController.getNotebook)
-    .put(validate(schemas.notebookCreate, 'body'), notebookController.updateNotebook)
+    .put(validate(schemas.notebookUpdate || schemas.notebookCreate, 'body'), notebookController.updateNotebook)
     .delete(notebookController.deleteNotebook);
 
 module.exports = router;

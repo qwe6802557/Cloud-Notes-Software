@@ -35,11 +35,14 @@ import {
     LeftOutlined,
     RightOutlined,
     CloudUploadOutlined,
-    ApartmentOutlined
+    ApartmentOutlined,
+    LockOutlined,
+    LockFilled
 } from '@ant-design/icons';
 import {
     getNotebooks,
     createNotebook,
+    updateNotebook,
     getNotebookNotes,
     getRecentNotes,
     getStarredNotes,
@@ -332,6 +335,7 @@ const NavTree = forwardRef(({
                 isFolder,
                 isLeaf: !isFolder, // 文件夹不是叶子节点，支持异步懒加载展开
                 isStarred: Boolean(item.isStarred),
+                isEncrypted: Boolean(item.isEncrypted),
                 parentId: item.parentId ? item.parentId.toString() : null,
                 notebookId: item.notebookId,
                 order: item.order ?? 0,
@@ -1082,6 +1086,33 @@ const NavTree = forwardRef(({
     };
 
     // 执行删除操作
+    const handleToggleEncrypt = async (nodeData) => {
+        setContextMenu(prev => ({ ...prev, visible: false }));
+        try {
+            const nextEncrypted = !nodeData.isEncrypted;
+            await updateNote(nodeData.key, { isEncrypted: nextEncrypted });
+            message.success(nextEncrypted ? '已将该项设为私密' : '已解除该项私密');
+            if (selectedNotebook) loadNotebookTree(selectedNotebook, true);
+        } catch {
+            message.error('操作私密状态失败');
+        }
+    };
+
+    const handleToggleNotebookEncrypt = async () => {
+        const activeNbId = selectedNotebook || (notebooks.length > 0 ? (notebooks[0].id || notebooks[0]._id) : null);
+        const activeNb = notebooks.find(n => (n.id || n._id) === activeNbId);
+        if (!activeNb) return;
+        const nextEncrypted = !activeNb.isEncrypted;
+        try {
+            await updateNotebook(activeNbId, { isEncrypted: nextEncrypted });
+            message.success(nextEncrypted ? '已将当前笔记本设为私密' : '已解除当前笔记本私密');
+            loadNotebooks();
+            if (activeNbId) loadNotebookTree(activeNbId, true);
+        } catch {
+            message.error('操作笔记本私密失败');
+        }
+    };
+
     const handleDelete = node => {
         setContextMenu(prev => ({ ...prev, visible: false }));
         const isFolder = node.isFolder;
@@ -1344,6 +1375,12 @@ const NavTree = forwardRef(({
                     label: '移动到...',
                     onClick: () => triggerMove(nodeData)
                 },
+                {
+                    key: 'toggle-encrypt',
+                    icon: <LockOutlined style={{ color: nodeData.isEncrypted ? '#D97706' : undefined }} />,
+                    label: nodeData.isEncrypted ? '解除私密' : '设为私密',
+                    onClick: () => handleToggleEncrypt(nodeData)
+                },
                 { type: 'divider' },
                 {
                     key: 'delete',
@@ -1382,6 +1419,9 @@ const NavTree = forwardRef(({
                     </span>
                     <span className="node-title" title={nodeData.title}>
                         {nodeData.title}
+                        {nodeData.isEncrypted && (
+                            <LockFilled style={{ fontSize: 11, color: '#D97706', marginLeft: 4 }} title="私密保护中" />
+                        )}
                     </span>
                 </div>
 
@@ -1471,10 +1511,18 @@ const NavTree = forwardRef(({
                                         <Space>
                                             <BookOutlined style={{ color: '#2563eb' }} />
                                             <span>{nb.name}</span>
+                                            {nb.isEncrypted && <LockFilled style={{ fontSize: 11, color: '#D97706' }} title="私密笔记本" />}
                                         </Space>
                                     )
                                 }))}
                             />
+                            <Tooltip title={notebooks.find(n => (n.id || n._id) === selectedNotebook)?.isEncrypted ? '当前笔记本已设私密 (点击解除)' : '设为私密笔记本'}>
+                                <Button
+                                    type="text"
+                                    icon={<LockOutlined style={{ color: notebooks.find(n => (n.id || n._id) === selectedNotebook)?.isEncrypted ? '#D97706' : '#94A3B8' }} />}
+                                    onClick={handleToggleNotebookEncrypt}
+                                />
+                            </Tooltip>
                             <Tooltip title="新建笔记本">
                                 <Button
                                     type="text"
