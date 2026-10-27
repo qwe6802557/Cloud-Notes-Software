@@ -81,7 +81,9 @@ const VaultUnlockCard = ({ onUnlockSuccess }) => {
             }
         } catch (err) {
             triggerShake();
-            message.error(err.response?.data?.message || '安全密码验证失败');
+            if (!err?.response && !err?.isAxiosError && err?.message) {
+                message.error(err.message);
+            }
         } finally {
             setSubmitting(false);
         }

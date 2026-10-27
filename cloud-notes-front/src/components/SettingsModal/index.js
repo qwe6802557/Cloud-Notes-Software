@@ -182,7 +182,9 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             setIsChangingVaultPin(false);
             vaultForm.resetFields();
         } catch (err) {
-            message.error(err.message || '修改安全密码失败');
+            if (!err?.response && !err?.isAxiosError && err?.message && !err?.errorFields) {
+                message.error(err.message);
+            }
         } finally {
             setVaultLoading(false);
         }
