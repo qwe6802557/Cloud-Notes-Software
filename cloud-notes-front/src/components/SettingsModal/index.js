@@ -375,7 +375,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             return;
         }
         if (themeManager.getThemeMode() !== initialThemeRef.current) {
-            themeManager.setThemeMode(initialThemeRef.current, true);
+            themeManager.setThemeMode(initialThemeRef.current, false);
         }
         handleClose?.();
     };
