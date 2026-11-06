@@ -21,6 +21,13 @@ import axios from 'axios';
 
 const SYSTEM_MODELS = [
   {
+    id: 'gemini-3.8-flash-high',
+    name: 'Gemini 3.8 Flash',
+    iconName: 'flash-outline' as const,
+    iconColor: '#2563eb',
+    badge: '首选',
+  },
+  {
     id: 'grok-chat-fast',
     name: 'Grok 极速',
     iconName: 'rocket-outline' as const,
@@ -65,6 +72,7 @@ const SYSTEM_MODELS = [
 ];
 
 const SYSTEM_MODEL_LABELS: Record<string, string> = {
+  'gemini-3.8-flash-high': 'Gemini 3.8 Flash',
   'grok-chat-fast': 'Grok 极速',
   'glm-4-flash': 'GLM-4-Flash',
   'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B': 'DeepSeek-R1 蒸馏',
@@ -84,7 +92,7 @@ export default function SettingsScreen() {
 
   // AI 配置相关状态
   const [showAIConfigModal, setShowAIConfigModal] = useState(false);
-  const [aiSystemModel, setAiSystemModel] = useState('grok-chat-fast');
+  const [aiSystemModel, setAiSystemModel] = useState('gemini-3.8-flash-high');
   const [aiApiKey, setAiApiKey] = useState('');
   const [aiBaseUrl, setAiBaseUrl] = useState('');
   const [aiModel, setAiModel] = useState('');
@@ -98,7 +106,7 @@ export default function SettingsScreen() {
         setAiApiKey(res.data.apiKey || '');
         setAiBaseUrl(res.data.baseUrl || '');
         setAiModel(res.data.model || '');
-        setAiSystemModel(res.data.systemModel || 'grok-chat-fast');
+        setAiSystemModel(res.data.systemModel || 'gemini-3.8-flash-high');
       }
     } catch (e: any) {
       console.warn('Failed to load AI config', e.message);
@@ -140,7 +148,7 @@ export default function SettingsScreen() {
         apiKey: aiApiKey.trim(),
         baseUrl: aiBaseUrl.trim(),
         model: aiModel.trim(),
-        systemModel: aiSystemModel || 'grok-chat-fast',
+        systemModel: aiSystemModel || 'gemini-3.8-flash-high',
       });
       setShowAIConfigModal(false);
       Alert.alert('保存成功', 'AI 模型参数已更新生效');
@@ -155,17 +163,17 @@ export default function SettingsScreen() {
     setAiApiKey('');
     setAiBaseUrl('');
     setAiModel('');
-    setAiSystemModel('grok-chat-fast');
+    setAiSystemModel('gemini-3.8-flash-high');
     try {
       setIsSavingAI(true);
       await aiApi.updateAIConfig({
         apiKey: '',
         baseUrl: '',
         model: '',
-        systemModel: 'grok-chat-fast',
+        systemModel: 'gemini-3.8-flash-high',
       });
       setShowAIConfigModal(false);
-      Alert.alert('已恢复默认', '已重置为系统预置的 Grok 智能创作模型');
+      Alert.alert('已恢复默认', '已重置为系统预置的 Gemini 3.8 Flash 智能创作模型');
     } catch (e: any) {
       Alert.alert('重置失败', e.message || '网络异常');
     } finally {

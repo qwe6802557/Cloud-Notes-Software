@@ -19,6 +19,7 @@ import Markdown from 'react-native-markdown-display';
 import { streamAICall, getAIConfig } from '../api/aiApi';
 
 const SYSTEM_MODEL_LABELS: Record<string, string> = {
+  'gemini-3.8-flash-high': 'Gemini 3.8 Flash',
   'grok-chat-fast': 'grok-chat-fast',
   'glm-4-flash': 'GLM-4-Flash',
   'deepseek-ai/DeepSeek-R1-Distill-Qwen-7B': 'DeepSeek-R1 蒸馏',

@@ -54,7 +54,7 @@ async function run() {
                 fs.rmSync(distDir, { recursive: true, force: true });
             }
 
-            execSync('npx expo export --platform android', {
+            execSync('npx expo export --platform android --no-bytecode', {
                 cwd: mobileRoot,
                 stdio: 'inherit'
             });

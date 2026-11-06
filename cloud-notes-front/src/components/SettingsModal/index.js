@@ -36,6 +36,14 @@ import './index.less';
 
 const FEATURED_SYSTEM_MODELS = [
     {
+        id: 'gemini-3.8-flash-high',
+        name: 'Gemini 3.8 Flash',
+        badge: '高规首选',
+        badgeColor: 'blue',
+        icon: <ThunderboltOutlined style={{ color: '#2563eb' }} />,
+        desc: 'Google 旗舰极速大模型，兼备毫秒级首字推流与高阶逻辑推理'
+    },
+    {
         id: 'grok-chat-fast',
         name: 'Grok 极速创作',
         badge: '高速推荐',
@@ -104,7 +112,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
     const [avatarUrl, setAvatarUrl] = useState('');
     const [testingAI, setTestingAI] = useState(false);
     const [testResult, setTestResult] = useState(null);
-    const [systemModel, setSystemModel] = useState('grok-chat-fast');
+    const [systemModel, setSystemModel] = useState('gemini-3.8-flash-high');
     const [vaultStatus, setVaultStatus] = useState({ enabled: false, hint: '' });
     const [vaultLoading, setVaultLoading] = useState(false);
     const [isChangingVaultPin, setIsChangingVaultPin] = useState(false);
@@ -164,17 +172,17 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                 aiBaseUrl: '',
                 aiApiKey: '',
                 aiModel: '',
-                aiSystemModel: 'grok-chat-fast'
+                aiSystemModel: 'gemini-3.8-flash-high'
             });
             setAvatarUrl(currentUser.avatar || '');
             setActiveTab('profile');
             setTestResult(null);
-            setSystemModel('grok-chat-fast');
+            setSystemModel('gemini-3.8-flash-high');
 
             getAIConfig().then(res => {
                 if (res) {
                     setCachedAIConfig(res);
-                    const loadedSystemModel = res.systemModel || 'grok-chat-fast';
+                    const loadedSystemModel = res.systemModel || 'gemini-3.8-flash-high';
                     form.setFieldsValue({
                         aiEnabled: Boolean(res.enabled),
                         aiBaseUrl: res.baseUrl || '',
@@ -293,7 +301,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                     baseUrl: (values.aiBaseUrl || '').trim(),
                     apiKey: (values.aiApiKey || '').trim(),
                     model: (values.aiModel || '').trim(),
-                    systemModel: values.aiSystemModel || systemModel || 'grok-chat-fast'
+                    systemModel: values.aiSystemModel || systemModel || 'gemini-3.8-flash-high'
                 };
                 await updateAIConfig(aiPayload);
                 setCachedAIConfig(aiPayload);
@@ -842,7 +850,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
 
                                 <div className="ai-models-grid">
                                     {FEATURED_SYSTEM_MODELS.map(item => {
-                                        const isSelected = (systemModel || 'grok-chat-fast') === item.id;
+                                        const isSelected = (systemModel || 'gemini-3.8-flash-high') === item.id;
                                         return (
                                             <div
                                                 key={item.id}

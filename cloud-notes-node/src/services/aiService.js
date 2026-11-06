@@ -18,7 +18,7 @@ const resolveAIConfig = user => {
     return {
         apiKey: config.ai.defaultApiKey,
         baseUrl: config.ai.defaultBaseUrl.replace(/\/+$/, ''),
-        model: selectedSystemModel || config.ai.defaultModel || 'grok-chat-fast',
+        model: selectedSystemModel || config.ai.defaultModel || 'gemini-3.8-flash-high',
         isCustom: false
     };
 };
