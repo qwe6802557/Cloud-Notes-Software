@@ -37,7 +37,8 @@ import {
     CloudUploadOutlined,
     ApartmentOutlined,
     LockOutlined,
-    LockFilled
+    LockFilled,
+    LinkOutlined
 } from '@ant-design/icons';
 import {
     getNotebooks,
@@ -58,6 +59,7 @@ import {
 import { getUser } from '@/utils/auth';
 import { verifyVault } from '@/api/vault';
 import SettingsModal from '@/components/SettingsModal';
+import ContextMenu from '@/components/ContextMenu';
 import './index.less';
 
 const SYSTEM_VIEWS = [
@@ -301,6 +303,11 @@ const NavTree = forwardRef(({
         y: 0,
         node: null
     });
+
+    // 外部文件拖拽批量导入状态 (P5)
+    const [hoveredDropNodeKey, setHoveredDropNodeKey] = useState(null);
+    const [isExternalDragOver, setIsExternalDragOver] = useState(false);
+    const externalDragCounterRef = useRef(0);
 
     const [modal, contextHolder] = Modal.useModal();
     const user = getUser();
@@ -1304,7 +1311,73 @@ const NavTree = forwardRef(({
         }
     };
 
-    // 右键上下文菜单项
+    // 外部文件批量导入为笔记处理引擎 (P5)
+    const importExternalFiles = useCallback(async (fileList, targetParentId = null) => {
+        const files = Array.from(fileList || []).filter(Boolean);
+        if (files.length === 0) return;
+
+        const validNoteFiles = files.filter(f => {
+            const ext = (f.name || '').split('.').pop().toLowerCase();
+            return ['md', 'markdown', 'txt'].includes(ext);
+        });
+
+        if (validNoteFiles.length === 0) {
+            message.info('目录树仅支持直接导入 .md / .txt 文本笔记文件');
+            return;
+        }
+
+        const activeNotebook = selectedNotebook || (notebooks.length > 0 ? (notebooks[0].id || notebooks[0]._id) : null);
+        if (!activeNotebook) {
+            message.warning('请先创建或选择笔记本');
+            return;
+        }
+
+        const hideLoading = message.loading(`正在批量导入 ${validNoteFiles.length} 篇笔记...`, 0);
+        let createdCount = 0;
+        let lastCreatedNote = null;
+
+        try {
+            for (const file of validNoteFiles) {
+                const title = file.name.replace(/\.(md|markdown|txt)$/i, '') || '无标题笔记';
+                let content = '';
+                try {
+                    content = await file.text();
+                } catch {
+                    content = '';
+                }
+
+                const res = await createNote({
+                    title,
+                    content,
+                    notebookId: activeNotebook,
+                    type: 'note',
+                    parentId: targetParentId && targetParentId !== 'root' ? targetParentId : null
+                });
+
+                const createdNote = res?.note || res?.data?.note || res?.data;
+                if (createdNote) {
+                    lastCreatedNote = createdNote;
+                    createdCount++;
+                }
+            }
+
+            message.success(`成功导入 ${createdCount} 篇笔记`);
+            await loadNotebookTree(activeNotebook);
+
+            if (lastCreatedNote) {
+                const noteId = lastCreatedNote.id || lastCreatedNote._id;
+                if (noteId && setSelectedNote) {
+                    setSelectedNote(noteId);
+                }
+            }
+        } catch (err) {
+            message.error(`导入失败: ${err?.message || '网络异常'}`);
+        } finally {
+            hideLoading();
+        }
+    }, [selectedNotebook, notebooks, loadNotebookTree, setSelectedNote]);
+
+    // 右键上下文菜单项 (使用统一 ContextMenu 组件)
     const renderContextMenu = () => {
         const node = contextMenu.node;
         if (!contextMenu.visible || !node) {
@@ -1334,6 +1407,16 @@ const NavTree = forwardRef(({
                     label: node.isStarred ? '取消收藏' : '收藏笔记',
                     onClick: () => handleToggleStar(node)
                 },
+                {
+                    key: 'copy-link',
+                    icon: <LinkOutlined style={{ color: '#2563eb' }} />,
+                    label: '复制双链引用',
+                    shortcut: `[[${node.title}]]`,
+                    onClick: () => {
+                        navigator.clipboard.writeText(`[[${node.title}]]`);
+                        message.success(`已复制双链引用: [[${node.title}]]`);
+                    }
+                },
                 { type: 'divider' }
             ]),
             {
@@ -1352,35 +1435,20 @@ const NavTree = forwardRef(({
             {
                 key: 'delete',
                 icon: <DeleteOutlined />,
-                label: <span style={{ color: '#dc2626' }}>删除</span>,
+                danger: true,
+                label: '删除',
                 onClick: () => handleDelete(node)
             }
         ];
 
         return (
-            <div
-                className="custom-context-menu"
-                style={{ top: contextMenu.y, left: contextMenu.x }}
-            >
-                {menuItems.map((item, idx) => {
-                    if (item.type === 'divider') {
-                        return <div key={`div-${idx}`} className="context-menu-divider" />;
-                    }
-                    return (
-                        <div
-                            key={item.key}
-                            className="context-menu-item"
-                            onClick={e => {
-                                e.stopPropagation();
-                                item.onClick();
-                            }}
-                        >
-                            <span className="item-icon">{item.icon}</span>
-                            <span className="item-label">{item.label}</span>
-                        </div>
-                    );
-                })}
-            </div>
+            <ContextMenu
+                open={contextMenu.visible}
+                x={contextMenu.x}
+                y={contextMenu.y}
+                onClose={() => setContextMenu(prev => ({ ...prev, visible: false }))}
+                items={menuItems}
+            />
         );
     };
 
@@ -1439,7 +1507,33 @@ const NavTree = forwardRef(({
 
         return (
             <div
-                className={`tree-node-row ${isFolder ? 'is-folder' : 'is-note'} ${isSelected ? 'is-selected' : ''}`}
+                className={`tree-node-row ${isFolder ? 'is-folder' : 'is-note'} ${isSelected ? 'is-selected' : ''} ${hoveredDropNodeKey === nodeData.key ? 'is-external-drop-target' : ''}`}
+                onDragOver={e => {
+                    if (e.dataTransfer?.types?.includes('Files')) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (hoveredDropNodeKey !== nodeData.key) {
+                            setHoveredDropNodeKey(nodeData.key);
+                        }
+                    }
+                }}
+                onDragLeave={e => {
+                    if (e.dataTransfer?.types?.includes('Files')) {
+                        e.preventDefault();
+                        if (hoveredDropNodeKey === nodeData.key) {
+                            setHoveredDropNodeKey(null);
+                        }
+                    }
+                }}
+                onDrop={async e => {
+                    if (!e.dataTransfer?.types?.includes('Files')) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setHoveredDropNodeKey(null);
+                    setIsExternalDragOver(false);
+                    const targetParentId = isFolder ? nodeData.key : (nodeData.parentId || null);
+                    await importExternalFiles(e.dataTransfer.files, targetParentId);
+                }}
                 onContextMenu={e => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -1629,7 +1723,46 @@ const NavTree = forwardRef(({
                     </div>
 
                     {/* 树核心滚动区 */}
-                    <div className="tree-scroll-container" ref={treeScrollContainerRef}>
+                    <div
+                        className={`tree-scroll-container ${isExternalDragOver ? 'is-external-drag-over' : ''}`}
+                        ref={treeScrollContainerRef}
+                        onDragEnter={e => {
+                            if (e.dataTransfer?.types?.includes('Files')) {
+                                e.preventDefault();
+                                externalDragCounterRef.current += 1;
+                                setIsExternalDragOver(true);
+                            }
+                        }}
+                        onDragOver={e => {
+                            if (e.dataTransfer?.types?.includes('Files')) {
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = 'copy';
+                            }
+                        }}
+                        onDragLeave={e => {
+                            if (e.dataTransfer?.types?.includes('Files')) {
+                                e.preventDefault();
+                                externalDragCounterRef.current = Math.max(0, externalDragCounterRef.current - 1);
+                                if (externalDragCounterRef.current === 0) {
+                                    setIsExternalDragOver(false);
+                                }
+                            }
+                        }}
+                        onDrop={async e => {
+                            if (!e.dataTransfer?.types?.includes('Files')) return;
+                            e.preventDefault();
+                            externalDragCounterRef.current = 0;
+                            setIsExternalDragOver(false);
+                            setHoveredDropNodeKey(null);
+                            await importExternalFiles(e.dataTransfer.files, null);
+                        }}
+                    >
+                        {isExternalDragOver && (
+                            <div className="external-drag-hint-banner">
+                                <FileMarkdownOutlined style={{ marginRight: 6 }} />
+                                释放以导入为 Markdown 笔记
+                            </div>
+                        )}
                         {viewType === 'stash' ? (
                             <div style={{ padding: '36px 16px', textAlign: 'center' }}>
                                 <div style={{

@@ -1,0 +1,170 @@
+.stitch-context-menu-wrapper {
+  display: contents;
+}
+
+.stitch-context-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 170px;
+  max-width: 280px;
+  padding: 4px;
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
+  user-select: none;
+  animation: fadeInContextMenu 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+  .stitch-menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #334155;
+    cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease;
+
+    .item-left {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+
+      .item-icon {
+        display: inline-flex;
+        align-items: center;
+        font-size: 14px;
+        color: #64748b;
+        flex-shrink: 0;
+      }
+
+      .item-label {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+    }
+
+    .item-shortcut {
+      font-size: 11px;
+      font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
+      color: #94a3b8;
+      flex-shrink: 0;
+      letter-spacing: 0.5px;
+    }
+
+    &:hover {
+      background-color: #f1f5f9;
+      color: #0f172a;
+
+      .item-left .item-icon {
+        color: #2563eb;
+      }
+    }
+
+    &.is-danger {
+      color: #dc2626;
+
+      .item-left .item-icon {
+        color: #dc2626;
+      }
+
+      &:hover {
+        background-color: #fef2f2;
+        color: #b91c1c;
+
+        .item-left .item-icon {
+          color: #b91c1c;
+        }
+      }
+    }
+
+    &.is-disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+
+      &:hover {
+        background-color: transparent;
+        color: #334155;
+      }
+    }
+  }
+
+  .stitch-menu-divider {
+    height: 1px;
+    background-color: #f1f5f9;
+    margin: 4px 6px;
+  }
+}
+
+// 墨炭深色体系适配 (Google Stitch Taste)
+html[data-theme='dark'] .stitch-context-menu {
+  background-color: #0f172a;
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.4), 0 2px 8px -1px rgba(0, 0, 0, 0.2);
+
+  .stitch-menu-item {
+    color: #e2e8f0;
+
+    .item-left .item-icon {
+      color: #94a3b8;
+    }
+
+    .item-shortcut {
+      color: #64748b;
+    }
+
+    &:hover {
+      background-color: #1e293b;
+      color: #ffffff;
+
+      .item-left .item-icon {
+        color: #38bdf8;
+      }
+    }
+
+    &.is-danger {
+      color: #f87171;
+
+      .item-left .item-icon {
+        color: #f87171;
+      }
+
+      &:hover {
+        background-color: rgba(220, 38, 38, 0.15);
+        color: #fca5a5;
+      }
+    }
+
+    &.is-disabled {
+      opacity: 0.35;
+
+      &:hover {
+        background-color: transparent;
+        color: #e2e8f0;
+      }
+    }
+  }
+
+  .stitch-menu-divider {
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+}
+
+@keyframes fadeInContextMenu {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

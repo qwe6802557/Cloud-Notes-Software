@@ -325,6 +325,13 @@ function createWindow() {
         }
     });
 
+    // 生产环境拦截 Chromium 默认右键菜单，消除浏览器调试残留，由应用渲染层统一接管
+    mainWindow.webContents.on('context-menu', event => {
+        if (!isDev) {
+            event.preventDefault();
+        }
+    });
+
     if (isDev) {
         mainWindow.webContents.openDevTools();
     }

@@ -1,0 +1,100 @@
+.editor-dropzone-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background-color: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: fadeInDropOverlay 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+
+  .dropzone-box {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    max-width: 640px;
+    max-height: 380px;
+    border: 2px dashed #2563eb;
+    border-radius: 12px;
+    background-color: rgba(37, 99, 235, 0.03);
+    padding: 32px 24px;
+    text-align: center;
+    user-select: none;
+    box-shadow: 0 12px 32px -4px rgba(37, 99, 235, 0.08);
+
+    .dropzone-icon-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background-color: rgba(37, 99, 235, 0.08);
+      margin-bottom: 16px;
+
+      .dropzone-icon {
+        font-size: 32px;
+        color: #2563eb;
+      }
+    }
+
+    .dropzone-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #0f172a;
+      margin-bottom: 8px;
+      letter-spacing: -0.2px;
+    }
+
+    .dropzone-subtitle {
+      font-size: 13px;
+      color: #64748b;
+      line-height: 1.5;
+    }
+  }
+}
+
+// 墨炭深色体系适配
+html[data-theme='dark'] .editor-dropzone-overlay {
+  background-color: rgba(15, 23, 42, 0.88);
+
+  .dropzone-box {
+    border-color: #38bdf8;
+    background-color: rgba(56, 189, 248, 0.04);
+    box-shadow: 0 12px 32px -4px rgba(0, 0, 0, 0.4);
+
+    .dropzone-icon-wrap {
+      background-color: rgba(56, 189, 248, 0.12);
+
+      .dropzone-icon {
+        color: #38bdf8;
+      }
+    }
+
+    .dropzone-title {
+      color: #f8fafc;
+    }
+
+    .dropzone-subtitle {
+      color: #94a3b8;
+    }
+  }
+}
+
+@keyframes fadeInDropOverlay {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

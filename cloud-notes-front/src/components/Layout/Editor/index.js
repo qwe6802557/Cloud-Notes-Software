@@ -53,15 +53,19 @@ import 'bytemd/dist/index.css';
 import 'highlight.js/styles/github.css';
 import 'katex/dist/katex.css';
 import './index.less';
+import dayjs from 'dayjs';
 import { getNoteDetail, suggestNoteLinks, createNote, exportNoteZip } from '@/api/notes';
 import { executePrintPdfExport } from '@/utils/export/printPdfExport';
 import { executeLongImageExport } from '@/utils/export/longImageExport';
 import { uploadNoteImage } from '@/api/upload';
+import { uploadStashFile } from '@/api/stash';
 import { getEditorPreferences, setEditorPreferences } from '@/utils/preferences';
 import TOCDrawer from './TOCDrawer';
 import VersionHistoryModal from './VersionHistoryModal';
 import SelectionCopyBubble from './SelectionCopyBubble';
 import AIFullNoteModal from './AIFullNoteModal';
+import EditorContextMenu from './EditorContextMenu';
+import DropzoneOverlay from './DropzoneOverlay';
 import RAGChatDrawer from '../RAGChat/RAGChatDrawer';
 import lazyImagePlugin from './plugins/lazyImagePlugin';
 import wikiLinkPlugin from './plugins/wikiLinkPlugin';
@@ -336,7 +340,7 @@ const isAllowedImageFile = file => {
     return ALLOWED_IMAGE_EXTENSIONS.has(getFileExtension(file.name || ''));
 };
 
-const createEditorContextPlugin = (editorContextRef, onHandleImageFiles) => ({
+const createEditorContextPlugin = (editorContextRef, onHandleDroppedFiles) => ({
     editorEffect(ctx) {
         editorContextRef.current = ctx;
 
@@ -352,7 +356,7 @@ const createEditorContextPlugin = (editorContextRef, onHandleImageFiles) => ({
             }
 
             event.preventDefault();
-            await onHandleImageFiles(files, { showSuccess: false });
+            await onHandleDroppedFiles(files);
         };
 
         const handleDrop = async (_, event) => {
@@ -363,7 +367,7 @@ const createEditorContextPlugin = (editorContextRef, onHandleImageFiles) => ({
             }
 
             event.preventDefault();
-            await onHandleImageFiles(files, { showSuccess: false });
+            await onHandleDroppedFiles(files);
         };
 
         ctx.editor.on('paste', handlePaste);
@@ -1298,6 +1302,244 @@ const NoteEditor = ({
         }
     };
 
+    // 多格式外部拖拽与粘贴分流引擎 (P5)
+    const handleSmartDroppedFiles = useCallback(async files => {
+        if (!selectedNote) {
+            message.warning('请先选择一个笔记');
+            return;
+        }
+
+        const fileArray = Array.from(files || []).filter(Boolean);
+        if (fileArray.length === 0) return;
+
+        const imageFiles = [];
+        const textFiles = [];
+        const attachmentFiles = [];
+
+        fileArray.forEach(file => {
+            const ext = getFileExtension(file.name || '');
+            if (ALLOWED_IMAGE_EXTENSIONS.has(ext) || (file.type && ALLOWED_IMAGE_TYPES.has(file.type))) {
+                imageFiles.push(file);
+            } else if (['md', 'markdown', 'txt'].includes(ext)) {
+                textFiles.push(file);
+            } else {
+                attachmentFiles.push(file);
+            }
+        });
+
+        // 1. 图片格式：上传并插入 Markdown 图片语法
+        if (imageFiles.length > 0) {
+            await handleImageFiles(imageFiles, { showSuccess: true });
+        }
+
+        // 2. 文本格式 (Markdown/Txt)：读取文本并插入到光标处
+        if (textFiles.length > 0) {
+            for (const file of textFiles) {
+                try {
+                    const text = await file.text();
+                    if (text) {
+                        insertTextAtCursor(`\n${text}\n`);
+                        message.success(`已插入 "${file.name}" 文本内容`);
+                    }
+                } catch (err) {
+                    message.error(`读取 "${file.name}" 失败: ${err.message}`);
+                }
+            }
+        }
+
+        // 3. 通用附件格式 (PDF/Office/Zip等)：上传至永久暂存并插入 Markdown 附件直链
+        if (attachmentFiles.length > 0) {
+            const hideLoading = message.loading(`正在上传 ${attachmentFiles.length} 个附件...`, 0);
+            try {
+                for (const file of attachmentFiles) {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('storageType', 'permanent');
+                    const res = await uploadStashFile(formData);
+                    const fileData = res?.data || res;
+                    const fileUrl = fileData?.url;
+                    const sizeStr = file.size > 1024 * 1024
+                        ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
+                        : `${Math.round(file.size / 1024)} KB`;
+                    if (fileUrl) {
+                        insertTextAtCursor(`\n[📎 ${file.name} (${sizeStr})](${fileUrl})\n`);
+                        message.success(`已插入附件: ${file.name}`);
+                    }
+                }
+            } catch (err) {
+                message.error(`附件上传失败: ${err?.message || '网络异常'}`);
+            } finally {
+                hideLoading();
+            }
+        }
+    }, [handleImageFiles, insertTextAtCursor, selectedNote]);
+
+    // 编辑区外部文件拖拽状态
+    const [isEditorDragOver, setIsEditorDragOver] = useState(false);
+    const editorDragCounterRef = useRef(0);
+
+    const handleEditorDragEnter = useCallback(e => {
+        if (e.dataTransfer?.types?.includes('Files')) {
+            e.preventDefault();
+            editorDragCounterRef.current += 1;
+            setIsEditorDragOver(true);
+        }
+    }, []);
+
+    const handleEditorDragOver = useCallback(e => {
+        if (e.dataTransfer?.types?.includes('Files')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        }
+    }, []);
+
+    const handleEditorDragLeave = useCallback(e => {
+        if (e.dataTransfer?.types?.includes('Files')) {
+            e.preventDefault();
+            editorDragCounterRef.current = Math.max(0, editorDragCounterRef.current - 1);
+            if (editorDragCounterRef.current === 0) {
+                setIsEditorDragOver(false);
+            }
+        }
+    }, []);
+
+    const handleEditorDrop = useCallback(async e => {
+        if (e.dataTransfer?.types?.includes('Files')) {
+            e.preventDefault();
+            editorDragCounterRef.current = 0;
+            setIsEditorDragOver(false);
+            const files = Array.from(e.dataTransfer?.files || []).filter(Boolean);
+            if (files.length > 0) {
+                await handleSmartDroppedFiles(files);
+            }
+        }
+    }, [handleSmartDroppedFiles]);
+
+    // 编辑器右键上下文菜单状态
+    const [editorContextMenu, setEditorContextMenu] = useState({
+        open: false,
+        x: 0,
+        y: 0,
+        selectedText: '',
+        targetImg: null
+    });
+
+    const handleEditorContextMenu = useCallback(e => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        const cm = editorContextRef.current?.editor;
+        const selected = cm?.getSelection?.() || window.getSelection()?.toString() || '';
+        const targetImg = e.target.tagName === 'IMG' ? e.target : null;
+
+        setEditorContextMenu({
+            open: true,
+            x: e.clientX,
+            y: e.clientY,
+            selectedText: selected,
+            targetImg
+        });
+    }, []);
+
+    const handleCloseEditorContextMenu = useCallback(() => {
+        setEditorContextMenu(prev => ({ ...prev, open: false, targetImg: null }));
+    }, []);
+
+    const handleEditorCut = useCallback(() => {
+        const cm = editorContextRef.current?.editor;
+        if (cm && cm.getSelection()) {
+            const text = cm.getSelection();
+            navigator.clipboard.writeText(text);
+            cm.replaceSelection('');
+            syncContentFromEditor(cm);
+            message.success('已剪切');
+        }
+    }, [syncContentFromEditor]);
+
+    const handleEditorCopy = useCallback(() => {
+        const cm = editorContextRef.current?.editor;
+        const text = cm?.getSelection?.() || window.getSelection()?.toString() || '';
+        if (text) {
+            navigator.clipboard.writeText(text);
+            message.success('已复制');
+        }
+    }, []);
+
+    const handleEditorPaste = useCallback(async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text) {
+                insertTextAtCursor(text);
+            }
+        } catch {
+            message.warning('请使用快捷键 Ctrl+V 进行粘贴');
+        }
+    }, [insertTextAtCursor]);
+
+    const handleEditorUndo = useCallback(() => {
+        editorContextRef.current?.editor?.undo?.();
+    }, []);
+
+    const handleEditorRedo = useCallback(() => {
+        editorContextRef.current?.editor?.redo?.();
+    }, []);
+
+    const handleEditorSelectAll = useCallback(() => {
+        editorContextRef.current?.editor?.execCommand?.('selectAll');
+    }, []);
+
+    const handleEditorFormat = useCallback(type => {
+        const cm = editorContextRef.current?.editor;
+        if (!cm) return;
+        const selected = cm.getSelection();
+        if (!selected) return;
+
+        if (type === 'bold') {
+            cm.replaceSelection(`**${selected}**`);
+        } else if (type === 'code') {
+            cm.replaceSelection(`\`${selected}\``);
+        } else if (type === 'wikilink') {
+            cm.replaceSelection(`[[${selected}]]`);
+        }
+        syncContentFromEditor(cm);
+    }, [syncContentFromEditor]);
+
+    const handleEditorInsertTimestamp = useCallback(() => {
+        insertTextAtCursor(dayjs().format('YYYY-MM-DD HH:mm:ss'));
+    }, [insertTextAtCursor]);
+
+    const handleEditorInsertDivider = useCallback(() => {
+        insertTextAtCursor('\n\n---\n\n');
+    }, [insertTextAtCursor]);
+
+    const handleEditorAIAction = useCallback(action => {
+        if (!selectedNote) return;
+        if (action === 'polish') {
+            setAiModalAction('rewrite');
+            setAiModalVisible(true);
+        } else if (action === 'summary') {
+            setAiModalAction('full_summary');
+            setAiModalVisible(true);
+        }
+    }, [selectedNote]);
+
+    const handleEditorCopyImageUrl = useCallback(() => {
+        if (editorContextMenu.targetImg?.src) {
+            navigator.clipboard.writeText(editorContextMenu.targetImg.src);
+            message.success('已复制图片直链');
+        }
+    }, [editorContextMenu.targetImg]);
+
+    const handleEditorPreviewImage = useCallback(() => {
+        if (editorContextMenu.targetImg?.src) {
+            setImagePreview({
+                visible: true,
+                images: [{ url: editorContextMenu.targetImg.src, alt: editorContextMenu.targetImg.alt || '图片预览' }],
+                current: 0
+            });
+        }
+    }, [editorContextMenu.targetImg]);
+
     // 代理 Markdown 渲染区图片点击，组装画廊并呼出全功能预览器
     const handlePreviewContainerClick = useCallback(event => {
         const target = event.target;
@@ -1968,9 +2210,9 @@ const NoteEditor = ({
     const editorPlugins = useMemo(() => {
         return [
             ...basePlugins,
-            createEditorContextPlugin(editorContextRef, handleImageFiles)
+            createEditorContextPlugin(editorContextRef, handleSmartDroppedFiles)
         ];
-    }, [handleImageFiles]);
+    }, [handleSmartDroppedFiles]);
 
     const moreMenu = {
         items: [
@@ -2535,7 +2777,15 @@ const NoteEditor = ({
                         ) : (
                             renderToolbar()
                         )}
-                        <div className="primary-editor-scroll-area">
+                        <div
+                            className="primary-editor-scroll-area"
+                            onDragEnter={handleEditorDragEnter}
+                            onDragOver={handleEditorDragOver}
+                            onDragLeave={handleEditorDragLeave}
+                            onDrop={handleEditorDrop}
+                            onContextMenu={handleEditorContextMenu}
+                        >
+                            <DropzoneOverlay visible={isEditorDragOver} />
                             {isVaultLocked && selectedNote ? (
                                 <VaultUnlockCard
                                     onUnlockSuccess={async (derivedKey) => {
@@ -2606,6 +2856,26 @@ const NoteEditor = ({
                             </Spin>
                             )}
                         </div>
+                        <EditorContextMenu
+                            open={editorContextMenu.open}
+                            x={editorContextMenu.x}
+                            y={editorContextMenu.y}
+                            onClose={handleCloseEditorContextMenu}
+                            selectedText={editorContextMenu.selectedText}
+                            targetImg={editorContextMenu.targetImg}
+                            onCut={handleEditorCut}
+                            onCopy={handleEditorCopy}
+                            onPaste={handleEditorPaste}
+                            onUndo={handleEditorUndo}
+                            onRedo={handleEditorRedo}
+                            onSelectAll={handleEditorSelectAll}
+                            onFormat={handleEditorFormat}
+                            onInsertTimestamp={handleEditorInsertTimestamp}
+                            onInsertDivider={handleEditorInsertDivider}
+                            onAIAction={handleEditorAIAction}
+                            onCopyImageUrl={handleEditorCopyImageUrl}
+                            onPreviewImage={handleEditorPreviewImage}
+                        />
                     </div>
 
                     {splitActive && (

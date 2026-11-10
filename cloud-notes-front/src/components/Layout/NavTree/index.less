@@ -193,10 +193,32 @@
   }
 
   .tree-scroll-container {
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding: 8px 8px;
+
+    &.is-external-drag-over {
+      background-color: rgba(37, 99, 235, 0.02);
+      outline: 2px dashed #2563eb;
+      outline-offset: -3px;
+    }
+
+    .external-drag-hint-banner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 32px;
+      margin-bottom: 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #2563eb;
+      background-color: #eff6ff;
+      border: 1px dashed #bfdbfe;
+      animation: fadeInDropzone 0.15s ease;
+    }
 
     &::-webkit-scrollbar {
       width: 4px;
@@ -363,6 +385,12 @@
           background-color: #f1f5f9;
         }
 
+        &.is-external-drop-target {
+          background-color: #eff6ff !important;
+          outline: 1.5px dashed #2563eb !important;
+          outline-offset: -1.5px;
+        }
+
         .node-content-left {
           flex: 1;
           min-width: 0;
@@ -511,6 +539,12 @@
 
         &:hover {
           background-color: #f1f5f9;
+        }
+
+        &.is-external-drop-target {
+          background-color: #eff6ff !important;
+          outline: 1.5px dashed #2563eb !important;
+          outline-offset: -1.5px;
         }
 
         &.is-selected {
@@ -718,6 +752,22 @@
         background-color: #1e293b;
         color: #ffffff;
       }
+    }
+
+    .tree-scroll-container.is-external-drag-over {
+      background-color: rgba(56, 189, 248, 0.04);
+      outline-color: #38bdf8;
+
+      .external-drag-hint-banner {
+        color: #38bdf8;
+        background-color: rgba(56, 189, 248, 0.12);
+        border-color: rgba(56, 189, 248, 0.3);
+      }
+    }
+
+    .tree-node-row.is-external-drop-target {
+      background-color: rgba(56, 189, 248, 0.15) !important;
+      outline-color: #38bdf8 !important;
     }
 
     .nav-context-menu {

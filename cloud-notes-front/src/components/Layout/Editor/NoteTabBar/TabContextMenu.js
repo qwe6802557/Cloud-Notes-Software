@@ -1,5 +1,6 @@
 import React from 'react';
-import { Dropdown, message } from 'antd';
+import { message } from 'antd';
+import ContextMenu from '@/components/ContextMenu';
 import {
     CloseOutlined,
     CloseCircleOutlined,
@@ -80,9 +81,9 @@ const TabContextMenu = ({
     ];
 
     return (
-        <Dropdown menu={{ items: menuItems }} trigger={['contextMenu']}>
+        <ContextMenu items={menuItems}>
             {children}
-        </Dropdown>
+        </ContextMenu>
     );
 };
 
