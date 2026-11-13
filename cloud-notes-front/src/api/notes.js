@@ -83,40 +83,53 @@ export const getNoteDetail = noteId => {
     });
 };
 
-// 创建笔记
-export const createNote = data => {
+/**
+ * 创建笔记（支持携带幂等键 clientId 防离线重放重复创建）
+ * @param {Object} data
+ * @param {Object} [config]
+ */
+export const createNote = (data, config = {}) => {
     return request({
         url: '/notes',
         method: 'post',
-        data
+        data,
+        ...config
     });
 };
 
-// 更新笔记
-export const updateNote = (noteId, data) => {
+/**
+ * 更新笔记（支持 expectedVersion / force / saveType 乐观锁与版本策略）
+ * @param {string} noteId
+ * @param {Object} data
+ * @param {Object} [config] - 可传 { skipErrorToast: true } 等 Axios 配置
+ */
+export const updateNote = (noteId, data, config = {}) => {
     return request({
         url: `/notes/${noteId}`,
         method: 'put',
-        data
+        data,
+        ...config
     });
 };
 
 // 更新笔记收藏
-export const updateNoteStarred = (noteId, isStarred) => {
+export const updateNoteStarred = (noteId, isStarred, config = {}) => {
     return request({
         url: `/notes/${noteId}/starred`,
         method: 'put',
         data: {
             isStarred
-        }
+        },
+        ...config
     });
 };
 
 // 删除笔记
-export const deleteNote = noteId => {
+export const deleteNote = (noteId, config = {}) => {
     return request({
         url: `/notes/${noteId}`,
-        method: 'delete'
+        method: 'delete',
+        ...config
     });
 };
 
@@ -129,11 +142,12 @@ export const restoreNote = noteId => {
 };
 
 // 移动笔记或目录
-export const moveNoteNode = (noteId, data) => {
+export const moveNoteNode = (noteId, data, config = {}) => {
     return request({
         url: `/notes/${noteId}/move`,
         method: 'put',
-        data
+        data,
+        ...config
     });
 };
 
@@ -219,6 +233,19 @@ export const syncNoteIndex = params => {
         url: '/notes/index-sync',
         method: 'get',
         params
+    });
+};
+
+/**
+ * 游标增量拉取全库笔记与笔记本变更（供多端同步与本地目录镜像服务使用）
+ * @param {Object} [params] - { since, cursorId, limit, includeContent }
+ */
+export const deltaSyncNotes = (params = {}, config = {}) => {
+    return request({
+        url: '/notes/delta-sync',
+        method: 'get',
+        params,
+        ...config
     });
 };
 

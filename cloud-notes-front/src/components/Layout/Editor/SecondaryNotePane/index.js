@@ -19,13 +19,17 @@ import {
     CloseOutlined,
     SearchOutlined,
     BookOutlined,
-    CheckCircleOutlined
+    CheckCircleOutlined,
+    LockOutlined
 } from '@ant-design/icons';
 import zhHans from 'bytemd/locales/zh_Hans.json';
 import zhHansMermaid from '@bytemd/plugin-mermaid/locales/zh_Hans.json';
 import zhHansGfm from '@bytemd/plugin-gfm/locales/zh_Hans.json';
 import zhHansMath from '@bytemd/plugin-math/locales/zh_Hans.json';
-import { getNoteDetail, updateNote, getRecentNotes, suggestNoteLinks } from '@/api/notes';
+import { getNoteDetail, getRecentNotes, suggestNoteLinks } from '@/api/notes';
+import syncManager from '@/utils/storage/syncManager';
+import { prepareNoteSavePayload, decryptNoteInMemory } from '@/utils/noteCryptoHelper';
+import { hasSessionKey, subscribeVaultLock } from '@/utils/cryptoVault';
 import lazyImagePlugin from '../plugins/lazyImagePlugin';
 import wikiLinkPlugin from '../plugins/wikiLinkPlugin';
 import NoteTabBar from '../NoteTabBar';
@@ -63,7 +67,9 @@ const SecondaryNotePane = ({
     onOpenInOppositePane,
     onReorderTabs,
     onCrossPaneDrop,
-    onCreateTab
+    onCreateTab,
+    onDirtyChange,
+    onOpenConflict
 }) => {
     const [loading, setLoading] = useState(false);
     const [noteData, setNoteData] = useState(null);
@@ -71,6 +77,11 @@ const SecondaryNotePane = ({
     const [editContent, setEditContent] = useState('');
     const [saving, setSaving] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
+    const [isVaultLocked, setIsVaultLocked] = useState(false);
+    const isDirtyRef = useRef(false);
+    isDirtyRef.current = isDirty;
+    const savedSnapshotRef = useRef('');
+    const fetchSeqRef = useRef(0);
 
     // 空状态时的快速检索与最近笔记
     const [recentNotes, setRecentNotes] = useState([]);
@@ -94,23 +105,45 @@ const SecondaryNotePane = ({
         return chinese + words;
     };
 
-    // 加载目标笔记详情
+    // 加载目标笔记详情（带请求序号防并发竞态，支持端到端加密笔记内存解密）
     const fetchNote = useCallback(async (id) => {
+        const reqSeq = ++fetchSeqRef.current;
+
         if (!id) {
             setNoteData(null);
             setEditContent('');
+            savedSnapshotRef.current = '';
             setIsDirty(false);
+            setIsVaultLocked(false);
             return;
         }
 
         setLoading(true);
         try {
             const res = await getNoteDetail(id);
+            if (reqSeq !== fetchSeqRef.current) return;
+
             const data = res?.note || res?.data?.note || res?.data || res;
             if (data && (data._id || data.title)) {
-                setNoteData(data);
-                setEditContent(data.content || '');
+                const dec = await decryptNoteInMemory(data);
+                if (reqSeq !== fetchSeqRef.current) return;
+
+                setIsVaultLocked(Boolean(dec.locked));
+                const resolvedContent = dec.locked ? '' : dec.content;
+
+                setNoteData({ ...data, content: resolvedContent });
+                setEditContent(resolvedContent);
+                savedSnapshotRef.current = resolvedContent;
                 setIsDirty(false);
+
+                const resolvedId = data._id || data.id || id;
+                syncManager.setLastKnownRemoteUpdatedAt(
+                    resolvedId,
+                    data.updatedAt,
+                    data.isEncrypted ? (data.encryptedData || '') : (data.content || ''),
+                    data.contentVersion
+                );
+
                 if (data._id && data.title) {
                     window.dispatchEvent(
                         new CustomEvent('cloud-note-title-updated', {
@@ -122,16 +155,59 @@ const SecondaryNotePane = ({
                 message.warning('未能加载到该参考笔记');
             }
         } catch (err) {
-            console.error('加载参考笔记异常:', err);
-            message.error('加载参考笔记失败');
+            if (reqSeq === fetchSeqRef.current) {
+                console.error('加载参考笔记异常:', err);
+                message.error('加载参考笔记失败');
+            }
         } finally {
-            setLoading(false);
+            if (reqSeq === fetchSeqRef.current) {
+                setLoading(false);
+            }
         }
     }, []);
 
     useEffect(() => {
         fetchNote(noteId);
     }, [noteId, fetchNote]);
+
+    // 将副屏脏状态实时同步给标签页管理 Hook
+    useEffect(() => {
+        if (noteId && typeof onDirtyChange === 'function') {
+            onDirtyChange(noteId, isDirty);
+        }
+    }, [noteId, isDirty, onDirtyChange]);
+
+    // 监听私密保险箱解锁/锁定切换
+    useEffect(() => {
+        return subscribeVaultLock(unlocked => {
+            if (!noteData?.isEncrypted) return;
+            if (!unlocked) {
+                setIsVaultLocked(true);
+                setViewMode('preview');
+            } else if (noteId && !isDirtyRef.current) {
+                fetchNote(noteId);
+            }
+        });
+    }, [noteId, noteData?.isEncrypted, fetchNote]);
+
+    // 双栏同篇同步：主栏保存或冲突裁决完成后自动刷新副屏视图
+    useEffect(() => {
+        return syncManager.subscribeNoteEvents(async event => {
+            if (!noteId || event.noteId !== noteId || event.source === 'secondary') return;
+            if (event.type !== 'synced' && event.type !== 'resolved') return;
+            if (isDirtyRef.current && event.type !== 'resolved') return;
+
+            const incoming = event.note || event.draft;
+            if (!incoming) return;
+            const dec = await decryptNoteInMemory(incoming);
+            setIsVaultLocked(Boolean(dec.locked));
+            const nextContent = dec.locked ? '' : dec.content;
+            setNoteData(prev => (prev ? { ...prev, ...incoming, content: nextContent } : incoming));
+            setEditContent(nextContent);
+            savedSnapshotRef.current = nextContent;
+            setIsDirty(false);
+        });
+    }, [noteId]);
 
     // 当没有指定 noteId 时拉取最近笔记
     const fetchRecent = useCallback(async () => {
@@ -179,25 +255,71 @@ const SecondaryNotePane = ({
         }, 260);
     };
 
-    // 保存副栏编辑
+    // 保存副栏编辑（统一经由 syncManager + 加密管线，严格遵循 expectedVersion 与 409 显式冲突裁决）
     const handleSave = useCallback(async () => {
-        if (!noteData?._id) return;
+        const targetId = noteData?._id || noteData?.id;
+        if (!targetId) return;
+
+        if (noteData.isEncrypted && !hasSessionKey()) {
+            setIsVaultLocked(true);
+            message.warning('私密保险箱当前未解锁，无法加密保存');
+            return;
+        }
+
         setSaving(true);
         try {
-            await updateNote(noteData._id, {
+            const prep = await prepareNoteSavePayload({
                 title: noteData.title,
                 content: editContent,
-                notebookId: noteData.notebookId?._id || noteData.notebookId || selectedNotebook
+                isEncrypted: Boolean(noteData.isEncrypted),
+                expectedVersion: noteData.contentVersion ?? syncManager.getContentVersion(targetId),
+                baseUpdatedAt: noteData.updatedAt,
+                notebookId: noteData.notebookId?._id || noteData.notebookId || selectedNotebook,
+                source: 'secondary'
             });
+
+            if (!prep.ok) {
+                message.warning('私密保险箱当前未解锁，无法加密保存');
+                return;
+            }
+
+            const syncRes = await syncManager.syncNote(targetId, {
+                ...prep.payload,
+                saveType: 'manual'
+            }, { saveType: 'manual' });
+
+            if (syncRes?.conflict) {
+                setIsDirty(true);
+                message.warning('检测到云端存在更新版本，请在冲突裁决面板确认保留策略');
+                onOpenConflict?.(targetId);
+                return;
+            }
+
+            if (syncRes?.permanentError) {
+                message.error('副屏笔记保存被服务端拒绝，请检查权限或刷新');
+                return;
+            }
+
+            savedSnapshotRef.current = editContent;
             setIsDirty(false);
-            setNoteData(prev => ({ ...prev, content: editContent, updatedAt: new Date().toISOString() }));
-            message.success(`已保存参考笔记《${noteData.title}》`);
+            setNoteData(prev => ({
+                ...prev,
+                content: editContent,
+                updatedAt: syncRes?.updatedAt || new Date().toISOString(),
+                contentVersion: syncRes?.contentVersion ?? prev?.contentVersion
+            }));
+
+            if (syncRes?.localOnly) {
+                message.info('当前离线，副屏更改已安全保存在本地等待同步');
+            } else {
+                message.success(`已保存参考笔记《${noteData.title}》`);
+            }
         } catch {
             message.error('副屏笔记保存失败');
         } finally {
             setSaving(false);
         }
-    }, [noteData, editContent, selectedNotebook]);
+    }, [noteData, editContent, selectedNotebook, onOpenConflict]);
 
     // 快捷键保存
     useEffect(() => {
@@ -471,7 +593,13 @@ const SecondaryNotePane = ({
                 ) : (
                     /* 已载入笔记内容 */
                     <div className="pane-content-wrap">
-                        {viewMode === 'preview' ? (
+                        {isVaultLocked ? (
+                            <div className="pane-vault-locked">
+                                <LockOutlined className="vault-lock-icon" />
+                                <div className="vault-lock-title">端到端加密笔记已锁定</div>
+                                <div className="vault-lock-desc">请先在主编辑区输入保险箱 PIN 解锁后查看或编辑内容</div>
+                            </div>
+                        ) : viewMode === 'preview' ? (
                             <div className="secondary-preview-scroller">
                                 <Viewer value={noteData.content || ''} plugins={secondaryPlugins} />
                             </div>
@@ -482,7 +610,7 @@ const SecondaryNotePane = ({
                                     plugins={secondaryPlugins}
                                     onChange={val => {
                                         setEditContent(val);
-                                        setIsDirty(val !== (noteData.content || ''));
+                                        setIsDirty(val !== savedSnapshotRef.current);
                                     }}
                                     mode="split"
                                     locale={locale}

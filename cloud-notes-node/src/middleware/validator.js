@@ -180,6 +180,9 @@ const schemas = {
         type: Joi.string().valid('note', 'folder').default('note'),
         parentId: Joi.string().allow(null, '').optional(),
         tags: Joi.array().items(Joi.string()),
+        clientId: Joi.string().trim().max(128).allow(null, '').optional(),
+        isEncrypted: Joi.boolean().optional(),
+        encryptedData: Joi.string().allow(null, '').optional()
     }),
 
     // 节点移动验证

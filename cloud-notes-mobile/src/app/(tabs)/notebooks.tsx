@@ -20,6 +20,13 @@ import { Notebook } from '../../api/types';
 import { Config } from '../../constants/Config';
 import * as cryptoVault from '../../utils/cryptoVault';
 import VaultUnlockModal from '../../components/VaultUnlockModal';
+import ActionContextSheet, {
+  ActionSheetItem,
+  confirmAction,
+  triggerHaptic,
+} from '../../components/ActionContextSheet';
+import TextPromptModal from '../../components/TextPromptModal';
+import { showNotice } from '../../utils/noteContextActions';
 
 export default function NotebooksScreen() {
   const router = useRouter();
@@ -41,41 +48,19 @@ export default function NotebooksScreen() {
   const [showVaultModal, setShowVaultModal] = useState(false);
   const [pendingEncryptNotebook, setPendingEncryptNotebook] = useState<Notebook | null>(null);
 
-  const handleToggleNotebookEncryption = async (notebook: Notebook) => {
-    const nextStatus = !notebook.isEncrypted;
-    if (nextStatus && !cryptoVault.hasSessionKey()) {
-      setPendingEncryptNotebook(notebook);
-      setShowVaultModal(true);
-      return;
-    }
-
-    try {
-      const res = await notesApi.updateNotebook(notebook._id, { isEncrypted: nextStatus });
-      if (res.code === 200) {
-        Alert.alert('提示', nextStatus ? '已设为私密笔记本' : '已解除私密保护');
-        loadNotebooks(true);
-      } else {
-        throw new Error(res.message);
-      }
-    } catch (err: any) {
-      Alert.alert('操作失败', err.message || '网络异常');
-    }
-  };
-
-  const handleNotebookLongPress = (notebook: Notebook) => {
-    const isEncrypted = Boolean(notebook.isEncrypted);
-    Alert.alert(
-      notebook.title || notebook.name || '笔记本',
-      '快捷操作',
-      [
-        {
-          text: isEncrypted ? '🔓 解除私密保护' : '🔒 设为私密笔记本',
-          onPress: () => handleToggleNotebookEncryption(notebook),
-        },
-        { text: '取消', style: 'cancel' },
-      ]
-    );
-  };
+  // 长按动作面板与文本输入弹窗
+  const [contextSheet, setContextSheet] = useState<{
+    title: string;
+    subtitle: string;
+    items: ActionSheetItem[];
+  } | null>(null);
+  const [promptConfig, setPromptConfig] = useState<{
+    mode: 'rename_notebook' | 'create_folder';
+    notebook: Notebook;
+    title: string;
+    placeholder: string;
+    defaultValue: string;
+  } | null>(null);
 
   const loadNotebooks = useCallback(async (isRefresh = false) => {
     const isFirstLoad = !hasLoadedOnceRef.current;
@@ -106,6 +91,117 @@ export default function NotebooksScreen() {
       setIsRefreshing(false);
     }
   }, []);
+
+  const handleToggleNotebookEncryption = async (notebook: Notebook) => {
+    const nextStatus = !notebook.isEncrypted;
+    if (nextStatus && !cryptoVault.hasSessionKey()) {
+      setPendingEncryptNotebook(notebook);
+      setShowVaultModal(true);
+      return;
+    }
+
+    try {
+      const res = await notesApi.updateNotebook(notebook._id, { isEncrypted: nextStatus });
+      if (res.code === 200) {
+        showNotice('提示', nextStatus ? '已设为私密笔记本' : '已解除私密保护');
+        void loadNotebooks(true);
+      } else {
+        throw new Error(res.message);
+      }
+    } catch (err: any) {
+      showNotice('操作失败', err.message || '网络异常');
+    }
+  };
+
+  const handleDeleteNotebook = async (notebook: Notebook) => {
+    try {
+      const res = await notesApi.deleteNotebook(notebook._id);
+      if (res?.code === 200 || res?.data !== undefined) {
+        showNotice('已删除', '笔记本及所属目录已移入回收站');
+        void loadNotebooks(true);
+      } else {
+        throw new Error(res?.message || '删除失败');
+      }
+    } catch (err: any) {
+      showNotice('删除失败', err?.message || '默认笔记本不可删除或网络异常');
+    }
+  };
+
+  const handleNotebookLongPress = (notebook: Notebook) => {
+    triggerHaptic('light');
+    const nbTitle = notebook.title || notebook.name || '笔记本';
+    const isDefaultNb = Boolean(notebook.isDefault || nbTitle === '默认笔记本');
+    const isEncrypted = Boolean(notebook.isEncrypted);
+
+    const items: ActionSheetItem[] = [
+      {
+        key: 'new-note',
+        label: '在此新建笔记',
+        icon: 'document-text-outline',
+        onPress: () => {
+          router.push({
+            pathname: '/note/edit',
+            params: { notebookId: notebook._id },
+          });
+        },
+      },
+      {
+        key: 'new-folder',
+        label: '在此新建文件夹',
+        icon: 'folder-outline',
+        onPress: () => {
+          setPromptConfig({
+            mode: 'create_folder',
+            notebook,
+            title: '新建文件夹',
+            placeholder: '请输入文件夹名称',
+            defaultValue: '',
+          });
+        },
+      },
+      {
+        key: 'rename',
+        label: '重命名笔记本',
+        icon: 'create-outline',
+        onPress: () => {
+          setPromptConfig({
+            mode: 'rename_notebook',
+            notebook,
+            title: '重命名笔记本',
+            placeholder: '请输入笔记本名称',
+            defaultValue: nbTitle,
+          });
+        },
+      },
+      {
+        key: 'encrypt',
+        label: isEncrypted ? '解除私密保护' : '设为私密笔记本',
+        icon: isEncrypted ? 'lock-open-outline' : 'lock-closed-outline',
+        onPress: () => void handleToggleNotebookEncryption(notebook),
+      },
+      {
+        key: 'delete',
+        label: isDefaultNb ? '默认笔记本不可删除' : '删除笔记本',
+        icon: 'trash-outline',
+        danger: !isDefaultNb,
+        disabled: isDefaultNb,
+        dividerBefore: true,
+        onPress: () => {
+          confirmAction(
+            '确认删除笔记本',
+            `确定要删除笔记本“${nbTitle}”及其内部笔记吗？`,
+            () => handleDeleteNotebook(notebook)
+          );
+        },
+      },
+    ];
+
+    setContextSheet({
+      title: nbTitle,
+      subtitle: isDefaultNb ? '默认笔记本' : '笔记本',
+      items,
+    });
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -155,6 +251,7 @@ export default function NotebooksScreen() {
         ]}
         onPress={() => handleSelectNotebook(item)}
         onLongPress={() => handleNotebookLongPress(item)}
+        delayLongPress={400}
         activeOpacity={0.65}
       >
         <View style={styles.iconContainer}>
@@ -170,7 +267,7 @@ export default function NotebooksScreen() {
               <Ionicons name="lock-closed" size={13} color="#d97706" />
             )}
           </View>
-          <Text style={styles.itemSub}>长按加锁 / 点击查看</Text>
+          <Text style={styles.itemSub}>长按管理 / 点击查看</Text>
         </View>
 
         <View style={styles.rightAction}>
@@ -275,8 +372,48 @@ export default function NotebooksScreen() {
         onSuccess={() => {
           setShowVaultModal(false);
           if (pendingEncryptNotebook) {
-            handleToggleNotebookEncryption(pendingEncryptNotebook);
+            void handleToggleNotebookEncryption(pendingEncryptNotebook);
             setPendingEncryptNotebook(null);
+          }
+        }}
+      />
+
+      {/* 长按笔记本上下文菜单 */}
+      <ActionContextSheet
+        visible={Boolean(contextSheet)}
+        title={contextSheet?.title}
+        subtitle={contextSheet?.subtitle}
+        items={contextSheet?.items || []}
+        onClose={() => setContextSheet(null)}
+      />
+
+      {/* 重命名笔记本 / 新建文件夹输入弹窗 */}
+      <TextPromptModal
+        visible={Boolean(promptConfig)}
+        title={promptConfig?.title || ''}
+        placeholder={promptConfig?.placeholder}
+        defaultValue={promptConfig?.defaultValue}
+        confirmLabel="确定"
+        onClose={() => setPromptConfig(null)}
+        onConfirm={async value => {
+          if (!promptConfig) return;
+          const nb = promptConfig.notebook;
+          try {
+            if (promptConfig.mode === 'rename_notebook') {
+              await notesApi.updateNotebook(nb._id, { name: value, title: value });
+            } else {
+              await notesApi.createNote({
+                title: value,
+                content: '',
+                type: 'folder',
+                notebookId: nb._id,
+                parentId: null,
+              });
+              showNotice('已创建', `已在「${nb.title || nb.name}」创建文件夹`);
+            }
+            void loadNotebooks(true);
+          } catch (err: any) {
+            showNotice('操作失败', err?.message || '网络异常');
           }
         }}
       />

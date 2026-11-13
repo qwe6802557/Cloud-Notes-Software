@@ -126,14 +126,23 @@ request.interceptors.response.use(
                 return handleAuthExpired(res.message, response.config);
             }
 
-            message.error(res.message || '请求失败');
-            return Promise.reject(new Error(res.message || '请求失败'));
+            const bizError = new Error(res.message || '请求失败');
+            bizError.status = res.code;
+            bizError.conflictData = res.data || null;
+            bizError.responseData = res;
+
+            // 409 版本冲突与显式 skipErrorToast 请求交由调用方处理，不触发全局错误弹窗
+            if (res.code !== 409 && !response.config?.skipErrorToast) {
+                message.error(res.message || '请求失败');
+            }
+            return Promise.reject(bizError);
         }
 
         return res.data; // 返回数据部分
     },
     error => {
         let errorMessage = '网络请求失败';
+        const skipToast = Boolean(error.config?.skipErrorToast);
 
         if (error.response) {
             // 服务器错误状态码
@@ -145,6 +154,11 @@ request.interceptors.response.use(
                 return handleAuthExpired(responseMessage, error.config);
             }
 
+            // 透传状态码与 409 冲突载荷（含 serverNote），供 syncManager 判定与弹窗裁决
+            error.status = status;
+            error.conflictData = error.response.data?.data || null;
+            error.responseData = error.response.data || null;
+
             switch(status) {
                 case 400:
                     errorMessage = responseMessage || '请求参数错误';
@@ -155,19 +169,32 @@ request.interceptors.response.use(
                 case 404:
                     errorMessage = responseMessage || '请求的资源不存在';
                     break;
+                case 409:
+                    errorMessage = responseMessage || '笔记存在版本冲突';
+                    break;
                 case 500:
                     errorMessage = responseMessage || '服务器内部错误';
                     break;
                 default:
                     errorMessage = responseMessage || `请求失败(${status})`;
             }
+
+            if (status !== 409 && !skipToast) {
+                message.error(errorMessage);
+            }
         } else if (error.request) {
             // 未收到响应
             errorMessage = '服务器无响应';
+            if (!skipToast) {
+                message.error(errorMessage);
+            }
+        } else if (!skipToast) {
+            message.error(errorMessage);
         }
 
-        message.error(errorMessage);
-        console.error('响应错误:', error);
+        if (error.response?.status !== 409) {
+            console.error('响应错误:', error);
+        }
 
         return Promise.reject(error);
     }

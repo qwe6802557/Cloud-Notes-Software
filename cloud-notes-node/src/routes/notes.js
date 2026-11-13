@@ -15,6 +15,7 @@ router.get('/graph', noteController.getKnowledgeGraph);
 router.get('/suggest-links', noteController.suggestNoteLinks);
 router.get('/dictionary', noteController.getNoteDictionary);
 router.get('/index-sync', noteController.syncNoteIndex);
+router.get('/delta-sync', noteController.deltaSyncNotes);
 router.get('/notebook/:notebookId', noteController.getNotebookNotes);
 router.get('/target-destinations', noteController.getTargetDestinations);
 router.post('/', validate(schemas.noteCreate, 'body'), noteController.createNote);

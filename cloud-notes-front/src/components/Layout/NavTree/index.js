@@ -1055,7 +1055,7 @@ const NavTree = forwardRef(({
                     const isCurrentLoc = currentParentId === f.id && currentNotebookId === nbId;
                     const isDisabled = isSelf || isDescendant || isCurrentLoc;
 
-                    let title = `📁 ${f.title}`;
+                    let title = f.title;
                     if (isCurrentLoc) {
                         title += ' (当前位置)';
                     } else if (isSelf || isDescendant) {
@@ -1076,7 +1076,7 @@ const NavTree = forwardRef(({
 
             const treeOptions = destinations.map(nb => {
                 const isCurrentRoot = !currentParentId && currentNotebookId === nb.id;
-                let title = `📘 ${nb.name}`;
+                let title = nb.name;
                 if (isCurrentRoot) {
                     title += ' (当前位置)';
                 }

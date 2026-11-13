@@ -3,6 +3,13 @@ const fs = require('fs');
 const path = require('path');
 const { fileURLToPath, pathToFileURL } = require('url');
 const AppUpdater = require('./updater');
+const MirrorService = require('./mirrorService');
+
+const mirrorService = new MirrorService({
+    getUserDataPath: () => app.getPath('userData'),
+    dialog,
+    shell
+});
 
 // 禁用硬件加速与 GPU 沙盒异常拦截，防止 Windows 驱动不匹配触发 Chromium 0x80000003 崩溃
 app.disableHardwareAcceleration();
@@ -500,4 +507,25 @@ ipcMain.handle('dialog:saveHtmlFile', async (_event, payload = {}) => {
 
     await fs.promises.writeFile(result.filePath, content, 'utf-8');
     return { canceled: false, filePath: result.filePath };
+});
+
+// 本地目录镜像同步白名单 IPC 通道
+ipcMain.handle('mirror:selectDir', () => {
+    return mirrorService.selectDir(mainWindow);
+});
+
+ipcMain.handle('mirror:getConfig', () => {
+    return mirrorService.getConfig();
+});
+
+ipcMain.handle('mirror:setConfig', (_event, patch = {}) => {
+    return mirrorService.setConfig(patch);
+});
+
+ipcMain.handle('mirror:runSync', (_event, payload = {}) => {
+    return mirrorService.runSync(payload);
+});
+
+ipcMain.handle('mirror:openDir', () => {
+    return mirrorService.openDir();
 });

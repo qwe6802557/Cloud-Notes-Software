@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -26,8 +26,14 @@ import InlineAIStreamCard from '../../components/InlineAIStreamCard';
 import WikiSuggestDock from '../../components/WikiSuggestDock';
 import GhostLinkSuggestStrip from '../../components/GhostLinkSuggestStrip';
 import SyncStatusPill from '../../components/SyncStatusPill';
-import { getNoteCache, saveNoteCache, resolveNoteId } from '../../utils/storage/mobileNotesDB';
-import mobileSyncManager from '../../utils/storage/mobileSyncManager';
+import ConflictResolveModal from '../../components/ConflictResolveModal';
+import {
+  getNoteCache,
+  saveNoteCache,
+  resolveNoteId,
+  hasPendingMutationsForNote,
+} from '../../utils/storage/mobileNotesDB';
+import mobileSyncManager, { ConflictEntry } from '../../utils/storage/mobileSyncManager';
 import * as cryptoVault from '../../utils/cryptoVault';
 import VaultUnlockModal from '../../components/VaultUnlockModal';
 
@@ -46,9 +52,20 @@ export default function NoteEditScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [baseUpdatedAt, setBaseUpdatedAt] = useState<string | null>(null);
+  const [baseVersion, setBaseVersion] = useState<number | undefined>(undefined);
+  const [resolvedNoteId, setResolvedNoteId] = useState<string>(id || '');
   const [isDirty, setIsDirty] = useState(false);
   const isDirtyRef = useRef(false);
-  isDirtyRef.current = isDirty;
+  const baseVersionRef = useRef<number | undefined>(undefined);
+  const syncSeqRef = useRef(0);
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  useEffect(() => {
+    baseVersionRef.current = baseVersion;
+  }, [baseVersion]);
 
   const [cursorPosition, setCursorPosition] = useState<{ start: number; end: number }>({
     start: 0,
@@ -59,14 +76,19 @@ export default function NoteEditScreen() {
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [showVaultModal, setShowVaultModal] = useState(false);
+  const [vaultUnlockTick, setVaultUnlockTick] = useState(0);
+  const [activeConflict, setActiveConflict] = useState<ConflictEntry | null>(null);
+  const [conflictModalVisible, setConflictModalVisible] = useState(false);
 
   const handleToggleEncryption = () => {
     if (!isEncrypted && !cryptoVault.hasSessionKey()) {
       setShowVaultModal(true);
       return;
     }
-    setIsEncrypted(!isEncrypted);
+    const nextEncrypted = !isEncrypted;
+    setIsEncrypted(nextEncrypted);
     setIsDirty(true);
+    isDirtyRef.current = true;
   };
 
   // 行内 AI 状态
@@ -90,54 +112,59 @@ export default function NoteEditScreen() {
   const [ghostSuggestVisible, setGhostSuggestVisible] = useState(false);
 
   // 检测光标前是否存在未闭合的 [[
-  const checkWikiLinkTrigger = (text: string, selection?: { start: number; end: number }) => {
-    if (selection && selection.start !== selection.end) {
-      setWikiSuggestVisible(false);
-      return;
-    }
+  const checkWikiLinkTrigger = useCallback(
+    (text: string, selection?: { start: number; end: number }) => {
+      if (selection && selection.start !== selection.end) {
+        setWikiSuggestVisible(false);
+        return;
+      }
 
-    let pos = selection ? selection.start : cursorPosition.start;
-    if (typeof pos !== 'number' || pos < 0 || pos > text.length) {
-      pos = text.length;
-    }
+      let pos = selection ? selection.start : cursorPosition.start;
+      if (typeof pos !== 'number' || pos < 0 || pos > text.length) {
+        pos = text.length;
+      }
 
-    let textBefore = text.slice(0, pos);
-    let lastOpen = textBefore.lastIndexOf('[[');
+      let textBefore = text.slice(0, pos);
+      let lastOpen = textBefore.lastIndexOf('[[');
 
-    // 容错：若光标处未找到，但文本末尾包含未闭合的 [[（常见于快速输入或拼音上屏）
-    if (lastOpen === -1) {
-      const globalLastOpen = text.lastIndexOf('[[');
-      if (globalLastOpen !== -1) {
-        const textAfter = text.slice(globalLastOpen + 2);
-        if (!textAfter.includes('\n') && !textAfter.includes(']]')) {
-          lastOpen = globalLastOpen;
-          pos = text.length;
-          textBefore = text;
+      // 容错：若光标处未找到，但文本末尾包含未闭合的 [[（常见于快速输入或拼音上屏）
+      if (lastOpen === -1) {
+        const globalLastOpen = text.lastIndexOf('[[');
+        if (globalLastOpen !== -1) {
+          const textAfter = text.slice(globalLastOpen + 2);
+          if (!textAfter.includes('\n') && !textAfter.includes(']]')) {
+            lastOpen = globalLastOpen;
+            pos = text.length;
+            textBefore = text;
+          }
         }
       }
-    }
 
-    if (lastOpen === -1) {
-      setWikiSuggestVisible(false);
-      return;
-    }
+      if (lastOpen === -1) {
+        setWikiSuggestVisible(false);
+        return;
+      }
 
-    const textAfterOpen = textBefore.slice(lastOpen + 2);
-    if (textAfterOpen.includes('\n') || textAfterOpen.includes(']]')) {
-      setWikiSuggestVisible(false);
-      return;
-    }
+      const textAfterOpen = textBefore.slice(lastOpen + 2);
+      if (textAfterOpen.includes('\n') || textAfterOpen.includes(']]')) {
+        setWikiSuggestVisible(false);
+        return;
+      }
 
-    setWikiSuggestKeyword(textAfterOpen);
-    setWikiMatchRange({ start: lastOpen, end: pos });
-    setWikiSuggestVisible(true);
-  };
+      setWikiSuggestKeyword(textAfterOpen);
+      setWikiMatchRange({ start: lastOpen, end: pos });
+      setWikiSuggestVisible(true);
+    },
+    [cursorPosition.start]
+  );
 
   useEffect(() => {
-    if (content) {
+    if (!content) return;
+    const timer = setTimeout(() => {
       checkWikiLinkTrigger(content);
-    }
-  }, [content]);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [content, checkWikiLinkTrigger]);
 
   // 快捷插入 [[ 并呼起联想贴顶面板
   const handleTriggerWikiLink = () => {
@@ -227,56 +254,213 @@ export default function NoteEditScreen() {
     };
   }, []);
 
-  // 加载既有笔记数据（若为编辑模式）
+  const reloadResolvedLocalCache = useCallback(async (targetNoteId: string) => {
+    const resolvedId = await resolveNoteId(targetNoteId);
+    const cached = await getNoteCache(resolvedId);
+    if (!cached) return;
+
+    let restoredContent = cached.content || '';
+    if (cached.isEncrypted && cached.encryptedData) {
+      if (cryptoVault.hasSessionKey()) {
+        try {
+          restoredContent = await cryptoVault.decryptNote(
+            cached.encryptedData,
+            cryptoVault.getSessionKey()!
+          );
+        } catch (err) {
+          console.warn('Failed to decrypt resolved cache:', err);
+        }
+      } else {
+        setShowVaultModal(true);
+      }
+    }
+
+    setTitle(cached.title || '');
+    setContent(restoredContent);
+    setIsEncrypted(Boolean(cached.isEncrypted));
+    setBaseUpdatedAt(cached.remoteUpdatedAt || cached.updatedAt || null);
+    setBaseVersion(cached.contentVersion);
+    baseVersionRef.current = cached.contentVersion;
+    setIsDirty(Boolean(cached.isDirty));
+    isDirtyRef.current = Boolean(cached.isDirty);
+    if (cached.notebookId) {
+      setNotebookId(cached.notebookId);
+    }
+  }, []);
+
+  // 订阅当前笔记的冲突状态变化与解决事件
   useEffect(() => {
+    const targetId = resolvedNoteId || id;
+    if (!targetId) return;
+
+    const unsubscribeSync = mobileSyncManager.subscribe(snapshot => {
+      const matched = snapshot.conflicts?.find(c => c.noteId === targetId) || null;
+      setActiveConflict(matched);
+    });
+
+    const unsubscribeResolved = mobileSyncManager.subscribeConflictResolved(
+      (resolvedId, strategy) => {
+        if (resolvedId === targetId && strategy !== 'keep_local') {
+          void reloadResolvedLocalCache(resolvedId);
+        }
+      }
+    );
+
+    return () => {
+      unsubscribeSync();
+      unsubscribeResolved();
+    };
+  }, [id, resolvedNoteId, reloadResolvedLocalCache]);
+
+  // 加载既有笔记数据（草稿与脏缓存优先保护，SWR 绝不覆写未同步本地改动）
+  useEffect(() => {
+    let cancelled = false;
+
+    const readDraft = async (draftKey: string) => {
+      try {
+        const raw = await AsyncStorage.getItem(draftKey);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed?.isEncrypted && parsed?.encryptedData) {
+          if (cryptoVault.hasSessionKey()) {
+            const plain = await cryptoVault.decryptNote(
+              parsed.encryptedData,
+              cryptoVault.getSessionKey()!
+            );
+            return { ...parsed, content: plain };
+          }
+          return { ...parsed, needsUnlock: true };
+        }
+        return parsed;
+      } catch {
+        return null;
+      }
+    };
+
     const fetchNote = async () => {
       if (!id) {
-        // 新建模式，如果本地有上次未保存的草稿则加载
-        try {
-          const draftKey = `${Config.storageKeys.draftsPrefix}new`;
-          const savedDraft = await AsyncStorage.getItem(draftKey);
-          if (savedDraft) {
-            const parsed = JSON.parse(savedDraft);
+        const parsed = await readDraft(`${Config.storageKeys.draftsPrefix}new`);
+        if (cancelled) return;
+        if (parsed) {
+          if (parsed.needsUnlock) {
+            setShowVaultModal(true);
+          } else {
             if (parsed.title) setTitle(parsed.title);
             if (parsed.content) setContent(parsed.content);
+            if (parsed.isEncrypted) setIsEncrypted(true);
+            if (parsed.notebookId) setNotebookId(parsed.notebookId);
           }
-        } catch (e) {}
+        }
         setIsLoading(false);
         return;
       }
 
       const targetId = await resolveNoteId(id);
+      if (cancelled) return;
+      setResolvedNoteId(targetId);
 
-      // 1. 本地优先 (Local-First): 优先读取本地持久化快照瞬时上屏 (<10ms)
+      let cacheHasDirtyState = false;
+
+      // 1. 本地优先：同时比对本地缓存快照与自动草稿时间戳，择优无损上屏
       try {
         const localCache = await getNoteCache(targetId);
-        if (localCache) {
-          setTitle(localCache.title || '');
-          setContent(localCache.content || '');
-          setBaseUpdatedAt(localCache.updatedAt || null);
-          setIsLoading(false);
-          if (localCache.isDirty) {
-            setIsDirty(true);
-          }
-        }
-      } catch (cacheErr) {}
+        const draftPrimary = await readDraft(`${Config.storageKeys.draftsPrefix}${targetId}`);
+        const draftFallback =
+          targetId !== id
+            ? await readDraft(`${Config.storageKeys.draftsPrefix}${id}`)
+            : null;
+        const draft = draftPrimary || draftFallback;
 
-      // 纯离线尚未同步至服务端的本地草稿跳过远端请求
-      if (targetId.startsWith('local_')) {
+        const cacheTime = localCache?.updatedAt ? new Date(localCache.updatedAt).getTime() : 0;
+        const draftTime = typeof draft?.savedAt === 'number' ? draft.savedAt : 0;
+        const hasPendingQueue = await hasPendingMutationsForNote(targetId);
+        const hasConflict = mobileSyncManager.hasConflict(targetId);
+
+        if (draft && !draft.needsUnlock && (draftTime > cacheTime || !localCache)) {
+          cacheHasDirtyState = true;
+          setTitle(draft.title || '');
+          setContent(draft.content || '');
+          setIsEncrypted(Boolean(draft.isEncrypted ?? localCache?.isEncrypted));
+          if (draft.notebookId) setNotebookId(draft.notebookId);
+          setBaseUpdatedAt(localCache?.remoteUpdatedAt || localCache?.updatedAt || null);
+          setBaseVersion(localCache?.contentVersion);
+          baseVersionRef.current = localCache?.contentVersion;
+          setIsDirty(true);
+          isDirtyRef.current = true;
+          setIsLoading(false);
+        } else if (draft?.needsUnlock) {
+          setShowVaultModal(true);
+        } else if (localCache) {
+          cacheHasDirtyState = Boolean(localCache.isDirty || hasPendingQueue || hasConflict);
+          let localPlainContent = localCache.content || '';
+          if (localCache.isEncrypted && localCache.encryptedData) {
+            if (cryptoVault.hasSessionKey()) {
+              try {
+                localPlainContent = await cryptoVault.decryptNote(
+                  localCache.encryptedData,
+                  cryptoVault.getSessionKey()!
+                );
+              } catch (err) {
+                console.warn('Failed to decrypt local cache:', err);
+              }
+            } else {
+              setShowVaultModal(true);
+            }
+          }
+          if (!cancelled) {
+            setTitle(localCache.title || '');
+            setContent(localPlainContent);
+            setIsEncrypted(Boolean(localCache.isEncrypted));
+            if (localCache.notebookId) setNotebookId(localCache.notebookId);
+            setBaseUpdatedAt(localCache.remoteUpdatedAt || localCache.updatedAt || null);
+            setBaseVersion(localCache.contentVersion);
+            baseVersionRef.current = localCache.contentVersion;
+            if (cacheHasDirtyState) {
+              setIsDirty(true);
+              isDirtyRef.current = true;
+            }
+            setIsLoading(false);
+          }
+        } else if (hasPendingQueue || hasConflict) {
+          cacheHasDirtyState = true;
+          isDirtyRef.current = true;
+          setIsDirty(true);
+        }
+      } catch {}
+
+      if (targetId.startsWith('local_') || cancelled) {
         setIsLoading(false);
         return;
       }
 
-      // 2. SWR 后台异步拉取远端对齐
+      // 2. SWR 后台异步拉取远端对齐（存在未同步脏改动时严禁覆盖屏幕与本地缓存）
       try {
         const res = await notesApi.getNoteDetail(targetId);
+        if (cancelled) return;
         if (res.code === 200 && res.data) {
-          setIsEncrypted(Boolean(res.data.isEncrypted));
-          let noteContent = res.data.content || '';
-          if (res.data.isEncrypted && res.data.encryptedData) {
+          const remote = res.data;
+          const stillHasDirtyEdits =
+            cacheHasDirtyState ||
+            isDirtyRef.current ||
+            (await hasPendingMutationsForNote(targetId)) ||
+            mobileSyncManager.hasConflict(targetId);
+
+          if (stillHasDirtyEdits) {
+            if (!notebookId && remote.notebookId) {
+              setNotebookId(remote.notebookId);
+            }
+            return;
+          }
+
+          setIsEncrypted(Boolean(remote.isEncrypted));
+          let noteContent = remote.content || '';
+          if (remote.isEncrypted && remote.encryptedData) {
             if (cryptoVault.hasSessionKey()) {
               try {
-                noteContent = await cryptoVault.decryptNote(res.data.encryptedData, cryptoVault.getSessionKey()!);
+                noteContent = await cryptoVault.decryptNote(
+                  remote.encryptedData,
+                  cryptoVault.getSessionKey()!
+                );
               } catch (err) {
                 console.warn('Failed to decrypt:', err);
               }
@@ -284,51 +468,95 @@ export default function NoteEditScreen() {
               setShowVaultModal(true);
             }
           }
-          mobileSyncManager.setLastKnownRemoteUpdatedAt(targetId, res.data.updatedAt, noteContent);
-          if (!isDirtyRef.current) {
-            setTitle(res.data.title || '');
-            setContent(noteContent);
-            setBaseUpdatedAt(res.data.updatedAt || null);
-            setIsDirty(false);
-          }
-          setNotebookId(res.data.notebookId);
+          if (cancelled) return;
 
-          // 刷新本地持久化
+          mobileSyncManager.setLastKnownRemoteUpdatedAt(
+            targetId,
+            remote.updatedAt,
+            remote.isEncrypted ? '' : noteContent,
+            remote.contentVersion
+          );
+          setTitle(remote.title || '');
+          setContent(noteContent);
+          setBaseUpdatedAt(remote.updatedAt || null);
+          setBaseVersion(remote.contentVersion);
+          baseVersionRef.current = remote.contentVersion;
+          setIsDirty(false);
+          isDirtyRef.current = false;
+          setNotebookId(remote.notebookId);
+
           await saveNoteCache({
             id: targetId,
-            title: res.data.title || '',
-            content: res.data.content || '',
-            updatedAt: res.data.updatedAt,
-            lastSavedContent: res.data.content || '',
+            title: remote.title || '',
+            content: remote.isEncrypted ? '' : (remote.content || ''),
+            notebookId: remote.notebookId,
+            parentId: remote.parentId,
+            isEncrypted: Boolean(remote.isEncrypted),
+            encryptedData: remote.encryptedData ?? null,
+            contentVersion: remote.contentVersion,
+            remoteUpdatedAt: remote.updatedAt,
+            updatedAt: remote.updatedAt,
+            lastSavedContent: remote.isEncrypted ? '' : (remote.content || ''),
             lastSyncedAt: new Date().toISOString(),
-            isDirty: isDirtyRef.current,
+            isDirty: false,
           });
         }
-      } catch (e: any) {
+      } catch {
         // 离线无网时静默依靠本地快照正常编辑
       } finally {
-        setIsLoading(false);
+        if (!cancelled) {
+          setIsLoading(false);
+        }
       }
     };
 
-    fetchNote();
-  }, [id]);
+    void fetchNote();
 
-  // 自动保存草稿到本地存储
+    return () => {
+      cancelled = true;
+    };
+  }, [id, vaultUnlockTick]);
+
+  // 自动保存草稿到本地存储（加密笔记仅存密文，绝不明文落盘）
   useEffect(() => {
     if (!title && !content) return;
+    if (isEncrypted && !cryptoVault.hasSessionKey()) return;
+
     const timer = setTimeout(async () => {
       try {
-        const draftKey = `${Config.storageKeys.draftsPrefix}${id || 'new'}`;
-        await AsyncStorage.setItem(
-          draftKey,
-          JSON.stringify({ title, content, notebookId, savedAt: Date.now() })
-        );
-      } catch (e) {}
+        const targetDraftId = resolvedNoteId || id || 'new';
+        const draftKey = `${Config.storageKeys.draftsPrefix}${targetDraftId}`;
+        if (isEncrypted && cryptoVault.hasSessionKey()) {
+          const pin = cryptoVault.getSessionKey()!;
+          const salt = cryptoVault.getSessionSalt() || '00'.repeat(16);
+          const encryptedData = await cryptoVault.encryptNote(content, pin, salt);
+          await AsyncStorage.setItem(
+            draftKey,
+            JSON.stringify({
+              title,
+              isEncrypted: true,
+              encryptedData,
+              notebookId,
+              savedAt: Date.now(),
+            })
+          );
+        } else {
+          await AsyncStorage.setItem(
+            draftKey,
+            JSON.stringify({
+              title,
+              content,
+              isEncrypted: false,
+              notebookId,
+              savedAt: Date.now(),
+            })
+          );
+        }
+      } catch {}
     }, 1500);
 
     return () => clearTimeout(timer);
-  }, [title, content, notebookId, id]);
+  }, [title, content, notebookId, id, resolvedNoteId, isEncrypted]);
 
   // 插入 Markdown 辅助标记符号
   const insertText = (prefix: string, suffix = '') => {
@@ -515,60 +743,88 @@ export default function NoteEditScreen() {
     setInlineSelectionSnapshot(null);
   };
 
+  const dispatchAutoSync = async (nextTitle: string, nextContent: string) => {
+    if (!id) return;
+    const seq = ++syncSeqRef.current;
+
+    if (isEncrypted && !cryptoVault.hasSessionKey()) {
+      setShowVaultModal(true);
+      return;
+    }
+
+    const targetId = await resolveNoteId(id);
+    if (seq !== syncSeqRef.current) return;
+
+    let encryptedData: string | null = null;
+    if (isEncrypted) {
+      const pin = cryptoVault.getSessionKey()!;
+      const salt = cryptoVault.getSessionSalt() || '00'.repeat(16);
+      encryptedData = await cryptoVault.encryptNote(nextContent, pin, salt);
+      if (seq !== syncSeqRef.current) return;
+    }
+
+    const safePlainContent = isEncrypted ? '' : nextContent;
+    await mobileSyncManager.notifyLocalDirty(targetId, {
+      title: nextTitle,
+      content: safePlainContent,
+      baseUpdatedAt,
+      expectedVersion: baseVersionRef.current,
+      notebookId,
+      parentId: initialParentId || null,
+      isEncrypted,
+      encryptedData,
+    });
+
+    if (seq !== syncSeqRef.current) return;
+
+    mobileSyncManager.scheduleAutoSync(
+      targetId,
+      {
+        title: nextTitle,
+        content: safePlainContent,
+        baseUpdatedAt,
+        expectedVersion: baseVersionRef.current,
+        notebookId,
+        parentId: initialParentId || null,
+        isEncrypted,
+        encryptedData,
+        onSyncSuccess: syncRes => {
+          if (syncRes?.resolvedId && syncRes.resolvedId !== resolvedNoteId) {
+            setResolvedNoteId(syncRes.resolvedId);
+          }
+          if (seq === syncSeqRef.current) {
+            setIsDirty(false);
+            isDirtyRef.current = false;
+            void AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${id}`).catch(() => {});
+            if (targetId !== id) {
+              void AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${targetId}`).catch(() => {});
+            }
+          }
+          if (syncRes?.updatedAt) {
+            setBaseUpdatedAt(syncRes.updatedAt);
+          }
+          if (typeof syncRes?.contentVersion === 'number') {
+            setBaseVersion(syncRes.contentVersion);
+            baseVersionRef.current = syncRes.contentVersion;
+          }
+        },
+      },
+      1500
+    );
+  };
+
   const handleTitleChange = (newTitle: string) => {
     setTitle(newTitle);
     setIsDirty(true);
-    if (id) {
-      mobileSyncManager.notifyLocalDirty(id, {
-        title: newTitle,
-        content,
-        baseUpdatedAt,
-      });
-      mobileSyncManager.scheduleAutoSync(
-        id,
-        {
-          title: newTitle,
-          content,
-          baseUpdatedAt,
-          notebookId,
-          onSyncSuccess: syncRes => {
-            setIsDirty(false);
-            if (syncRes?.updatedAt) {
-              setBaseUpdatedAt(syncRes.updatedAt);
-            }
-          },
-        },
-        1500
-      );
-    }
+    isDirtyRef.current = true;
+    void dispatchAutoSync(newTitle, content);
   };
 
   const handleContentChange = (newContent: string) => {
     setContent(newContent);
     setIsDirty(true);
-    if (id) {
-      mobileSyncManager.notifyLocalDirty(id, {
-        title,
-        content: newContent,
-        baseUpdatedAt,
-      });
-      mobileSyncManager.scheduleAutoSync(
-        id,
-        {
-          title,
-          content: newContent,
-          baseUpdatedAt,
-          notebookId,
-          onSyncSuccess: syncRes => {
-            setIsDirty(false);
-            if (syncRes?.updatedAt) {
-              setBaseUpdatedAt(syncRes.updatedAt);
-            }
-          },
-        },
-        1500
-      );
-    }
+    isDirtyRef.current = true;
+    void dispatchAutoSync(title, newContent);
   };
 
   // 保存笔记
@@ -582,7 +838,6 @@ export default function NoteEditScreen() {
       setIsSaving(true);
       if (id) {
         const targetId = await resolveNoteId(id);
-        // 更新现有笔记：通过 mobileSyncManager 执行本地持久化、防抖队列与安全分叉
         let encryptedData: string | null = null;
         if (isEncrypted) {
           if (!cryptoVault.hasSessionKey()) {
@@ -597,15 +852,33 @@ export default function NoteEditScreen() {
 
         const syncRes = await mobileSyncManager.syncNote(targetId, {
           title: title.trim(),
-          content,
+          content: isEncrypted ? '' : content,
           baseUpdatedAt,
+          expectedVersion: baseVersionRef.current,
           notebookId,
+          parentId: initialParentId || null,
           isEncrypted,
           encryptedData,
+          saveType: 'manual',
         });
 
+        if (syncRes.conflict) {
+          setIsSaving(false);
+          setConflictModalVisible(true);
+          return;
+        }
+
+        if (!syncRes.success && !syncRes.offline) {
+          const errMsg =
+            typeof syncRes.error === 'string'
+              ? syncRes.error
+              : syncRes.error?.message || '保存失败，请稍后重试';
+          Alert.alert('保存失败', errMsg);
+          return;
+        }
+
         setIsDirty(false);
-        // 清理草稿
+        isDirtyRef.current = false;
         await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${id}`);
         if (targetId !== id) {
           await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${targetId}`);
@@ -628,39 +901,24 @@ export default function NoteEditScreen() {
             if (nbRes.code === 200 && nbRes.data.length > 0) {
               targetNbId = nbRes.data[0]._id;
             }
-          } catch {
-            // 离线时无笔记本列表则置空
+          } catch {}
+        }
+
+        let createEncryptedData: string | null = null;
+        if (isEncrypted) {
+          if (!cryptoVault.hasSessionKey()) {
+            setIsSaving(false);
+            setShowVaultModal(true);
+            return;
           }
+          const pin = cryptoVault.getSessionKey()!;
+          const salt = cryptoVault.getSessionSalt() || '00'.repeat(16);
+          createEncryptedData = await cryptoVault.encryptNote(content, pin, salt);
         }
 
         const syncState = mobileSyncManager.getSnapshot();
         if (!syncState.isOnline) {
           await mobileSyncManager.createOfflineNote({
-            title: title.trim(),
-            content,
-            notebookId: targetNbId,
-          });
-          setIsDirty(false);
-          await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}new`);
-          Alert.alert('已离线安全落盘', '当前处于无网络环境，新建笔记已牢固保存在本地并加入重试队列');
-          router.back();
-          return;
-        }
-
-        try {
-          let createEncryptedData: string | null = null;
-          if (isEncrypted) {
-            if (!cryptoVault.hasSessionKey()) {
-              setIsSaving(false);
-              setShowVaultModal(true);
-              return;
-            }
-            const pin = cryptoVault.getSessionKey()!;
-            const salt = cryptoVault.getSessionSalt() || '00'.repeat(16);
-            createEncryptedData = await cryptoVault.encryptNote(content, pin, salt);
-          }
-
-          const res = await notesApi.createNote({
             title: title.trim(),
             content: isEncrypted ? '' : content,
             notebookId: targetNbId,
@@ -668,15 +926,40 @@ export default function NoteEditScreen() {
             isEncrypted,
             encryptedData: createEncryptedData,
           });
+          setIsDirty(false);
+          isDirtyRef.current = false;
+          await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}new`);
+          Alert.alert('已离线安全落盘', '当前处于无网络环境，新建笔记已牢固保存在本地并加入重试队列');
+          router.back();
+          return;
+        }
+
+        try {
+          const clientId = `mobile_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          const res = await notesApi.createNote({
+            title: title.trim(),
+            content: isEncrypted ? '' : content,
+            notebookId: targetNbId,
+            parentId: initialParentId || null,
+            isEncrypted,
+            encryptedData: createEncryptedData,
+            clientId,
+          });
 
           if (res.code === 200 && res.data) {
             const newId = (res.data as any)?._id || (res.data as any)?.id;
             await saveNoteCache({
               id: newId,
               title: res.data.title,
-              content: res.data.content,
+              content: res.data.isEncrypted ? '' : res.data.content,
+              notebookId: res.data.notebookId,
+              parentId: res.data.parentId,
+              isEncrypted: Boolean(res.data.isEncrypted),
+              encryptedData: res.data.encryptedData ?? createEncryptedData ?? null,
+              contentVersion: res.data.contentVersion,
+              remoteUpdatedAt: res.data.updatedAt,
               updatedAt: res.data.updatedAt,
-              lastSavedContent: res.data.content,
+              lastSavedContent: res.data.isEncrypted ? '' : res.data.content,
               lastSyncedAt: new Date().toISOString(),
               isDirty: false,
             });
@@ -687,13 +970,17 @@ export default function NoteEditScreen() {
             throw new Error(res.message);
           }
         } catch {
-          // 弱网创建失败自动降级本地离线安全落盘
+          // 弱网创建失败自动降级本地离线安全落盘（保持加密密文与目标目录）
           await mobileSyncManager.createOfflineNote({
             title: title.trim(),
-            content,
+            content: isEncrypted ? '' : content,
             notebookId: targetNbId,
+            parentId: initialParentId || null,
+            isEncrypted,
+            encryptedData: createEncryptedData,
           });
           setIsDirty(false);
+          isDirtyRef.current = false;
           await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}new`);
           Alert.alert('已离线安全落盘', '网络连接异常，新建笔记已在本地安全落盘，后台将自动重试同步');
           router.back();
@@ -772,6 +1059,19 @@ export default function NoteEditScreen() {
           style={styles.keyboardContainer}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
         >
+          {Boolean(activeConflict) && (
+            <TouchableOpacity
+              style={styles.conflictBanner}
+              onPress={() => setConflictModalVisible(true)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="git-compare-outline" size={16} color="#dc2626" />
+              <Text style={styles.conflictBannerText} numberOfLines={1}>
+                检测到云端有新版本冲突，本地修改已保护，点击立即比对裁决
+              </Text>
+              <Ionicons name="chevron-forward" size={15} color="#dc2626" />
+            </TouchableOpacity>
+          )}
           <ScrollView
             style={styles.editorScroll}
             contentContainerStyle={styles.editorContent}
@@ -887,7 +1187,7 @@ export default function NoteEditScreen() {
           }
         }}
         onInsertContent={insertion => {
-          const { start, end } = cursorPosition;
+          const { end } = cursorPosition;
           const insertPos = end || content.length;
           const before = content.substring(0, insertPos);
           const after = content.substring(insertPos);
@@ -900,7 +1200,7 @@ export default function NoteEditScreen() {
         <VersionHistoryModal
           visible={showHistoryModal}
           onClose={() => setShowHistoryModal(false)}
-          noteId={id!}
+          noteId={resolvedNoteId || id!}
           currentContent={content}
           onRollbackSuccess={updatedNote => {
             setTitle(updatedNote.title || '');
@@ -908,6 +1208,38 @@ export default function NoteEditScreen() {
           }}
         />
       )}
+
+      {/* 安全箱解锁弹窗 */}
+      <VaultUnlockModal
+        visible={showVaultModal}
+        onClose={() => setShowVaultModal(false)}
+        onSuccess={() => {
+          setShowVaultModal(false);
+          setVaultUnlockTick(v => v + 1);
+        }}
+      />
+
+      {/* 版本冲突比对裁决弹窗 */}
+      <ConflictResolveModal
+        visible={conflictModalVisible}
+        conflict={activeConflict}
+        onClose={() => setConflictModalVisible(false)}
+        onResolved={async strategy => {
+          setConflictModalVisible(false);
+          if (strategy === 'keep_local') {
+            setIsDirty(false);
+            isDirtyRef.current = false;
+            if (id) {
+              await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${id}`);
+            }
+            if (resolvedNoteId && resolvedNoteId !== id) {
+              await AsyncStorage.removeItem(`${Config.storageKeys.draftsPrefix}${resolvedNoteId}`);
+            }
+          } else if (resolvedNoteId || id) {
+            await reloadResolvedLocalCache(resolvedNoteId || id!);
+          }
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -919,6 +1251,22 @@ const styles = StyleSheet.create({
   },
   keyboardContainer: {
     flex: 1,
+  },
+  conflictBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#fef2f2',
+    borderBottomWidth: 1,
+    borderBottomColor: '#fecaca',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  conflictBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#dc2626',
   },
   saveHeaderBtn: {
     backgroundColor: '#1890ff',

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -29,14 +29,38 @@ import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 import NoteCompanionBottomSheet, { CompanionTab } from '../../components/NoteCompanionBottomSheet';
 import MoveNoteBottomSheet from '../../components/MoveNoteBottomSheet';
 import VaultUnlockModal from '../../components/VaultUnlockModal';
+import ConflictResolveModal from '../../components/ConflictResolveModal';
 import * as cryptoVault from '../../utils/cryptoVault';
 import { weaveBacklinksToText, isItemWeaved } from '../../utils/weavingUtils';
 import { mobileSearchEngine } from '../../utils/search/mobileSearchEngine';
-import { getNoteCache, saveNoteCache, resolveNoteId, deleteNoteCache } from '../../utils/storage/mobileNotesDB';
+import mobileSyncManager, { ConflictEntry } from '../../utils/storage/mobileSyncManager';
+import {
+  getNoteCache,
+  saveNoteCache,
+  resolveNoteId,
+  deleteNoteCache,
+  hasPendingMutationsForNote,
+} from '../../utils/storage/mobileNotesDB';
 
 interface TocItem {
   level: number;
   text: string;
+}
+
+function extractTocItems(markdown: string): TocItem[] {
+  if (!markdown) return [];
+  const lines = markdown.split('\n');
+  const items: TocItem[] = [];
+  lines.forEach(line => {
+    const match = line.match(/^(#{1,6})\s+(.+)$/);
+    if (match) {
+      items.push({
+        level: match[1].length,
+        text: match[2].trim(),
+      });
+    }
+  });
+  return items;
 }
 
 function MarkdownImage({
@@ -228,6 +252,16 @@ export default function NoteDetailScreen() {
   const [showVaultModal, setShowVaultModal] = useState(false);
   const [decryptedContent, setDecryptedContent] = useState<string>('');
 
+  const [activeConflict, setActiveConflict] = useState<ConflictEntry | null>(null);
+  const [conflictModalVisible, setConflictModalVisible] = useState(false);
+
+  const parseToc = useCallback((content: string) => {
+    const items = extractTocItems(content);
+    if (items.length > 0 || !content) {
+      setTocList(items);
+    }
+  }, []);
+
   useEffect(() => {
     const unsubscribe = cryptoVault.subscribeVaultLock(unlocked => {
       setIsVaultUnlocked(unlocked);
@@ -254,8 +288,8 @@ export default function NoteDetailScreen() {
         }
       }
     };
-    decryptCurrent();
-  }, [note?.isEncrypted, note?.encryptedData, isVaultUnlocked]);
+    void decryptCurrent();
+  }, [note?.isEncrypted, note?.encryptedData, isVaultUnlocked, parseToc]);
 
   // 智能伴侣抽屉状态
   const [showCompanionSheet, setShowCompanionSheet] = useState(false);
@@ -649,23 +683,32 @@ export default function NoteDetailScreen() {
     }
   };
 
-  const fetchNote = async () => {
+  const fetchNote = useCallback(async () => {
     if (!id) return;
     const resolvedId = await resolveNoteId(id);
     let hasLocalData = false;
+    let hasLocalDirtyOrPending = false;
 
-    // 本地优先瞬时上屏
+    // 本地优先瞬时上屏（保留加密状态与内容版本基准）
     try {
       const localCache = await getNoteCache(resolvedId);
+      const pendingQueue = await hasPendingMutationsForNote(resolvedId);
+      const hasConflict = mobileSyncManager.hasConflict(resolvedId);
+      hasLocalDirtyOrPending = Boolean(localCache?.isDirty || pendingQueue || hasConflict);
+
       if (localCache) {
         hasLocalData = true;
         setNote({
           _id: localCache.id,
           title: localCache.title,
           content: localCache.content,
+          notebookId: localCache.notebookId || '',
+          parentId: localCache.parentId ?? null,
+          isEncrypted: Boolean(localCache.isEncrypted),
+          encryptedData: localCache.encryptedData ?? undefined,
+          contentVersion: localCache.contentVersion,
           updatedAt: localCache.updatedAt,
-          notebookId: '',
-        } as any);
+        } as Note);
         parseToc(localCache.content);
         setIsLoading(false);
       }
@@ -685,14 +728,30 @@ export default function NoteDetailScreen() {
       }
       const res = await notesApi.getNoteDetail(resolvedId);
       if (res.code === 200 && res.data) {
+        // 本地存在未同步脏草稿、待发队列或待裁决冲突时，严禁远端结果覆盖本地快照
+        if (hasLocalDirtyOrPending && hasLocalData) {
+          return;
+        }
         setNote(res.data);
         parseToc(res.data.content);
+        mobileSyncManager.setLastKnownRemoteUpdatedAt(
+          res.data._id,
+          res.data.updatedAt,
+          res.data.isEncrypted ? '' : res.data.content,
+          res.data.contentVersion
+        );
         await saveNoteCache({
           id: res.data._id,
           title: res.data.title,
-          content: res.data.content,
+          content: res.data.isEncrypted ? '' : res.data.content,
+          notebookId: res.data.notebookId,
+          parentId: res.data.parentId,
+          isEncrypted: Boolean(res.data.isEncrypted),
+          encryptedData: res.data.encryptedData ?? null,
+          contentVersion: res.data.contentVersion,
+          remoteUpdatedAt: res.data.updatedAt,
           updatedAt: res.data.updatedAt,
-          lastSavedContent: res.data.content,
+          lastSavedContent: res.data.isEncrypted ? '' : res.data.content,
           lastSyncedAt: new Date().toISOString(),
           isDirty: false,
         });
@@ -704,44 +763,76 @@ export default function NoteDetailScreen() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const parseToc = (content: string) => {
-    if (!content) return;
-    const lines = content.split('\n');
-    const items: TocItem[] = [];
-    lines.forEach(line => {
-      const match = line.match(/^(#{1,6})\s+(.+)$/);
-      if (match) {
-        items.push({
-          level: match[1].length,
-          text: match[2].trim(),
-        });
-      }
-    });
-    setTocList(items);
-  };
+  }, [id, parseToc]);
 
   useEffect(() => {
-    fetchNote();
-    fetchBacklinks();
-  }, [id]);
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      void fetchNote();
+      void fetchBacklinks();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchNote]);
+
+  useEffect(() => {
+    if (!id) return;
+    let activeResolvedId = id;
+    void resolveNoteId(id).then(r => {
+      activeResolvedId = r;
+      const existing = mobileSyncManager.getConflict(r);
+      if (existing) setActiveConflict(existing);
+    });
+
+    const unsubSync = mobileSyncManager.subscribe(snapshot => {
+      const matched =
+        snapshot.conflicts?.find(c => c.noteId === activeResolvedId || c.noteId === id) || null;
+      setActiveConflict(matched);
+    });
+
+    const unsubResolved = mobileSyncManager.subscribeConflictResolved(resolvedId => {
+      if (resolvedId === activeResolvedId || resolvedId === id) {
+        void fetchNote();
+      }
+    });
+
+    return () => {
+      unsubSync();
+      unsubResolved();
+    };
+  }, [id, fetchNote]);
 
   const handleDeleteNote = () => {
     const executeDelete = async () => {
       try {
         if (!id) return;
-        const targetId = (note?._id) || (await resolveNoteId(id));
+        const targetId = note?._id || (await resolveNoteId(id));
+        let queuedOffline = false;
         if (targetId.startsWith('local_')) {
+          await mobileSyncManager.queueOfflineAction(targetId, 'delete');
           await deleteNoteCache(targetId);
+          queuedOffline = true;
         } else {
-          await notesApi.deleteNote(targetId);
-          await deleteNoteCache(targetId);
+          try {
+            await notesApi.deleteNote(targetId);
+            await deleteNoteCache(targetId);
+          } catch (err: any) {
+            if (!err?.status) {
+              await mobileSyncManager.queueOfflineAction(targetId, 'delete');
+              await deleteNoteCache(targetId);
+              queuedOffline = true;
+            } else {
+              throw err;
+            }
+          }
         }
+        const doneMsg = queuedOffline ? '当前离线，删除操作已加入队列' : '笔记已成功删除';
         if (Platform.OS === 'web') {
-          window.alert('笔记已成功删除');
+          window.alert(doneMsg);
         } else {
-          Alert.alert('已删除', '笔记已成功删除');
+          Alert.alert(queuedOffline ? '已加入离线队列' : '已删除', doneMsg);
         }
         router.back();
       } catch (e: any) {
@@ -755,7 +846,7 @@ export default function NoteDetailScreen() {
 
     if (Platform.OS === 'web') {
       if (window.confirm('确定要将这篇笔记移入回收站吗？')) {
-        executeDelete();
+        void executeDelete();
       }
       return;
     }
@@ -765,7 +856,7 @@ export default function NoteDetailScreen() {
       {
         text: '删除',
         style: 'destructive',
-        onPress: executeDelete,
+        onPress: () => void executeDelete(),
       },
     ]);
   };
@@ -776,8 +867,12 @@ export default function NoteDetailScreen() {
     setNote({ ...note, isStarred: nextStatus });
     try {
       await notesApi.updateNoteStarred(note._id, nextStatus);
-    } catch (e) {
-      setNote({ ...note, isStarred: !nextStatus });
+    } catch (e: any) {
+      if (!e?.status) {
+        await mobileSyncManager.queueOfflineAction(note._id, 'star', { isStarred: nextStatus });
+      } else {
+        setNote({ ...note, isStarred: !nextStatus });
+      }
     }
   };
 
@@ -894,6 +989,19 @@ export default function NoteDetailScreen() {
         </View>
       ) : note ? (
         <ScrollView contentContainerStyle={styles.scrollContent}>
+          {Boolean(activeConflict) && (
+            <TouchableOpacity
+              style={styles.conflictBanner}
+              onPress={() => setConflictModalVisible(true)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="git-compare-outline" size={16} color="#dc2626" />
+              <Text style={styles.conflictBannerText} numberOfLines={1}>
+                此笔记存在待裁决的并发版本冲突，点击查看 Diff 并选择保留方案
+              </Text>
+              <Ionicons name="chevron-forward" size={15} color="#dc2626" />
+            </TouchableOpacity>
+          )}
           {/* 笔记标题与元信息 */}
           <Text style={styles.noteTitle} selectable={true}>
             {note.title || '无标题笔记'}
@@ -1218,6 +1326,17 @@ export default function NoteDetailScreen() {
         onClose={() => setShowVaultModal(false)}
         onSuccess={() => {
           setShowVaultModal(false);
+        }}
+      />
+
+      {/* 版本冲突比对裁决弹窗 */}
+      <ConflictResolveModal
+        visible={conflictModalVisible}
+        conflict={activeConflict}
+        onClose={() => setConflictModalVisible(false)}
+        onResolved={() => {
+          setConflictModalVisible(false);
+          void fetchNote();
         }}
       />
     </View>
@@ -1638,5 +1757,23 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  conflictBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#fef2f2',
+    borderWidth: 1,
+    borderColor: '#fecaca',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  conflictBannerText: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#dc2626',
   },
 });

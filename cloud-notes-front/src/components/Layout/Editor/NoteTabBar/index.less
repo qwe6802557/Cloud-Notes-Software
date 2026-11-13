@@ -263,3 +263,114 @@
         font-size: 12px;
     }
 }
+
+html[data-theme='dark'] {
+    .note-tab-bar {
+        background: #0f172a;
+        border-bottom-color: #334155;
+
+        &.note-tab-bar-secondary {
+            background: #0b1120;
+            border-bottom-color: #334155;
+        }
+
+        .note-tab-item {
+            color: #94a3b8;
+            border-right-color: #1e293b;
+
+            &:hover {
+                background: #1e293b;
+                color: #f1f5f9;
+            }
+
+            &.is-active {
+                background: #1e293b;
+                color: #f8fafc;
+
+                &::after {
+                    background: #38bdf8;
+                }
+            }
+
+            &.is-preview {
+                color: #94a3b8;
+            }
+
+            &.is-dragging {
+                background: #334155;
+            }
+
+            &.is-drag-over {
+                border-left-color: #38bdf8;
+            }
+
+            .tab-close-btn {
+                color: #64748b;
+
+                &:hover {
+                    background: #334155;
+                    color: #f8fafc;
+                }
+
+                .dirty-indicator {
+                    color: #fbbf24;
+                }
+            }
+        }
+
+        .tab-create-btn {
+            color: #64748b;
+
+            &:hover {
+                color: #f1f5f9;
+                background: rgba(148, 163, 184, 0.1);
+            }
+        }
+
+        .tab-overflow-trigger {
+            background: #0f172a;
+            border-left-color: #334155;
+
+            .tab-overflow-btn {
+                color: #94a3b8;
+
+                &:hover {
+                    background: #1e293b;
+                    color: #f1f5f9;
+                }
+            }
+        }
+
+        .note-tab-bar-actions {
+            border-left-color: #334155;
+
+            .tab-action-btn {
+                color: #94a3b8;
+
+                &:hover {
+                    background: #1e293b;
+                    color: #f1f5f9;
+                }
+
+                &.is-active {
+                    color: #38bdf8;
+                    background: rgba(56, 189, 248, 0.14);
+                }
+            }
+        }
+    }
+
+    .tab-dropdown-item {
+        .is-preview {
+            color: #94a3b8;
+        }
+
+        &.is-active {
+            color: #38bdf8;
+        }
+
+        .tab-dirty-dot {
+            color: #fbbf24;
+        }
+    }
+}

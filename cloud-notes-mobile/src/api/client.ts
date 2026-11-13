@@ -1,8 +1,13 @@
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import axios, { AxiosInstance, AxiosResponse } from 'axios';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Config } from '../constants/Config';
-import { ApiResponse } from './types';
+
+/** 透传 HTTP 状态码与服务端响应体的请求错误接口 */
+export interface ApiError extends Error {
+  status?: number;
+  data?: any;
+}
 
 let currentServerUrl = Config.defaultServerUrl;
 let onUnauthorizedCallback: (() => void) | null = null;
@@ -43,7 +48,7 @@ const axiosInstance: AxiosInstance = axios.create({
       currentServerUrl = savedUrl;
       axiosInstance.defaults.baseURL = `${savedUrl}/api`;
     }
-  } catch (e) {
+  } catch {
     // 忽略 SSR 或首屏异步读取警告
   }
 })();
@@ -101,7 +106,7 @@ axiosInstance.interceptors.response.use(
       try {
         await AsyncStorage.removeItem(Config.storageKeys.token);
         await AsyncStorage.removeItem(Config.storageKeys.user);
-      } catch (e) {}
+      } catch {}
 
       if (onUnauthorizedCallback) {
         onUnauthorizedCallback();
@@ -109,7 +114,10 @@ axiosInstance.interceptors.response.use(
     }
 
     const message = error.response?.data?.message || error.message || '网络请求错误，请稍后重试';
-    return Promise.reject(new Error(message));
+    const apiError: ApiError = new Error(message);
+    apiError.status = error.response?.status;
+    apiError.data = error.response?.data;
+    return Promise.reject(apiError);
   }
 );
 

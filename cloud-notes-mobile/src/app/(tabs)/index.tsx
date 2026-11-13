@@ -21,9 +21,22 @@ import { Config } from '../../constants/Config';
 import RAGKnowledgeModal from '../../components/RAGKnowledgeModal';
 import MoveNoteBottomSheet from '../../components/MoveNoteBottomSheet';
 import VaultUnlockModal from '../../components/VaultUnlockModal';
+import ActionContextSheet, {
+  ActionSheetItem,
+  triggerHaptic,
+} from '../../components/ActionContextSheet';
+import TextPromptModal from '../../components/TextPromptModal';
 import * as cryptoVault from '../../utils/cryptoVault';
 import { mobileSearchEngine, SearchResultItem } from '../../utils/search/mobileSearchEngine';
+import { mobileSyncManager } from '../../utils/storage/mobileSyncManager';
 import { getAllCachedNotes } from '../../utils/storage/mobileNotesDB';
+import {
+  buildNoteFolderActionItems,
+  copyNoteWikiLink,
+  deleteNoteOrFolder,
+  showNotice,
+  toggleItemEncryption,
+} from '../../utils/noteContextActions';
 
 const renderHighlightedText = (text: string, query: string, style?: any, highlightStyle?: any) => {
   if (!text) return null;
@@ -83,117 +96,18 @@ export default function NotesScreen() {
   const [moveTargetNote, setMoveTargetNote] = useState<any>(null);
   const [showVaultModal, setShowVaultModal] = useState(false);
   const [pendingEncryptItem, setPendingEncryptItem] = useState<any>(null);
-
-  // 切换笔记或文件夹加密状态
-  const handleToggleEncryption = async (item: any) => {
-    const isEncrypted = Boolean(item.isEncrypted);
-    const nextStatus = !isEncrypted;
-    const noteId = item._id || item.id;
-
-    if (nextStatus && !cryptoVault.hasSessionKey()) {
-      setPendingEncryptItem(item);
-      setShowVaultModal(true);
-      return;
-    }
-
-    try {
-      if (item.type === 'folder') {
-        const res = await notesApi.updateNote(noteId, { isEncrypted: nextStatus });
-        if (res.code === 200) {
-          Alert.alert('提示', nextStatus ? '文件夹已设为私密' : '文件夹已解除私密');
-          loadData(true);
-        } else {
-          throw new Error(res.message);
-        }
-      } else {
-        if (nextStatus) {
-          const detailRes = await notesApi.getNoteDetail(noteId);
-          const rawContent = detailRes?.data?.content || item.content || '';
-          const pin = cryptoVault.getSessionKey();
-          const salt = cryptoVault.getSessionSalt() || '00'.repeat(16);
-          const encryptedData = await cryptoVault.encryptNote(rawContent, pin!, salt);
-          const res = await notesApi.updateNote(noteId, {
-            isEncrypted: true,
-            encryptedData,
-            content: '',
-          });
-          if (res.code === 200) {
-            Alert.alert('提示', '笔记已加密设为私密');
-            loadData(true);
-          } else {
-            throw new Error(res.message);
-          }
-        } else {
-          const detailRes = await notesApi.getNoteDetail(noteId);
-          let plainContent = detailRes?.data?.content || '';
-          if (detailRes?.data?.encryptedData) {
-            const pin = cryptoVault.getSessionKey();
-            if (pin) {
-              plainContent = await cryptoVault.decryptNote(detailRes.data.encryptedData, pin);
-            }
-          }
-          const res = await notesApi.updateNote(noteId, {
-            isEncrypted: false,
-            encryptedData: null,
-            content: plainContent,
-          });
-          if (res.code === 200) {
-            Alert.alert('提示', '笔记已解除私密保护');
-            loadData(true);
-          } else {
-            throw new Error(res.message);
-          }
-        }
-      }
-    } catch (err: any) {
-      Alert.alert('操作失败', err.message || '网络异常');
-    }
-  };
-
-  // 长按卡片唤起快捷操作菜单
-  const handleNoteLongPress = (item: any) => {
-    const isFolder = item.type === 'folder';
-    const noteId = item._id || item.id;
-    Alert.alert(
-      item.title || (isFolder ? '未命名文件夹' : '无标题笔记'),
-      '快捷操作',
-      [
-        {
-          text: item.isEncrypted ? '🔓 解除私密保护' : '🔒 设为私密',
-          onPress: () => handleToggleEncryption(item),
-        },
-        {
-          text: '移动到...',
-          onPress: () => {
-            setMoveTargetNote(item);
-            setShowMoveModal(true);
-          },
-        },
-        {
-          text: '删除',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert('确认删除', `确定要删除 "${item.title || '此项'}" 吗？`, [
-              { text: '取消', style: 'cancel' },
-              {
-                text: '删除',
-                style: 'destructive',
-                onPress: async () => {
-                  try {
-                    await notesApi.deleteNote(noteId);
-                    loadData(true);
-                  } catch (e: any) {
-                    Alert.alert('删除失败', e?.message || '网络异常');
-                  }
-                },
-              },
-            ]);
-          },
-        },
-        { text: '取消', style: 'cancel' },
-      ]
-    );
-  };
+  const [contextSheet, setContextSheet] = useState<{
+    title: string;
+    subtitle: string;
+    items: ActionSheetItem[];
+  } | null>(null);
+  const [promptConfig, setPromptConfig] = useState<{
+    mode: 'rename' | 'create_folder';
+    item: any;
+    title: string;
+    placeholder: string;
+    defaultValue: string;
+  } | null>(null);
 
   // SWR 保活控制器：初次挂载冷启动展示 Loading，切 Tab 聚焦时保持 FlatList 存活与滚动位不变
   const hasLoadedOnceRef = useRef(false);
@@ -373,25 +287,97 @@ export default function NotesScreen() {
   };
 
   const toggleStar = async (item: Note | SearchResultItem) => {
+    const targetId = (item as any)._id || (item as any).id;
     const newStatus = !item.isStarred;
     // 乐观更新
     setNotes(prev =>
-      prev.map(n => (n._id === item._id ? { ...n, isStarred: newStatus } : n))
+      prev.map(n => (n._id === targetId ? { ...n, isStarred: newStatus } : n))
     );
     setSearchResults(prev =>
-      prev.map(n => (n._id === item._id ? { ...n, isStarred: newStatus } : n))
+      prev.map(n => (n.id === targetId ? { ...n, isStarred: newStatus } : n))
     );
     try {
-      await notesApi.updateNoteStarred(item._id, newStatus);
-    } catch (e) {
-      // 失败回退
+      await notesApi.updateNoteStarred(targetId, newStatus);
+    } catch (e: any) {
+      if (!e?.status) {
+        await mobileSyncManager.queueOfflineAction(targetId, 'star', { isStarred: newStatus });
+        return;
+      }
+      // 服务端明确失败时回退
       setNotes(prev =>
-        prev.map(n => (n._id === item._id ? { ...n, isStarred: !newStatus } : n))
+        prev.map(n => (n._id === targetId ? { ...n, isStarred: !newStatus } : n))
       );
       setSearchResults(prev =>
-        prev.map(n => (n._id === item._id ? { ...n, isStarred: !newStatus } : n))
+        prev.map(n => (n.id === targetId ? { ...n, isStarred: !newStatus } : n))
       );
     }
+  };
+
+  // 切换笔记或文件夹加密状态
+  const handleToggleEncryption = async (item: any) => {
+    await toggleItemEncryption(item, {
+      onRequireVaultUnlock: () => {
+        setPendingEncryptItem(item);
+        setShowVaultModal(true);
+      },
+      onSuccess: () => {
+        void loadData(true);
+      },
+    });
+  };
+
+  // 长按卡片唤起快捷操作面板（在事件处理器内构筑动作清单，遵循 React Compiler 不可变规则）
+  const handleNoteLongPress = (item: any) => {
+    triggerHaptic('light');
+    const isFolder = item?.type === 'folder';
+    const items = buildNoteFolderActionItems(item, {
+      onToggleStar: target => void toggleStar(target),
+      onCopyWikiLink: target => void copyNoteWikiLink(target.title),
+      onNewNoteInFolder: folder => {
+        const targetId = folder._id || folder.id;
+        router.push({
+          pathname: '/note/edit',
+          params: {
+            notebookId: folder.notebookId || activeNotebookId || '',
+            parentId: targetId,
+          },
+        });
+      },
+      onNewSubfolder: folder => {
+        setPromptConfig({
+          mode: 'create_folder',
+          item: folder,
+          title: '新建子文件夹',
+          placeholder: '请输入子文件夹名称',
+          defaultValue: '',
+        });
+      },
+      onRename: target => {
+        setPromptConfig({
+          mode: 'rename',
+          item: target,
+          title: target.type === 'folder' ? '重命名文件夹' : '重命名笔记',
+          placeholder: '请输入新名称',
+          defaultValue: target.title || '',
+        });
+      },
+      onMove: target => {
+        setMoveTargetNote(target);
+        setShowMoveModal(true);
+      },
+      onToggleEncryption: target => void handleToggleEncryption(target),
+      onDelete: target => {
+        void deleteNoteOrFolder(target, () => {
+          void loadData(true);
+        });
+      },
+    });
+
+    setContextSheet({
+      title: item?.title || (isFolder ? '未命名文件夹' : '无标题笔记'),
+      subtitle: notebooks.find(n => n._id === item?.notebookId)?.title || '笔记本',
+      items,
+    });
   };
 
   const isSearching = searchQuery.trim().length > 0;
@@ -403,8 +389,6 @@ export default function NotesScreen() {
     }
     return notes.filter(item => !item.parentId);
   }, [isSearching, searchResults, notes]);
-
-  const activeNotebook = notebooks.find(nb => nb._id === activeNotebookId);
 
   // 清洗 Markdown 特殊语法以展示纯文本摘要 (先切片后正则，大幅提升列表渲染帧率)
   const cleanSnippet = (content?: string) => {
@@ -515,9 +499,9 @@ export default function NotesScreen() {
         ) : (
           <Text style={[styles.cardSnippet, isFolder && styles.folderSnippet]} numberOfLines={2}>
             {item.isEncrypted && !cryptoVault.hasSessionKey()
-              ? '🔒 私密内容（端到端加密保护）'
+              ? '私密内容（端到端加密保护）'
               : isFolder
-              ? '📁 点击浏览文件夹内容'
+              ? '点击浏览文件夹内容'
               : cleanSnippet(item.content)}
           </Text>
         )}
@@ -684,8 +668,48 @@ export default function NotesScreen() {
         onSuccess={() => {
           setShowVaultModal(false);
           if (pendingEncryptItem) {
-            handleToggleEncryption(pendingEncryptItem);
+            void handleToggleEncryption(pendingEncryptItem);
             setPendingEncryptItem(null);
+          }
+        }}
+      />
+
+      {/* 长按上下文动作面板 */}
+      <ActionContextSheet
+        visible={Boolean(contextSheet)}
+        title={contextSheet?.title}
+        subtitle={contextSheet?.subtitle}
+        items={contextSheet?.items || []}
+        onClose={() => setContextSheet(null)}
+      />
+
+      {/* 重命名 / 新建子文件夹输入弹窗 */}
+      <TextPromptModal
+        visible={Boolean(promptConfig)}
+        title={promptConfig?.title || ''}
+        placeholder={promptConfig?.placeholder}
+        defaultValue={promptConfig?.defaultValue}
+        confirmLabel="确定"
+        onClose={() => setPromptConfig(null)}
+        onConfirm={async value => {
+          if (!promptConfig) return;
+          const target = promptConfig.item;
+          const targetId = target._id || target.id;
+          try {
+            if (promptConfig.mode === 'rename') {
+              await notesApi.updateNote(targetId, { title: value });
+            } else {
+              await notesApi.createNote({
+                title: value,
+                content: '',
+                type: 'folder',
+                notebookId: target.notebookId || activeNotebookId || '',
+                parentId: targetId,
+              });
+            }
+            void loadData(true);
+          } catch (err: any) {
+            showNotice('操作失败', err?.message || '网络异常');
           }
         }}
       />

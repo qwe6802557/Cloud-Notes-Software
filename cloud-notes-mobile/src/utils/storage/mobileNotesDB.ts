@@ -9,22 +9,33 @@ export interface NoteCache {
   id: string;
   title: string;
   content: string;
+  notebookId?: string;
+  parentId?: string | null;
   isEncrypted?: boolean;
   encryptedData?: string | null;
+  contentVersion?: number;
+  remoteUpdatedAt?: string;
   updatedAt: string;
   lastSavedContent: string;
   lastSyncedAt: string;
   isDirty: boolean;
 }
 
+export type OfflineMutationAction = 'update' | 'create' | 'delete' | 'move' | 'star';
+
 export interface OfflineMutation {
   seq: number;
   noteId: string;
-  action: 'update' | 'create';
+  action: OfflineMutationAction;
+  clientId?: string;
+  expectedVersion?: number;
   payload: {
     title?: string;
     content?: string;
     notebookId?: string;
+    parentId?: string | null;
+    targetParentId?: string | null;
+    isStarred?: boolean;
     isEncrypted?: boolean;
     encryptedData?: string | null;
   };
@@ -33,9 +44,25 @@ export interface OfflineMutation {
   retryCount: number;
 }
 
+export interface StoredConflictItem {
+  noteId: string;
+  title: string;
+  localDraft: {
+    title: string;
+    content: string;
+    isEncrypted?: boolean;
+    encryptedData?: string | null;
+    updatedAt?: string;
+  };
+  serverNote: any;
+  isEncrypted?: boolean;
+  detectedAt: string;
+}
+
 const CACHE_KEY_PREFIX = '@cloud_notes:cache:';
 const ALIAS_KEY_PREFIX = '@cloud_notes:alias:';
 const MUTATIONS_KEY = '@cloud_notes:mutations';
+const CONFLICTS_KEY = '@cloud_notes:conflicts';
 
 // ==================== 1. 本地笔记快照缓存 API ====================
 
@@ -75,22 +102,54 @@ export async function getNoteCache(id: string): Promise<NoteCache | null> {
 }
 
 /**
- * 保存/更新单篇笔记的本地快照
+ * 保存/更新单篇笔记的本地快照（增量保留未传入的加密、版本与远端基准字段）
  */
 export async function saveNoteCache(noteCache: Partial<NoteCache> & { id: string }): Promise<void> {
   if (!noteCache || !noteCache.id) return;
   try {
+    let existing: NoteCache | null = null;
+    try {
+      const rawExisting = await AsyncStorage.getItem(`${CACHE_KEY_PREFIX}${noteCache.id}`);
+      if (rawExisting) {
+        existing = JSON.parse(rawExisting) as NoteCache;
+      }
+    } catch {}
+
+    const nextContent =
+      noteCache.content !== undefined ? noteCache.content : (existing?.content ?? '');
+
     const record: NoteCache = {
       id: noteCache.id,
-      title: noteCache.title || '',
-      content: noteCache.content !== undefined ? noteCache.content : '',
-      updatedAt: noteCache.updatedAt || new Date().toISOString(),
+      title: noteCache.title !== undefined ? noteCache.title : (existing?.title ?? ''),
+      content: nextContent,
+      notebookId:
+        noteCache.notebookId !== undefined ? noteCache.notebookId : existing?.notebookId,
+      parentId:
+        noteCache.parentId !== undefined ? noteCache.parentId : existing?.parentId,
+      isEncrypted:
+        noteCache.isEncrypted !== undefined
+          ? Boolean(noteCache.isEncrypted)
+          : Boolean(existing?.isEncrypted),
+      encryptedData:
+        noteCache.encryptedData !== undefined
+          ? noteCache.encryptedData
+          : (existing?.encryptedData ?? null),
+      contentVersion:
+        noteCache.contentVersion !== undefined
+          ? noteCache.contentVersion
+          : existing?.contentVersion,
+      remoteUpdatedAt:
+        noteCache.remoteUpdatedAt !== undefined
+          ? noteCache.remoteUpdatedAt
+          : existing?.remoteUpdatedAt,
+      updatedAt: noteCache.updatedAt || existing?.updatedAt || new Date().toISOString(),
       lastSavedContent:
         noteCache.lastSavedContent !== undefined
           ? noteCache.lastSavedContent
-          : noteCache.content || '',
-      lastSyncedAt: noteCache.lastSyncedAt || new Date().toISOString(),
-      isDirty: Boolean(noteCache.isDirty),
+          : (existing?.lastSavedContent ?? nextContent),
+      lastSyncedAt: noteCache.lastSyncedAt || existing?.lastSyncedAt || new Date().toISOString(),
+      isDirty:
+        noteCache.isDirty !== undefined ? Boolean(noteCache.isDirty) : Boolean(existing?.isDirty),
     };
 
     await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${noteCache.id}`, JSON.stringify(record));
@@ -136,25 +195,36 @@ export async function getAllCachedNotes(): Promise<NoteCache[]> {
 }
 
 /**
- * 离线新建笔记分配本地临时 ID
+ * 离线新建笔记分配本地临时 ID（附带幂等 clientId 与可选目录/加密元数据）
  */
 export async function createOfflineNote({
   title,
   content,
   notebookId,
+  parentId = null,
+  isEncrypted = false,
+  encryptedData = null,
 }: {
   title: string;
   content: string;
   notebookId?: string;
+  parentId?: string | null;
+  isEncrypted?: boolean;
+  encryptedData?: string | null;
 }): Promise<NoteCache> {
   const tempId = `local_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const now = new Date().toISOString();
+  const safeContent = isEncrypted ? '' : (content || '');
   const record: NoteCache = {
     id: tempId,
     title: title || '无标题笔记',
-    content: content || '',
+    content: safeContent,
+    notebookId,
+    parentId,
+    isEncrypted: Boolean(isEncrypted),
+    encryptedData: encryptedData || null,
     updatedAt: now,
-    lastSavedContent: content || '',
+    lastSavedContent: safeContent,
     lastSyncedAt: now,
     isDirty: true,
   };
@@ -163,7 +233,15 @@ export async function createOfflineNote({
   await enqueueMutation({
     noteId: tempId,
     action: 'create',
-    payload: { title, content, notebookId },
+    clientId: tempId,
+    payload: {
+      title: record.title,
+      content: safeContent,
+      notebookId,
+      parentId,
+      isEncrypted: Boolean(isEncrypted),
+      encryptedData: encryptedData || null,
+    },
   });
 
   return record;
@@ -174,36 +252,63 @@ export async function createOfflineNote({
  */
 export async function remapLocalNoteId(
   tempId: string,
-  realNote: { id: string; title: string; content: string; updatedAt: string; notebookId?: string }
+  realNote: {
+    id: string;
+    title: string;
+    content: string;
+    updatedAt: string;
+    notebookId?: string;
+    parentId?: string | null;
+    isEncrypted?: boolean;
+    encryptedData?: string | null;
+    contentVersion?: number;
+  }
 ): Promise<void> {
   if (!tempId || !realNote?.id || tempId === realNote.id) return;
   try {
-    const record: NoteCache = {
-      id: realNote.id,
-      title: realNote.title,
-      content: realNote.content,
-      updatedAt: realNote.updatedAt,
-      lastSavedContent: realNote.content,
-      lastSyncedAt: new Date().toISOString(),
-      isDirty: false,
-    };
+    let tempCache: NoteCache | null = null;
+    try {
+      const rawTemp = await AsyncStorage.getItem(`${CACHE_KEY_PREFIX}${tempId}`);
+      if (rawTemp) tempCache = JSON.parse(rawTemp) as NoteCache;
+    } catch {}
 
-    await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${realNote.id}`, JSON.stringify(record));
-    await AsyncStorage.removeItem(`${CACHE_KEY_PREFIX}${tempId}`);
-    await AsyncStorage.setItem(`${ALIAS_KEY_PREFIX}${tempId}`, realNote.id);
-
-    // 重映射突变队列中残留关联
+    // 先重映射突变队列中的关联任务，并检测是否存在创建之后的离线编辑/变更
     const list = await getPendingMutations();
     let hasChanged = false;
+    let hasFollowUpMutation = false;
     list.forEach(item => {
       if (item.noteId === tempId) {
         item.noteId = realNote.id;
         hasChanged = true;
+        if (item.action !== 'create') {
+          hasFollowUpMutation = true;
+        }
       }
     });
     if (hasChanged) {
       await AsyncStorage.setItem(MUTATIONS_KEY, JSON.stringify(list));
     }
+
+    const preserveLocalEdits = Boolean(hasFollowUpMutation && tempCache);
+    const record: NoteCache = {
+      id: realNote.id,
+      title: preserveLocalEdits ? tempCache!.title : realNote.title,
+      content: preserveLocalEdits ? tempCache!.content : realNote.content,
+      notebookId: realNote.notebookId ?? tempCache?.notebookId,
+      parentId: realNote.parentId !== undefined ? realNote.parentId : tempCache?.parentId,
+      isEncrypted: preserveLocalEdits ? tempCache!.isEncrypted : realNote.isEncrypted,
+      encryptedData: preserveLocalEdits ? tempCache!.encryptedData : (realNote.encryptedData ?? null),
+      contentVersion: realNote.contentVersion,
+      remoteUpdatedAt: realNote.updatedAt,
+      updatedAt: preserveLocalEdits ? tempCache!.updatedAt : realNote.updatedAt,
+      lastSavedContent: realNote.content,
+      lastSyncedAt: new Date().toISOString(),
+      isDirty: preserveLocalEdits,
+    };
+
+    await AsyncStorage.setItem(`${CACHE_KEY_PREFIX}${realNote.id}`, JSON.stringify(record));
+    await AsyncStorage.removeItem(`${CACHE_KEY_PREFIX}${tempId}`);
+    await AsyncStorage.setItem(`${ALIAS_KEY_PREFIX}${tempId}`, realNote.id);
   } catch (e) {
     console.warn('[mobileNotesDB] remapLocalNoteId error:', e);
   }
@@ -212,49 +317,81 @@ export async function remapLocalNoteId(
 // ==================== 2. 离线突变队列 (Offline Mutations) API ====================
 
 /**
- * 将离线突变任务压入队列（同 noteId 的 update 任务合并为最新）
+ * 将离线突变任务压入队列（同 noteId 的 update/star/move 任务合并为最新，递增 seq 防止同毫秒碰撞）
  */
 export async function enqueueMutation({
   noteId,
   action = 'update',
   payload = {},
   baseUpdatedAt = null,
+  clientId,
+  expectedVersion,
 }: {
   noteId: string;
-  action?: 'update' | 'create';
-  payload?: any;
+  action?: OfflineMutationAction;
+  payload?: OfflineMutation['payload'];
   baseUpdatedAt?: string | null;
+  clientId?: string;
+  expectedVersion?: number;
 }): Promise<number> {
   if (!noteId) return -1;
   try {
+    const resolvedId = await resolveNoteId(noteId);
     const list = await getPendingMutations();
-    const existingIndex = list.findIndex(t => t.noteId === noteId && t.action === action);
 
-    let targetSeq = Date.now();
+    // 若离线新建尚未同步即被删除，直接清理其本地未上云队列并移除缓存
+    if (action === 'delete' && resolvedId.startsWith('local_')) {
+      const hasLocalCreate = list.some(t => t.noteId === resolvedId && t.action === 'create');
+      if (hasLocalCreate) {
+        const filtered = list.filter(t => t.noteId !== resolvedId);
+        await AsyncStorage.setItem(MUTATIONS_KEY, JSON.stringify(filtered));
+        await deleteNoteCache(resolvedId);
+        return 0;
+      }
+    }
 
-    if (existingIndex !== -1 && action === 'update') {
+    const existingIndex = list.findIndex(t => t.noteId === resolvedId && t.action === action);
+    const maxSeq = list.reduce((max, item) => (item.seq > max ? item.seq : max), 0);
+    const targetSeq = Math.max(Date.now(), maxSeq + 1);
+
+    if (
+      existingIndex !== -1 &&
+      (action === 'update' || action === 'star' || action === 'move')
+    ) {
       const existing = list[existingIndex];
       existing.payload = {
         ...existing.payload,
         ...payload,
       };
+      if (expectedVersion !== undefined) {
+        existing.expectedVersion = expectedVersion;
+      }
+      if (baseUpdatedAt !== null && baseUpdatedAt !== undefined) {
+        existing.baseUpdatedAt = baseUpdatedAt;
+      }
       existing.timestamp = Date.now();
-      targetSeq = existing.seq;
+      await AsyncStorage.setItem(MUTATIONS_KEY, JSON.stringify(list));
+      return existing.seq;
     } else {
+      const nextList =
+        action === 'delete'
+          ? list.filter(t => t.noteId !== resolvedId)
+          : list;
       const newTask: OfflineMutation = {
         seq: targetSeq,
-        noteId,
+        noteId: resolvedId,
         action,
+        clientId,
+        expectedVersion,
         payload,
         baseUpdatedAt,
         timestamp: Date.now(),
         retryCount: 0,
       };
-      list.push(newTask);
+      nextList.push(newTask);
+      await AsyncStorage.setItem(MUTATIONS_KEY, JSON.stringify(nextList));
+      return targetSeq;
     }
-
-    await AsyncStorage.setItem(MUTATIONS_KEY, JSON.stringify(list));
-    return targetSeq;
   } catch (e) {
     console.warn('[mobileNotesDB] enqueueMutation error:', e);
     return -1;
@@ -314,6 +451,73 @@ export async function clearMutationsForNote(noteId: string): Promise<void> {
     await AsyncStorage.setItem(MUTATIONS_KEY, JSON.stringify(filtered));
   } catch (e) {
     console.warn('[mobileNotesDB] clearMutationsForNote error:', e);
+  }
+}
+
+/**
+ * 递增离线突变任务的重试计数并返回最新重试次数
+ */
+export async function incrementMutationRetry(seq: number): Promise<number> {
+  if (!seq) return 0;
+  try {
+    const list = await getPendingMutations();
+    let nextCount = 0;
+    const updated = list.map(t => {
+      if (t.seq === seq) {
+        nextCount = (t.retryCount || 0) + 1;
+        return { ...t, retryCount: nextCount };
+      }
+      return t;
+    });
+    await AsyncStorage.setItem(MUTATIONS_KEY, JSON.stringify(updated));
+    return nextCount;
+  } catch (e) {
+    console.warn('[mobileNotesDB] incrementMutationRetry error:', e);
+    return 0;
+  }
+}
+
+/**
+ * 判断指定笔记是否存在未同步的离线排队任务
+ */
+export async function hasPendingMutationsForNote(noteId: string): Promise<boolean> {
+  if (!noteId) return false;
+  try {
+    const resolvedId = await resolveNoteId(noteId);
+    const list = await getPendingMutations();
+    return list.some(t => t.noteId === noteId || t.noteId === resolvedId);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 读取本地持久化的待裁决同步冲突列表
+ */
+export async function getSavedConflicts(): Promise<StoredConflictItem[]> {
+  try {
+    const raw = await AsyncStorage.getItem(CONFLICTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.warn('[mobileNotesDB] getSavedConflicts error:', e);
+    return [];
+  }
+}
+
+/**
+ * 持久化待裁决同步冲突列表
+ */
+export async function saveConflicts(conflicts: StoredConflictItem[]): Promise<void> {
+  try {
+    if (!conflicts || conflicts.length === 0) {
+      await AsyncStorage.removeItem(CONFLICTS_KEY);
+    } else {
+      await AsyncStorage.setItem(CONFLICTS_KEY, JSON.stringify(conflicts));
+    }
+  } catch (e) {
+    console.warn('[mobileNotesDB] saveConflicts error:', e);
   }
 }
 

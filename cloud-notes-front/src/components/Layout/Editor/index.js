@@ -7,7 +7,7 @@ import gemoji from '@bytemd/plugin-gemoji';
 import math from '@bytemd/plugin-math';
 import mermaid from '@bytemd/plugin-mermaid';
 import breaks from '@bytemd/plugin-breaks';
-import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image, Popover, Radio, Divider, Drawer, Modal } from 'antd';
+import { Empty, Spin, Button, Space, message, Tooltip, Dropdown, Image, Popover, Radio, Divider, Drawer, Modal, Alert } from 'antd';
 import {
     EditOutlined,
     EyeOutlined,
@@ -39,9 +39,8 @@ import {
     SplitCellsOutlined,
     PushpinOutlined,
     LinkOutlined,
-    UnlockOutlined
-
-
+    UnlockOutlined,
+    ExclamationCircleOutlined
 } from '@ant-design/icons';
 
 import zhHans from 'bytemd/locales/zh_Hans.json';
@@ -79,16 +78,15 @@ import SecondaryNotePane from './SecondaryNotePane';
 import NoteTabBar from './NoteTabBar';
 import { useNoteTabs } from '@/hooks/useNoteTabs';
 import SyncStatusPill from './SyncStatusPill';
+import ConflictResolveModal from './ConflictResolveModal';
 import VaultUnlockCard from './VaultUnlockCard';
 import {
     hasSessionKey,
-    getSessionKey,
-    getSessionSalt,
-    encryptNote,
     decryptNote,
     clearSessionKey,
     subscribeVaultLock
 } from '@/utils/cryptoVault';
+import { prepareNoteSavePayload, decryptNoteInMemory } from '@/utils/noteCryptoHelper';
 import { getNoteCache, saveNoteCache } from '@/utils/storage/localNotesDB';
 import syncManager from '@/utils/storage/syncManager';
 
@@ -481,16 +479,40 @@ const NoteEditor = ({
     const [isVaultLocked, setIsVaultLocked] = useState(false);
     const [noteIsEncrypted, setNoteIsEncrypted] = useState(false);
     const [sessionUnlocked, setSessionUnlocked] = useState(() => hasSessionKey());
+    const [syncSnapshot, setSyncSnapshot] = useState(() => syncManager.getSnapshot());
+    const [conflictModalNoteId, setConflictModalNoteId] = useState(null);
+    const editDispatchSeqRef = useRef(0);
+
+    const activeNoteConflict = useMemo(
+        () => (syncSnapshot.conflicts || []).find(c => c.noteId === selectedNote) || null,
+        [syncSnapshot.conflicts, selectedNote]
+    );
 
     useEffect(() => {
         const unsub = subscribeVaultLock(unlocked => {
             setSessionUnlocked(unlocked);
-            if (!unlocked && noteIsEncrypted) {
-                setIsVaultLocked(true);
+            if (!unlocked) {
+                for (const [key, cached] of noteContentCacheRef.current.entries()) {
+                    if (cached?.isEncrypted) {
+                        noteContentCacheRef.current.delete(key);
+                    }
+                }
+                if (noteIsEncrypted) {
+                    setIsVaultLocked(true);
+                    contentRef.current = '';
+                    setContent('');
+                    lastSavedContentRef.current = '';
+                }
             }
         });
         return unsub;
     }, [noteIsEncrypted]);
+
+    useEffect(() => {
+        return syncManager.subscribe(snapshot => {
+            setSyncSnapshot(snapshot);
+        });
+    }, []);
 
     // 多标签页与双栏分屏联动状态 (useNoteTabs)
     const {
@@ -515,7 +537,8 @@ const NoteEditor = ({
         moveTabCrossPane,
         swapPanes,
         reorderTabs,
-        updateTabTitle
+        updateTabTitle,
+        remapTabId
     } = useNoteTabs({
         onActiveNoteChange: onSelectNote
     });
@@ -547,6 +570,68 @@ const NoteEditor = ({
             });
         }
     }, [selectedNote, primaryActiveId, openTab]);
+
+    // 监听 syncManager 单篇笔记事件：双栏同篇同步、冲突裁决回写与 local_ ID 重映射
+    useEffect(() => {
+        return syncManager.subscribeNoteEvents(async event => {
+            if (event.type === 'remapped' && event.tempId && event.realId) {
+                remapTabId(event.tempId, event.realId, event.note?.title);
+                const oldCached = noteContentCacheRef.current.get(event.tempId);
+                if (oldCached) {
+                    noteContentCacheRef.current.delete(event.tempId);
+                    noteContentCacheRef.current.set(event.realId, {
+                        ...oldCached,
+                        contentVersion: event.note?.contentVersion ?? oldCached.contentVersion,
+                        isDirty: false
+                    });
+                }
+                if (currentLoadedNoteIdRef.current === event.tempId) {
+                    currentLoadedNoteIdRef.current = event.realId;
+                }
+                return;
+            }
+
+            if (!selectedNote || event.noteId !== selectedNote) return;
+
+            if (event.type === 'conflict') {
+                setSaveError('存在版本冲突待裁决');
+                return;
+            }
+
+            if (event.type === 'resolved' || (event.type === 'synced' && event.source !== 'primary')) {
+                if (event.type === 'synced' && isDirtyRef.current) return;
+                const incoming = event.note || event.draft;
+                if (!incoming) return;
+                const dec = await decryptNoteInMemory(incoming);
+                if (currentLoadedNoteIdRef.current !== selectedNote) return;
+                const nextContent = dec.locked ? '' : dec.content;
+                const nextTitle = incoming.title ?? noteTitle;
+                setIsVaultLocked(Boolean(dec.locked));
+                contentRef.current = nextContent;
+                setContent(nextContent);
+                lastSavedContentRef.current = nextContent;
+                if (incoming.title !== undefined) {
+                    setNoteTitle(nextTitle);
+                    updateTabTitle(selectedNote, nextTitle);
+                }
+                setIsDirty(false);
+                setSaveError('');
+                if (event.note?.updatedAt || event.updatedAt) {
+                    setLastSavedAt(new Date(event.note?.updatedAt || event.updatedAt));
+                }
+                noteContentCacheRef.current.set(selectedNote, {
+                    content: nextContent,
+                    lastSavedContent: nextContent,
+                    lastSavedSnapshot: incoming.isEncrypted ? (incoming.encryptedData || '') : nextContent,
+                    title: nextTitle,
+                    isEncrypted: Boolean(incoming.isEncrypted),
+                    contentVersion: event.note?.contentVersion ?? event.contentVersion ?? syncManager.getContentVersion(selectedNote),
+                    updatedAt: event.note?.updatedAt || event.updatedAt,
+                    isDirty: false
+                });
+            }
+        });
+    }, [selectedNote, noteTitle, updateTabTitle, remapTabId]);
 
     useEffect(() => {
         if (selectedNote !== closingNoteIdRef.current) {
@@ -590,7 +675,12 @@ const NoteEditor = ({
                     }
                     closeTab(tabId, pane, true);
                 },
-                onCancel: () => {
+                onCancel: async () => {
+                    await syncManager.cancelNotePendingSync(tabId);
+                    if (pane === 'primary' && tabId === selectedNote) {
+                        noteContentCacheRef.current.delete(tabId);
+                        setIsDirty(false);
+                    }
                     closeTab(tabId, pane, true);
                 }
             });
@@ -745,7 +835,7 @@ const NoteEditor = ({
 
             // 若副栏已被用户钉住锁定，提示并拦截，防止冲掉当前参考上下文
             if (secondaryPinned) {
-                message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                message.info('副屏已锁定当前参考笔记，请先点击副屏右上角固定按钮解锁后再切换');
                 return;
             }
 
@@ -1115,7 +1205,7 @@ const NoteEditor = ({
                 })
                 .join('\n');
 
-            const sectionHeader = '### 🔗 反向回织';
+            const sectionHeader = '### 反向回织';
             const sectionIndex = currentDoc.indexOf(sectionHeader);
 
             if (editorInstance?.posFromIndex && editorInstance?.replaceRange) {
@@ -1362,7 +1452,7 @@ const NoteEditor = ({
                         ? `${(file.size / 1024 / 1024).toFixed(1)} MB`
                         : `${Math.round(file.size / 1024)} KB`;
                     if (fileUrl) {
-                        insertTextAtCursor(`\n[📎 ${file.name} (${sizeStr})](${fileUrl})\n`);
+                        insertTextAtCursor(`\n[${file.name} (${sizeStr})](${fileUrl})\n`);
                         message.success(`已插入附件: ${file.name}`);
                     }
                 }
@@ -1863,11 +1953,31 @@ const NoteEditor = ({
             // 1. 本地优先 (Local-First): 优先从内存缓存或 IndexedDB 本地持久化快照秒级呈现
             const memCached = noteContentCacheRef.current.get(selectedNote);
             if (memCached) {
-                contentRef.current = memCached.content || '';
-                setContent(memCached.content || '');
-                lastSavedContentRef.current = memCached.lastSavedContent || memCached.content || '';
-                setNoteTitle(memCached.title || '');
-                setLoading(false);
+                const memEncrypted = Boolean(memCached.isEncrypted);
+                setNoteIsEncrypted(memEncrypted);
+                if (memEncrypted && !hasSessionKey()) {
+                    setIsVaultLocked(true);
+                    if (memCached.title) setNoteTitle(memCached.title);
+                    setLoading(false);
+                } else {
+                    setIsVaultLocked(false);
+                    contentRef.current = memCached.content || '';
+                    setContent(memCached.content || '');
+                    lastSavedContentRef.current = memCached.lastSavedContent !== undefined
+                        ? memCached.lastSavedContent
+                        : (memCached.content || '');
+                    setNoteTitle(memCached.title || '');
+                    setIsDirty(Boolean(memCached.isDirty));
+                    if (memCached.contentVersion !== undefined && memCached.contentVersion !== null) {
+                        syncManager.setLastKnownRemoteUpdatedAt(
+                            selectedNote,
+                            memCached.updatedAt,
+                            memCached.lastSavedSnapshot,
+                            memCached.contentVersion
+                        );
+                    }
+                    setLoading(false);
+                }
             } else {
                 const existingTab = primaryTabsRef.current?.find(t => t.id === selectedNote);
                 if (existingTab?.title) {
@@ -1875,24 +1985,42 @@ const NoteEditor = ({
                 }
                 setLoading(true);
 
-                // 异步从 IndexedDB 极速提纯 (<10ms)，若内存无缓存则用本地快照先行上屏
-                getNoteCache(selectedNote).then(idbCached => {
-                    if (idbCached?.isEncrypted && !hasSessionKey()) {
-                        setIsVaultLocked(true);
+                // 异步从 IndexedDB 极速提纯 (<10ms)，若内存无缓存则用本地快照先行上屏（加密笔记需在内存中解密）
+                getNoteCache(selectedNote).then(async idbCached => {
+                    if (!idbCached || !mounted || currentLoadedNoteIdRef.current !== selectedNote) return;
+
+                    if (idbCached.isEncrypted) {
                         setNoteIsEncrypted(true);
-                        if (idbCached.title) setNoteTitle(idbCached.title);
-                        setLoading(false);
-                        return;
-                    }
-                    if (idbCached && mounted && currentLoadedNoteIdRef.current === selectedNote) {
-                        contentRef.current = idbCached.content || '';
-                        setContent(idbCached.content || '');
-                        lastSavedContentRef.current = idbCached.lastSavedContent || idbCached.content || '';
-                        if (idbCached.title) setNoteTitle(idbCached.title);
-                        setLoading(false);
-                        if (idbCached.isDirty) {
-                            setIsDirty(true);
+                        if (!hasSessionKey()) {
+                            setIsVaultLocked(true);
+                            if (idbCached.title) setNoteTitle(idbCached.title);
+                            setLoading(false);
+                            return;
                         }
+                        setIsVaultLocked(false);
+                    }
+
+                    const dec = await decryptNoteInMemory(idbCached);
+                    if (!mounted || currentLoadedNoteIdRef.current !== selectedNote) return;
+
+                    const restoredContent = dec.content || '';
+                    contentRef.current = restoredContent;
+                    setContent(restoredContent);
+                    lastSavedContentRef.current = idbCached.isDirty
+                        ? (idbCached.lastSavedContent || '')
+                        : restoredContent;
+                    if (idbCached.title) setNoteTitle(idbCached.title);
+                    if (idbCached.contentVersion !== undefined && idbCached.contentVersion !== null) {
+                        syncManager.setLastKnownRemoteUpdatedAt(
+                            selectedNote,
+                            idbCached.remoteUpdatedAt || idbCached.updatedAt,
+                            idbCached.isEncrypted ? (idbCached.encryptedData || '') : restoredContent,
+                            idbCached.contentVersion
+                        );
+                    }
+                    setLoading(false);
+                    if (idbCached.isDirty) {
+                        setIsDirty(true);
                     }
                 }).catch(() => {});
             }
@@ -1918,20 +2046,18 @@ const NoteEditor = ({
                         setIsVaultLocked(false);
                     }
 
-                    // SWR 安全保稿: 若用户已在当前篇产生未保存编辑（isDirty），严格保护本地输入现场
-                    if (isDirtyRef.current) {
+                    // SWR 安全保稿: 若用户已在当前篇产生未保存编辑（isDirty）或存在未裁决冲突，严格保护本地输入现场与基线版本
+                    if (isDirtyRef.current || syncManager.getConflict(selectedNote)) {
                         return;
                     }
 
-                    let noteContent = result?.note?.content || '';
-                    if (isEnc && result?.note?.encryptedData) {
-                        try {
-                            noteContent = await decryptNote(result.note.encryptedData, getSessionKey());
-                        } catch {
-                            noteContent = result?.note?.content || '';
-                        }
+                    const dec = await decryptNoteInMemory(result?.note);
+                    if (!mounted || currentLoadedNoteIdRef.current !== selectedNote) {
+                        return;
                     }
+                    const noteContent = dec.decryptError ? (result?.note?.content || '') : dec.content;
                     const loadedTitle = result?.note?.title || '';
+                    const remoteSnapshot = isEnc ? (result?.note?.encryptedData || '') : noteContent;
 
                     contentRef.current = noteContent;
                     setContent(noteContent);
@@ -1941,25 +2067,38 @@ const NoteEditor = ({
                         updateTabTitle(selectedNote, loadedTitle);
                     }
                     setLastSavedAt(result?.note?.updatedAt ? new Date(result.note.updatedAt) : null);
-                    if (result?.note?.updatedAt) {
-                        syncManager.setLastKnownRemoteUpdatedAt(selectedNote, result.note.updatedAt, noteContent);
+                    if (result?.note?.updatedAt || result?.note?.contentVersion != null) {
+                        syncManager.setLastKnownRemoteUpdatedAt(
+                            selectedNote,
+                            result.note.updatedAt,
+                            remoteSnapshot,
+                            result.note.contentVersion
+                        );
                     }
                     setIsDirty(false);
 
                     noteContentCacheRef.current.set(selectedNote, {
                         content: noteContent,
                         lastSavedContent: noteContent,
+                        lastSavedSnapshot: remoteSnapshot,
                         title: loadedTitle,
-                        updatedAt: result?.note?.updatedAt
+                        isEncrypted: isEnc,
+                        contentVersion: result?.note?.contentVersion,
+                        updatedAt: result?.note?.updatedAt,
+                        isDirty: false
                     });
 
-                    // 同步刷新本地持久化
+                    // 同步刷新本地持久化（加密笔记禁止落盘明文 content）
                     saveNoteCache({
                         id: selectedNote,
                         title: loadedTitle,
-                        content: noteContent,
+                        content: isEnc ? '' : noteContent,
+                        isEncrypted: isEnc,
+                        encryptedData: isEnc ? (result?.note?.encryptedData || null) : null,
+                        contentVersion: result?.note?.contentVersion,
+                        remoteUpdatedAt: result?.note?.updatedAt,
                         updatedAt: result?.note?.updatedAt,
-                        lastSavedContent: noteContent,
+                        lastSavedContent: isEnc ? '' : noteContent,
                         lastSyncedAt: new Date().toISOString(),
                         isDirty: false
                     });
@@ -1998,24 +2137,34 @@ const NoteEditor = ({
     const prevActiveViewRef = useRef(activeView);
     useEffect(() => {
         if (prevActiveViewRef.current !== 'notes' && activeView === 'notes' && selectedNote) {
-            if (!isDirty) {
-                getNoteDetail(selectedNote).then(result => {
+            if (!isDirty && !syncManager.getConflict(selectedNote)) {
+                getNoteDetail(selectedNote).then(async result => {
                     const note = result?.note;
-                    if (note && note.content !== undefined) {
-                        const newContent = note.content || '';
-                        const newTitle = note.title || '';
-                        if (newContent !== contentRef.current || newTitle !== noteTitle) {
-                            contentRef.current = newContent;
-                            setContent(newContent);
-                            lastSavedContentRef.current = newContent;
-                            setNoteTitle(newTitle);
-                            if (newTitle) {
-                                updateTabTitle(selectedNote, newTitle);
-                            }
-                            setLastSavedAt(note.updatedAt ? new Date(note.updatedAt) : null);
-                            if (note.updatedAt) {
-                                syncManager.setLastKnownRemoteUpdatedAt(selectedNote, note.updatedAt, newContent);
-                            }
+                    if (!note || currentLoadedNoteIdRef.current !== selectedNote || isDirtyRef.current) return;
+                    if (note.isEncrypted && !hasSessionKey()) {
+                        setIsVaultLocked(true);
+                        return;
+                    }
+                    const dec = await decryptNoteInMemory(note);
+                    const newContent = dec.content || '';
+                    const newTitle = note.title || '';
+                    if (newContent !== contentRef.current || newTitle !== noteTitle) {
+                        contentRef.current = newContent;
+                        setContent(newContent);
+                        lastSavedContentRef.current = newContent;
+                        setNoteTitle(newTitle);
+                        if (newTitle) {
+                            updateTabTitle(selectedNote, newTitle);
+                        }
+                        setLastSavedAt(note.updatedAt ? new Date(note.updatedAt) : null);
+                        const snapshot = note.isEncrypted ? (note.encryptedData || '') : newContent;
+                        if (note.updatedAt || note.contentVersion != null) {
+                            syncManager.setLastKnownRemoteUpdatedAt(
+                                selectedNote,
+                                note.updatedAt,
+                                snapshot,
+                                note.contentVersion
+                            );
                         }
                     }
                 }).catch(() => {});
@@ -2029,42 +2178,83 @@ const NoteEditor = ({
         setContent(value);
         setSaveError('');
 
-        if (selectedNote) {
+        if (!loadingNoteRef.current) {
+            const dirty = value !== lastSavedContentRef.current;
+            setIsDirty(dirty);
+
+            if (selectedNote) {
+                const cached = noteContentCacheRef.current.get(selectedNote) || {};
+                noteContentCacheRef.current.set(selectedNote, {
+                    ...cached,
+                    content: value,
+                    isEncrypted: noteIsEncrypted,
+                    contentVersion: cached.contentVersion ?? syncManager.getContentVersion(selectedNote),
+                    isDirty: dirty
+                });
+            }
+
+            if (selectedNote && dirty) {
+                if (noteIsEncrypted && !hasSessionKey()) {
+                    setIsVaultLocked(true);
+                    message.warning('私密保险箱当前处于锁定状态，无法加密保存更改');
+                    return;
+                }
+
+                const changeSeq = ++editDispatchSeqRef.current;
+                const activeNoteId = selectedNote;
+                const activeEncrypted = noteIsEncrypted;
+                const activeTitle = noteTitle;
+                const activeBaseUpdatedAt = lastSavedAt;
+                const expectedVer = syncManager.getContentVersion(activeNoteId);
+
+                // 加密笔记经统一密文构造器就地加密后再写本地缓存并调度 1.5s 防抖上云，绝不落盘明文
+                prepareNoteSavePayload({
+                    title: activeTitle,
+                    content: value,
+                    isEncrypted: activeEncrypted,
+                    baseUpdatedAt: activeBaseUpdatedAt,
+                    expectedVersion: expectedVer,
+                    source: 'primary'
+                }).then(prep => {
+                    if (!prep.ok) return;
+                    if (changeSeq !== editDispatchSeqRef.current || currentLoadedNoteIdRef.current !== activeNoteId) {
+                        return;
+                    }
+
+                    syncManager.notifyLocalDirty(activeNoteId, prep.payload);
+                    syncManager.scheduleAutoSync(activeNoteId, {
+                        ...prep.payload,
+                        onSyncSuccess: syncRes => {
+                            if (currentLoadedNoteIdRef.current !== activeNoteId) return;
+                            if (syncRes?.updatedAt) {
+                                setLastSavedAt(new Date(syncRes.updatedAt));
+                            }
+                            if (contentRef.current === value) {
+                                lastSavedContentRef.current = value;
+                                setIsDirty(false);
+                                const prevMem = noteContentCacheRef.current.get(activeNoteId) || {};
+                                noteContentCacheRef.current.set(activeNoteId, {
+                                    ...prevMem,
+                                    content: value,
+                                    lastSavedContent: value,
+                                    lastSavedSnapshot: activeEncrypted ? prep.payload.encryptedData : value,
+                                    contentVersion: syncRes?.contentVersion ?? prevMem.contentVersion,
+                                    updatedAt: syncRes?.updatedAt || prevMem.updatedAt,
+                                    isDirty: false
+                                });
+                            }
+                        }
+                    }, 1500);
+                }).catch(err => {
+                    console.error('[Editor] Encrypt draft failed:', err);
+                });
+            }
+        } else if (selectedNote) {
             const cached = noteContentCacheRef.current.get(selectedNote) || {};
             noteContentCacheRef.current.set(selectedNote, {
                 ...cached,
                 content: value
             });
-        }
-
-        if (!loadingNoteRef.current) {
-            const dirty = value !== lastSavedContentRef.current;
-            setIsDirty(dirty);
-
-            if (selectedNote && dirty) {
-                // 1. 键盘敲击按键即时写回 IndexedDB 本地持久化 (0 丢稿保底)
-                syncManager.notifyLocalDirty(selectedNote, {
-                    title: noteTitle,
-                    content: value,
-                    baseUpdatedAt: lastSavedAt
-                });
-
-                // 2. 1.5s 防抖后台增量静默上云
-                syncManager.scheduleAutoSync(selectedNote, {
-                    title: noteTitle,
-                    content: value,
-                    baseUpdatedAt: lastSavedAt,
-                    onSyncSuccess: syncRes => {
-                        if (syncRes?.updatedAt) {
-                            setLastSavedAt(new Date(syncRes.updatedAt));
-                        }
-                        if (contentRef.current === value) {
-                            lastSavedContentRef.current = value;
-                            setIsDirty(false);
-                        }
-                    }
-                }, 1500);
-            }
         }
     };
 
@@ -2076,7 +2266,15 @@ const NoteEditor = ({
             return;
         }
 
-        if (!isDirty && content === lastSavedContentRef.current) {
+        if (!isDirty && content === lastSavedContentRef.current && !syncManager.getConflict(selectedNote)) {
+            return;
+        }
+
+        if (noteIsEncrypted && !hasSessionKey()) {
+            setIsVaultLocked(true);
+            if (!options.silent) {
+                message.warning('私密保险箱未解锁，无法保存加密笔记');
+            }
             return;
         }
 
@@ -2091,24 +2289,57 @@ const NoteEditor = ({
         }
 
         try {
-            // 调度 syncManager 执行双层持久化、并发冲突检测与安全分叉
-            let saveContent = content;
-            let saveEncryptedData = undefined;
-            if (noteIsEncrypted && hasSessionKey()) {
-                saveEncryptedData = await encryptNote(content, getSessionKey(), getSessionSalt());
-                saveContent = '';
+            const prep = await prepareNoteSavePayload({
+                title: noteTitle,
+                content,
+                isEncrypted: noteIsEncrypted,
+                baseUpdatedAt: lastSavedAt,
+                expectedVersion: syncManager.getContentVersion(selectedNote),
+                source: 'primary'
+            });
+
+            if (!prep.ok) {
+                setSaveError('安全箱未解锁');
+                return;
             }
 
             const syncRes = await syncManager.syncNote(selectedNote, {
-                isEncrypted: noteIsEncrypted,
-                encryptedData: saveEncryptedData,
-                title: noteTitle,
-                content: saveContent,
-                baseUpdatedAt: lastSavedAt
+                ...prep.payload,
+                saveType: options.auto ? 'auto' : 'manual'
             }, options);
 
+            if (syncRes?.conflict) {
+                setIsDirty(true);
+                setSaveError('存在版本冲突待裁决');
+                if (!options.auto) {
+                    setConflictModalNoteId(selectedNote);
+                }
+                return;
+            }
+
+            if (syncRes?.permanentError) {
+                setSaveError('保存被拒绝');
+                if (!options.silent) {
+                    message.error('保存失败：服务端拒绝本次修改');
+                }
+                return;
+            }
+
+            const targetId = syncRes?.realId || selectedNote;
+            if (syncRes?.remapped && syncRes?.realId) {
+                remapTabId(selectedNote, syncRes.realId, noteTitle);
+            }
+
+            if (syncRes?.localOnly) {
+                setSaveError('');
+                if (!options.silent) {
+                    message.info('当前离线，修改已安全存入本地待同步');
+                }
+                return;
+            }
+
             if (onSave) {
-                await onSave(selectedNote, content, {
+                await onSave(targetId, content, {
                     title: noteTitle,
                     saveType: options.auto ? 'auto' : 'manual',
                     note: syncRes?.note
@@ -2124,18 +2355,18 @@ const NoteEditor = ({
             setIsDirty(false);
             setSaveError('');
 
-            if (selectedNote) {
-                noteContentCacheRef.current.set(selectedNote, {
-                    content,
-                    lastSavedContent: content,
-                    title: noteTitle,
-                    updatedAt: syncRes?.updatedAt || new Date().toISOString()
-                });
-            }
+            noteContentCacheRef.current.set(targetId, {
+                content,
+                lastSavedContent: content,
+                lastSavedSnapshot: noteIsEncrypted ? prep.payload.encryptedData : content,
+                title: noteTitle,
+                isEncrypted: noteIsEncrypted,
+                contentVersion: syncRes?.contentVersion ?? syncManager.getContentVersion(targetId),
+                updatedAt: syncRes?.updatedAt || new Date().toISOString(),
+                isDirty: false
+            });
 
-            if (syncRes?.forked && syncRes?.forkedNote) {
-                message.info(`已检测到版本冲突，本地修改已安全保存为：${syncRes.forkedNote.title}`);
-            } else if (!options.silent) {
+            if (!options.silent) {
                 message.success('保存成功');
             }
         } catch (error) {
@@ -2151,7 +2382,7 @@ const NoteEditor = ({
                 setSaving(false);
             }
         }
-    }, [autoSaving, content, isDirty, lastSavedAt, noteTitle, onSave, saving, selectedNote, noteIsEncrypted]);
+    }, [autoSaving, content, isDirty, lastSavedAt, noteTitle, onSave, saving, selectedNote, noteIsEncrypted, remapTabId]);
     handleSaveRef.current = handleSave;
 
     const handleRollbackSuccess = useCallback(rolledBackNote => {
@@ -2357,7 +2588,7 @@ const NoteEditor = ({
         items: [
             {
                 key: 'full_summary',
-                icon: <FileTextOutlined style={{ color: '#7c3aed' }} />,
+                icon: <FileTextOutlined style={{ color: '#1890ff' }} />,
                 label: '全文核心摘要提炼'
             },
             {
@@ -2380,7 +2611,7 @@ const NoteEditor = ({
             },
             {
                 key: 'custom',
-                icon: <RobotOutlined style={{ color: '#7c3aed' }} />,
+                icon: <RobotOutlined style={{ color: '#1890ff' }} />,
                 label: '针对全篇笔记对话提问...'
             }
         ],
@@ -2531,7 +2762,7 @@ const NoteEditor = ({
                         知识库问答
                     </Button>
                 </Tooltip>
-                <SyncStatusPill />
+                <SyncStatusPill onOpenConflict={noteId => setConflictModalNoteId(noteId)} />
                 {sessionUnlocked && (
                     <Tooltip title="安全箱已解锁 (点击锁定会话)">
                         <Button
@@ -2571,7 +2802,7 @@ const NoteEditor = ({
                     <Button
                         className="toolbar-tool-btn"
                         type="text"
-                        style={{ color: ghostLinkEnabled ? '#7c3aed' : '#94a3b8' }}
+                        style={{ color: ghostLinkEnabled ? '#1890ff' : '#94a3b8' }}
                         icon={<LinkOutlined />}
                         onClick={() => setGhostLinkEnabled(prev => !prev)}
                         disabled={!selectedNote}
@@ -2777,6 +3008,28 @@ const NoteEditor = ({
                         ) : (
                             renderToolbar()
                         )}
+                        {activeNoteConflict && (
+                            <Alert
+                                type="warning"
+                                showIcon
+                                icon={<ExclamationCircleOutlined />}
+                                className="editor-conflict-banner"
+                                message={
+                                    <span>
+                                        版本冲突待裁决：云端存在更新版本 (v{activeNoteConflict.serverNote?.contentVersion ?? '-'})，本地草稿已安全保留且暂不覆盖云端。
+                                    </span>
+                                }
+                                action={
+                                    <Button
+                                        size="small"
+                                        type="primary"
+                                        onClick={() => setConflictModalNoteId(selectedNote)}
+                                    >
+                                        对比裁决
+                                    </Button>
+                                }
+                            />
+                        )}
                         <div
                             className="primary-editor-scroll-area"
                             onDragEnter={handleEditorDragEnter}
@@ -2798,6 +3051,12 @@ const NoteEditor = ({
                                                 contentRef.current = dec;
                                                 setContent(dec);
                                                 lastSavedContentRef.current = dec;
+                                                syncManager.setLastKnownRemoteUpdatedAt(
+                                                    selectedNote,
+                                                    res.note.updatedAt,
+                                                    res.note.encryptedData,
+                                                    res.note.contentVersion
+                                                );
                                             }
                                         } catch {}
                                     }}
@@ -2823,7 +3082,7 @@ const NoteEditor = ({
                                                     onWeaveAllBacklinks={items => weaveBacklinksToDocument(items)}
                                                     onOpenSplitNote={targetNoteId => {
                                                         if (secondaryPinned) {
-                                                            message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                                                            message.info('副屏已锁定当前参考笔记，请先点击副屏右上角固定按钮解锁后再切换');
                                                             return;
                                                         }
                                                         setSecondaryNoteId(targetNoteId);
@@ -2933,6 +3192,8 @@ const NoteEditor = ({
                                     onSelectNote={setSecondaryNoteId}
                                     onNavigateMainNote={onSelectNote}
                                     selectedNotebook={selectedNotebook}
+                                    onDirtyChange={(tabId, dirty) => setTabDirty(tabId, dirty, 'secondary')}
+                                    onOpenConflict={id => setConflictModalNoteId(id)}
                                 />
                             </div>
                         </>
@@ -2951,7 +3212,7 @@ const NoteEditor = ({
                         onWeaveAllBacklinks={items => weaveBacklinksToDocument(items)}
                         onOpenSplitNote={targetNoteId => {
                             if (secondaryPinned) {
-                                message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                                message.info('副屏已锁定当前参考笔记，请先点击副屏右上角固定按钮解锁后再切换');
                                 return;
                             }
                             setSecondaryNoteId(targetNoteId);
@@ -2997,7 +3258,7 @@ const NoteEditor = ({
                     onWeaveAllBacklinks={items => weaveBacklinksToDocument(items)}
                     onOpenSplitNote={targetNoteId => {
                         if (secondaryPinned) {
-                            message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                            message.info('副屏已锁定当前参考笔记，请先点击副屏右上角固定按钮解锁后再切换');
                             return;
                         }
                         setSecondaryNoteId(targetNoteId);
@@ -3153,7 +3414,7 @@ const NoteEditor = ({
                 onCreateNote={handleCreateWikiLinkNote}
                 onOpenSplitNote={targetNoteId => {
                     if (secondaryPinned) {
-                        message.info('副屏已锁定当前参考笔记，请先点击副屏右上角 📌 解锁后再切换');
+                        message.info('副屏已锁定当前参考笔记，请先点击副屏右上角固定按钮解锁后再切换');
                         return;
                     }
                     setSecondaryNoteId(targetNoteId);
@@ -3176,6 +3437,12 @@ const NoteEditor = ({
                     }
                     setRagDrawerVisible(false);
                 }}
+            />
+
+            <ConflictResolveModal
+                open={Boolean(conflictModalNoteId)}
+                noteId={conflictModalNoteId}
+                onClose={() => setConflictModalNoteId(null)}
             />
         </div>
     );

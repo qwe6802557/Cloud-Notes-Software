@@ -89,6 +89,26 @@ const noteSchema = new mongoose.Schema({
     backlinkCount: {
         type: Number,
         default: 0
+    },
+    // 内容乐观锁版本号，仅正文/标题/加密载荷实质变动时递增
+    contentVersion: {
+        type: Number,
+        default: 1
+    },
+    // 内容实质更新时间，与阅读时间 lastOpenedAt 隔离
+    contentUpdatedAt: {
+        type: Date,
+        default: Date.now
+    },
+    // 客户端离线创建幂等键
+    clientId: {
+        type: String,
+        default: null
+    },
+    // 标题与正文/密文 SHA-256 摘要，用于校验同步与镜像差异
+    contentHash: {
+        type: String,
+        default: ''
     }
 }, {
     timestamps: true
@@ -103,6 +123,12 @@ noteSchema.index({ tags: 1 });
 noteSchema.index({ userId: 1, outlinks: 1, isDeleted: 1 });
 noteSchema.index({ userId: 1, unresolvedLinks: 1 });
 noteSchema.index({ title: 'text', content: 'text' });
+// 使用 partialFilterExpression 仅约束非空字符串 clientId，避免复合稀疏索引对 null 值报 E11000
+noteSchema.index(
+    { userId: 1, clientId: 1 },
+    { unique: true, partialFilterExpression: { clientId: { $type: 'string' }, isDeleted: false } }
+);
+noteSchema.index({ userId: 1, updatedAt: 1, _id: 1 });
 
 // 更新时间
 noteSchema.pre('findOneAndUpdate', function(next) {

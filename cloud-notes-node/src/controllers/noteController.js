@@ -1,5 +1,7 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
 const { ZipArchive } = require('archiver');
 const Note = require('../models/Note');
 const Notebook = require('../models/Notebook');
@@ -10,6 +12,29 @@ const { indexSingleNote, clearNoteIndex } = require('../services/ragIndexService
 const config = require('../config');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
+
+// 计算笔记内容 SHA-256 摘要，加密笔记仅对密文计算
+const computeNoteContentHash = ({ title = '', content = '', isEncrypted = false, encryptedData = null }) => {
+    const body = isEncrypted ? (encryptedData || '') : (content || '');
+    return crypto.createHash('sha256').update(`${title || ''}\n${body}`).digest('hex');
+};
+
+// 构造 409 冲突响应中的服务端最新笔记快照
+const buildServerNoteSnapshot = noteDoc => ({
+    _id: noteDoc._id,
+    id: noteDoc._id.toString(),
+    title: noteDoc.title,
+    content: noteDoc.content,
+    rawContent: noteDoc.rawContent,
+    isEncrypted: Boolean(noteDoc.isEncrypted),
+    encryptedData: noteDoc.encryptedData || null,
+    contentVersion: noteDoc.contentVersion || 1,
+    contentUpdatedAt: noteDoc.contentUpdatedAt || noteDoc.updatedAt,
+    contentHash: noteDoc.contentHash || '',
+    updatedAt: noteDoc.updatedAt,
+    notebookId: noteDoc.notebookId,
+    parentId: noteDoc.parentId || null
+});
 
 const countWords = text => {
     if (!text) return 0;
@@ -88,8 +113,28 @@ const findDescendantIds = async (parentIds, userId, queryDeleted = false) => {
 
 // 创建笔记或目录
 exports.createNote = asyncHandler(async (req, res, next) => {
-    const { title, content, notebookId, tags, type = 'note', parentId = null, isEncrypted, encryptedData } = req.body;
+    const { title, content, notebookId, tags, type = 'note', parentId = null, isEncrypted, encryptedData, clientId } = req.body;
     const userId = req.user._id;
+    const normalizedClientId = typeof clientId === 'string' && clientId.trim() ? clientId.trim() : null;
+
+    // 客户端离线重放幂等检查：命中同 clientId 活跃节点则直接返回已有实体
+    if (normalizedClientId) {
+        const existingNote = await Note.findOne({
+            userId,
+            clientId: normalizedClientId,
+            isDeleted: false
+        }).populate('tags', 'name color');
+
+        if (existingNote) {
+            return res.status(200).json({
+                code: 200,
+                message: existingNote.type === 'folder' ? '目录已存在' : '笔记已存在',
+                data: {
+                    note: existingNote
+                }
+            });
+        }
+    }
 
     // 校验父级节点归属
     let safeParentId = parentId && parentId !== 'null' ? parentId : null;
@@ -115,18 +160,55 @@ exports.createNote = asyncHandler(async (req, res, next) => {
         }
     }
 
-    const note = await Note.create({
-        title: (title || '').trim() || (type === 'folder' ? '新建文件夹' : '无标题笔记'),
-        content: type === 'folder' ? '' : (content || ''),
-        rawContent: type === 'folder' ? '' : (content || ''),
-        notebookId,
-        userId,
-        type,
-        parentId: safeParentId,
-        tags: tags || [],
+    const now = new Date();
+    const finalTitle = (title || '').trim() || (type === 'folder' ? '新建文件夹' : '无标题笔记');
+    const finalContent = type === 'folder' ? '' : (content || '');
+    const finalEncryptedData = encryptedData || null;
+    const contentHash = computeNoteContentHash({
+        title: finalTitle,
+        content: finalContent,
         isEncrypted: finalIsEncrypted,
-        encryptedData: encryptedData || null
+        encryptedData: finalEncryptedData
     });
+
+    let note;
+    try {
+        note = await Note.create({
+            title: finalTitle,
+            content: finalContent,
+            rawContent: finalContent,
+            notebookId,
+            userId,
+            type,
+            parentId: safeParentId,
+            tags: tags || [],
+            isEncrypted: finalIsEncrypted,
+            encryptedData: finalEncryptedData,
+            clientId: normalizedClientId,
+            contentVersion: 1,
+            contentUpdatedAt: now,
+            contentHash
+        });
+    } catch (err) {
+        if (err && err.code === 11000 && normalizedClientId) {
+            const duplicatedNote = await Note.findOne({
+                userId,
+                clientId: normalizedClientId,
+                isDeleted: false
+            }).populate('tags', 'name color');
+
+            if (duplicatedNote) {
+                return res.status(200).json({
+                    code: 200,
+                    message: duplicatedNote.type === 'folder' ? '目录已存在' : '笔记已存在',
+                    data: {
+                        note: duplicatedNote
+                    }
+                });
+            }
+        }
+        throw err;
+    }
 
     if (tags && tags.length > 0) {
         await Tag.updateMany(
@@ -275,9 +357,14 @@ exports.getNote = asyncHandler(async (req, res, next) => {
         return next(new AppError('笔记不存在', 404));
     }
 
-    // 更新最后访问时间
-    note.lastOpenedAt = new Date();
-    await note.save({ validateBeforeSave: false });
+    // 仅更新访问时间，禁止触发 updatedAt 污染增量同步游标
+    const now = new Date();
+    await Note.updateOne(
+        { _id: note._id },
+        { $set: { lastOpenedAt: now } },
+        { timestamps: false }
+    );
+    note.lastOpenedAt = now;
 
     res.status(200).json({
         code: 200,
@@ -292,12 +379,35 @@ exports.getNote = asyncHandler(async (req, res, next) => {
 exports.updateNote = asyncHandler(async (req, res, next) => {
     const noteId = req.params.id;
     const userId = req.user._id;
-    const { saveType, ...updateData } = req.body;
+    const { saveType, expectedVersion, force, ...rawUpdateData } = req.body;
+    const updateData = { ...rawUpdateData };
+    // 剥离服务端受控字段，避免客户端透传覆盖版本与时间戳
+    delete updateData._id;
+    delete updateData.userId;
+    delete updateData.createdAt;
+    delete updateData.updatedAt;
+    delete updateData.contentVersion;
+    delete updateData.contentUpdatedAt;
+    delete updateData.contentHash;
+    delete updateData.clientId;
 
-    // 检查当前笔记
+    // 检查当前笔记（已软删除笔记返回 404）
     const currentNote = await Note.findOne({ _id: noteId, userId });
-    if (!currentNote) {
+    if (!currentNote || currentNote.isDeleted) {
         return next(new AppError('笔记不存在', 404));
+    }
+
+    const currentVersion = currentNote.contentVersion || 1;
+    const hasExpectedVersion = typeof expectedVersion === 'number' && Number.isFinite(expectedVersion);
+    if (hasExpectedVersion && !force && currentVersion !== expectedVersion) {
+        return res.status(409).json({
+            code: 409,
+            status: 'conflict',
+            message: '云端笔记存在更新版本，请对比处理冲突',
+            data: {
+                serverNote: buildServerNoteSnapshot(currentNote)
+            }
+        });
     }
 
     // 检查并处理标签变更
@@ -355,25 +465,85 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
         await NoteChunk.deleteMany({ userId, noteId });
     }
 
+    const nextTitle = updateData.title !== undefined ? String(updateData.title).trim() : currentNote.title;
+    const nextContent = updateData.content !== undefined ? updateData.content : currentNote.content;
+    const nextIsEncrypted = updateData.isEncrypted !== undefined
+        ? Boolean(updateData.isEncrypted)
+        : Boolean(currentNote.isEncrypted);
+    const nextEncryptedData = updateData.encryptedData !== undefined
+        ? (updateData.encryptedData || null)
+        : (currentNote.encryptedData || null);
+
+    // 仅当标题、正文、原始正文或加密载荷发生实质变化时推进版本语义
+    const hasContentChange =
+        (updateData.title !== undefined && nextTitle !== (currentNote.title || '').trim()) ||
+        (updateData.content !== undefined && updateData.content !== (currentNote.content ?? '')) ||
+        (updateData.rawContent !== undefined && updateData.rawContent !== currentNote.rawContent) ||
+        (updateData.isEncrypted !== undefined && nextIsEncrypted !== Boolean(currentNote.isEncrypted)) ||
+        (updateData.encryptedData !== undefined && nextEncryptedData !== (currentNote.encryptedData || null));
+
+    const updateFilter = { _id: noteId, userId, isDeleted: false };
+    if (hasExpectedVersion && !force) {
+        updateFilter.$or = expectedVersion === 1
+            ? [{ contentVersion: 1 }, { contentVersion: { $exists: false } }, { contentVersion: null }]
+            : [{ contentVersion: expectedVersion }];
+    }
+
+    const atomicUpdate = { $set: updateData };
+    if (hasContentChange) {
+        atomicUpdate.$set.contentUpdatedAt = new Date();
+        atomicUpdate.$set.contentHash = computeNoteContentHash({
+            title: nextTitle,
+            content: nextContent,
+            isEncrypted: nextIsEncrypted,
+            encryptedData: nextEncryptedData
+        });
+        if (hasExpectedVersion && !force) {
+            atomicUpdate.$set.contentVersion = expectedVersion + 1;
+        } else if (currentNote.$isDefault('contentVersion') || typeof currentNote.contentVersion !== 'number') {
+            // 兼容旧数据：数据库尚未落盘 contentVersion 时从隐含 1 推进到 2
+            atomicUpdate.$set.contentVersion = 2;
+        } else {
+            atomicUpdate.$inc = { contentVersion: 1 };
+        }
+    }
+
     const note = await Note.findOneAndUpdate(
-        { _id: noteId, userId },
-        updateData,
+        updateFilter,
+        atomicUpdate,
         {
             new: true,
             runValidators: true
         }
     ).populate('tags', 'name color');
 
+    if (!note) {
+        const latestNote = await Note.findOne({ _id: noteId, userId });
+        if (!latestNote || latestNote.isDeleted) {
+            return next(new AppError('笔记不存在', 404));
+        }
+        return res.status(409).json({
+            code: 409,
+            status: 'conflict',
+            message: '云端笔记存在更新版本，请对比处理冲突',
+            data: {
+                serverNote: buildServerNoteSnapshot(latestNote)
+            }
+        });
+    }
+
     // 若标题发生变更，触发反向链接 unresolvedLinks 的动态激活
     if (currentNote.type === 'note' && updateData.title && updateData.title.trim() !== currentNote.title.trim()) {
         await noteLinkService.resolveUnresolvedBacklinksOnTitleChange(userId, note);
     }
 
-    if (note.type === 'note' && (updateData.content !== undefined || updateData.title !== undefined)) {
-        const currentSaveType = saveType === 'auto' ? 'auto' : (saveType === 'rollback' ? 'rollback' : 'manual');
+    if (note.type === 'note' && (updateData.content !== undefined || updateData.title !== undefined || updateData.encryptedData !== undefined)) {
+        const currentSaveType = saveType === 'auto'
+            ? 'auto'
+            : (saveType === 'rollback' ? 'rollback' : (saveType === 'conflict' ? 'conflict' : 'manual'));
         let shouldCreateSnapshot = false;
 
-        if (currentSaveType === 'manual' || currentSaveType === 'rollback') {
+        if (currentSaveType === 'manual' || currentSaveType === 'rollback' || currentSaveType === 'conflict') {
             shouldCreateSnapshot = true;
         } else if (currentSaveType === 'auto') {
             const latestHistory = await NoteHistory.findOne({ noteId: note._id, userId }).sort({ createdAt: -1 });
@@ -381,7 +551,10 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
                 shouldCreateSnapshot = true;
             } else {
                 const timeDiff = Date.now() - new Date(latestHistory.createdAt).getTime();
-                const isContentDifferent = latestHistory.content !== note.content || latestHistory.title !== note.title;
+                const isContentDifferent = latestHistory.content !== note.content
+                    || latestHistory.title !== note.title
+                    || Boolean(latestHistory.isEncrypted) !== Boolean(note.isEncrypted)
+                    || (latestHistory.encryptedData || null) !== (note.encryptedData || null);
                 if (timeDiff >= 5 * 60 * 1000 && isContentDifferent) {
                     shouldCreateSnapshot = true;
                 }
@@ -876,26 +1049,57 @@ exports.rollbackNoteHistory = asyncHandler(async (req, res, next) => {
         return next(new AppError('笔记不存在', 404));
     }
 
+    const historyIsEncrypted = Boolean(history.isEncrypted);
+    const historyEncryptedData = history.encryptedData || null;
+    const currentIsEncrypted = Boolean(currentNote.isEncrypted);
+    const currentEncryptedData = currentNote.encryptedData || null;
+
     // 回滚前自动为当前内容创建安全快照防误触
-    if (currentNote.content !== history.content || currentNote.title !== history.title) {
+    if (
+        currentNote.content !== history.content ||
+        currentNote.title !== history.title ||
+        currentIsEncrypted !== historyIsEncrypted ||
+        currentEncryptedData !== historyEncryptedData
+    ) {
         await NoteHistory.create({
             noteId: currentNote._id,
             userId,
             title: currentNote.title,
             content: currentNote.content,
+            isEncrypted: currentIsEncrypted,
+            encryptedData: currentEncryptedData,
             saveType: 'manual',
             wordCount: countWords(currentNote.content)
         });
     }
 
-    const note = await Note.findOneAndUpdate(
-        { _id: noteId, userId, isDeleted: false },
-        {
+    const now = new Date();
+    const rollbackUpdate = {
+        $set: {
             title: history.title,
             content: history.content,
             rawContent: history.content,
-            updatedAt: new Date()
-        },
+            isEncrypted: historyIsEncrypted,
+            encryptedData: historyEncryptedData,
+            contentUpdatedAt: now,
+            contentHash: computeNoteContentHash({
+                title: history.title,
+                content: history.content,
+                isEncrypted: historyIsEncrypted,
+                encryptedData: historyEncryptedData
+            }),
+            updatedAt: now
+        }
+    };
+    if (currentNote.$isDefault('contentVersion') || typeof currentNote.contentVersion !== 'number') {
+        rollbackUpdate.$set.contentVersion = 2;
+    } else {
+        rollbackUpdate.$inc = { contentVersion: 1 };
+    }
+
+    const note = await Note.findOneAndUpdate(
+        { _id: noteId, userId, isDeleted: false },
+        rollbackUpdate,
         { new: true, runValidators: true }
     ).populate('tags', 'name color');
 
@@ -908,6 +1112,8 @@ exports.rollbackNoteHistory = asyncHandler(async (req, res, next) => {
         userId,
         title: note.title,
         content: note.content,
+        isEncrypted: Boolean(note.isEncrypted),
+        encryptedData: note.encryptedData || null,
         saveType: 'rollback',
         wordCount: countWords(note.content)
     });
@@ -1096,6 +1302,154 @@ exports.syncNoteIndex = asyncHandler(async (req, res) => {
         data: {
             items,
             serverTime: new Date().toISOString()
+        }
+    });
+});
+
+// 统一多端增量游标同步（含目录层级、正文/密文载荷、版本摘要与软删除墓碑）
+exports.deltaSyncNotes = asyncHandler(async (req, res) => {
+    const userId = req.user._id;
+    const { since, cursorId, limit, includeContent = 'true' } = req.query;
+
+    const rawLimit = parseInt(limit, 10);
+    const safeLimit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 200;
+    const shouldIncludeContent = includeContent !== 'false';
+
+    const query = { userId };
+
+    if (since) {
+        const sinceDate = new Date(since);
+        if (!Number.isNaN(sinceDate.getTime())) {
+            if (cursorId && mongoose.Types.ObjectId.isValid(cursorId)) {
+                const cursorObjectId = new mongoose.Types.ObjectId(cursorId);
+                query.$or = [
+                    { updatedAt: { $gt: sinceDate } },
+                    { updatedAt: sinceDate, _id: { $gt: cursorObjectId } }
+                ];
+            } else {
+                query.updatedAt = { $gt: sinceDate };
+            }
+        }
+    }
+
+    const serverTime = new Date().toISOString();
+
+    const selectFields = [
+        '_id',
+        'title',
+        'type',
+        'notebookId',
+        'parentId',
+        'order',
+        'tags',
+        'isStarred',
+        'isArchived',
+        'isDeleted',
+        'deletedAt',
+        'isEncrypted',
+        'encryptedData',
+        'contentVersion',
+        'contentUpdatedAt',
+        'contentHash',
+        'clientId',
+        'createdAt',
+        'updatedAt',
+        'lastOpenedAt'
+    ];
+    if (shouldIncludeContent) {
+        selectFields.push('content', 'rawContent');
+    }
+
+    const [docs, activeNotebooks] = await Promise.all([
+        Note.find(query)
+            .sort({ updatedAt: 1, _id: 1 })
+            .limit(safeLimit + 1)
+            .select(selectFields.join(' '))
+            .lean(),
+        Notebook.find({ userId, isDeleted: false })
+            .sort({ isDefault: -1, sort: 1, createdAt: 1 })
+            .select('_id name color isEncrypted isDefault')
+            .lean()
+    ]);
+
+    const hasMore = docs.length > safeLimit;
+    const pageDocs = hasMore ? docs.slice(0, safeLimit) : docs;
+
+    const items = pageDocs.map(n => {
+        const encrypted = Boolean(n.isEncrypted);
+        const item = {
+            _id: n._id.toString(),
+            id: n._id.toString(),
+            title: n.title,
+            type: n.type || 'note',
+            notebookId: n.notebookId ? n.notebookId.toString() : '',
+            parentId: n.parentId ? n.parentId.toString() : null,
+            order: n.order || 0,
+            tags: Array.isArray(n.tags) ? n.tags.map(t => t.toString()) : [],
+            isStarred: Boolean(n.isStarred),
+            isArchived: Boolean(n.isArchived),
+            isDeleted: Boolean(n.isDeleted),
+            deletedAt: n.deletedAt || null,
+            isEncrypted: encrypted,
+            encryptedData: encrypted ? (n.encryptedData || null) : null,
+            contentVersion: n.contentVersion || 1,
+            contentUpdatedAt: n.contentUpdatedAt || n.updatedAt,
+            contentHash: n.contentHash || '',
+            clientId: n.clientId || null,
+            createdAt: n.createdAt,
+            updatedAt: n.updatedAt,
+            lastOpenedAt: n.lastOpenedAt || null
+        };
+
+        if (!encrypted && shouldIncludeContent) {
+            const noteBody = n.content !== undefined && n.content !== null ? n.content : (n.rawContent || '');
+            item.content = n.type === 'folder' ? '' : noteBody;
+            if (!item.contentHash) {
+                item.contentHash = computeNoteContentHash({
+                    title: item.title,
+                    content: item.content,
+                    isEncrypted: false,
+                    encryptedData: null
+                });
+            }
+        } else if (encrypted && !item.contentHash) {
+            item.contentHash = computeNoteContentHash({
+                title: item.title,
+                content: '',
+                isEncrypted: true,
+                encryptedData: item.encryptedData
+            });
+        }
+
+        return item;
+    });
+
+    const lastDoc = pageDocs.length > 0 ? pageDocs[pageDocs.length - 1] : null;
+    const nextCursor = hasMore && lastDoc
+        ? {
+            since: new Date(lastDoc.updatedAt).toISOString(),
+            cursorId: lastDoc._id.toString()
+        }
+        : null;
+
+    const notebooks = activeNotebooks.map(nb => ({
+        _id: nb._id.toString(),
+        id: nb._id.toString(),
+        name: nb.name,
+        color: nb.color || '#3b82f6',
+        isEncrypted: Boolean(nb.isEncrypted),
+        isDefault: Boolean(nb.isDefault)
+    }));
+
+    res.status(200).json({
+        code: 200,
+        message: '获取增量同步数据成功',
+        data: {
+            items,
+            notebooks,
+            nextCursor,
+            hasMore,
+            serverTime
         }
     });
 });

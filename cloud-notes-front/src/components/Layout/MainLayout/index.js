@@ -9,6 +9,7 @@ import FileStashBoard from '@/components/FileStashBoard';
 import KnowledgeGraph from '@/components/KnowledgeGraph';
 import CommandPalette from '@/components/CommandPalette';
 import { updateNote, createNote } from '@/api/notes';
+import { isDesktopMirrorSupported, runLocalMirrorSync } from '@/utils/mirrorSyncClient';
 import { logout } from '@/api/user';
 import { clearAuth } from '@/utils/auth';
 import { getLoginPath } from '@/utils/request';
@@ -47,6 +48,43 @@ const MainLayout = () => {
         if (activeView === 'stash') setStashMounted(true);
         if (activeView === 'graph') setGraphMounted(true);
     }, [activeView]);
+
+    // 离线 local_ 临时笔记首次上云重映射为真实 ID 时，同步切换选中笔记与历史指针
+    useEffect(() => {
+        return syncManager.subscribeNoteEvents(event => {
+            if (event.type !== 'remapped' || !event.tempId || !event.realId) return;
+            setSelectedNote(prev => {
+                if (prev === event.tempId) {
+                    localStorage.setItem(LAST_NOTE_KEY, event.realId);
+                    return event.realId;
+                }
+                return prev;
+            });
+            setSyncVersion(v => v + 1);
+        });
+    }, []);
+
+    // 桌面端启用自动镜像时，云端同步完成后防抖触发增量本地镜像
+    useEffect(() => {
+        if (!isDesktopMirrorSupported()) return undefined;
+        let timer = null;
+        const unsubscribe = syncManager.subscribeNoteEvents(event => {
+            if (event.type !== 'synced' && event.type !== 'resolved') return;
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(async () => {
+                try {
+                    const cfg = await window.electronAPI.mirror.getConfig();
+                    if (cfg?.enabled && cfg?.autoSync && cfg?.rootDir) {
+                        await runLocalMirrorSync({ fullSync: false });
+                    }
+                } catch {}
+            }, 4000);
+        });
+        return () => {
+            if (timer) clearTimeout(timer);
+            unsubscribe();
+        };
+    }, []);
 
     const handleSaveNote = useCallback(async (noteId, content, meta = {}) => {
         // 若已经由 syncManager 成功保存并传入 note 实体，直接同步导航树，绝不发起二次重复写入
@@ -94,6 +132,11 @@ const MainLayout = () => {
             return false;
         }
 
+        // 切笔记本时立即清理当前笔记残留防抖定时器（若用户确认放弃未保存改动一并清理未落盘队列）
+        if (selectedNote) {
+            await syncManager.cancelNotePendingSync(selectedNote, { keepQueue: !editorDirty });
+        }
+
         setSelectedNotebook(notebookId);
         setSelectedNote(null);
         setEditorDirty(false);
@@ -104,7 +147,7 @@ const MainLayout = () => {
         }
         localStorage.removeItem(LAST_NOTE_KEY);
         return true;
-    }, [confirmLeaveUnsavedNote, selectedNotebook]);
+    }, [confirmLeaveUnsavedNote, selectedNotebook, selectedNote, editorDirty]);
 
     const handleNoteChange = useCallback(async (noteId, options = {}) => {
         if (noteId === selectedNote) {
@@ -115,6 +158,11 @@ const MainLayout = () => {
             if (!await confirmLeaveUnsavedNote()) {
                 return false;
             }
+            if (selectedNote) {
+                await syncManager.cancelNotePendingSync(selectedNote);
+            }
+        } else if (selectedNote) {
+            await syncManager.cancelNotePendingSync(selectedNote, { keepQueue: true });
         }
 
         setSelectedNote(noteId);

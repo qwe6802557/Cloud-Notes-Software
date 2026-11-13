@@ -380,6 +380,31 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
     }, []);
 
     /**
+     * 当离线 local_ 临时笔记首次上云并重映射为真实服务端 ID 时，同步迁移标签 ID
+     */
+    const remapTabId = useCallback((tempId, realId, newTitle) => {
+        if (!tempId || !realId || tempId === realId) return;
+        const mapList = list => {
+            const existsReal = list.some(t => t.id === realId);
+            return list
+                .map(t => {
+                    if (t.id !== tempId) return t;
+                    return {
+                        ...t,
+                        id: realId,
+                        title: newTitle || t.title,
+                        isDirty: false
+                    };
+                })
+                .filter((t, idx, arr) => !existsReal || arr.findIndex(item => item.id === t.id) === idx);
+        };
+        setPrimaryTabs(mapList);
+        setSecondaryTabs(mapList);
+        setPrimaryActiveId(prev => (prev === tempId ? realId : prev));
+        setSecondaryActiveId(prev => (prev === tempId ? realId : prev));
+    }, []);
+
+    /**
      * 移除已被删除的笔记标签
      */
     const removeDeletedTab = useCallback(noteId => {
@@ -437,6 +462,7 @@ export const useNoteTabs = ({ onSaveNote, onActiveNoteChange }) => {
         swapPanes,
         reorderTabs,
         updateTabTitle,
+        remapTabId,
         removeDeletedTab
     };
 };

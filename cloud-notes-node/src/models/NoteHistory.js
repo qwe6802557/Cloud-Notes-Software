@@ -31,7 +31,7 @@ const noteHistorySchema = new mongoose.Schema({
     },
     saveType: {
         type: String,
-        enum: ['manual', 'auto', 'rollback'],
+        enum: ['manual', 'auto', 'rollback', 'conflict'],
         default: 'manual'
     },
     wordCount: {

@@ -17,6 +17,7 @@ export interface Notebook {
   color?: string;
   children?: Notebook[];
   noteCount?: number;
+  isDefault?: boolean;
   isEncrypted?: boolean;
   createdAt?: string;
   updatedAt?: string;
@@ -34,6 +35,11 @@ export interface Note {
   isDeleted?: boolean;
   isEncrypted?: boolean;
   encryptedData?: string;
+  contentVersion?: number;
+  contentUpdatedAt?: string;
+  contentHash?: string;
+  clientId?: string | null;
+  deletedAt?: string | null;
   tags?: string[];
   createdAt: string;
   updatedAt: string;

@@ -1,8 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Platform,
   RefreshControl,
   SafeAreaView,
   StyleSheet,
@@ -15,6 +14,19 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-rou
 import { Ionicons } from '@expo/vector-icons';
 import * as notesApi from '../../api/notesApi';
 import { Note } from '../../api/types';
+import * as cryptoVault from '../../utils/cryptoVault';
+import { mobileSyncManager } from '../../utils/storage/mobileSyncManager';
+import ActionContextSheet, { triggerHaptic } from '../../components/ActionContextSheet';
+import TextPromptModal from '../../components/TextPromptModal';
+import MoveNoteBottomSheet from '../../components/MoveNoteBottomSheet';
+import VaultUnlockModal from '../../components/VaultUnlockModal';
+import {
+  buildNoteFolderActionItems,
+  copyNoteWikiLink,
+  deleteNoteOrFolder,
+  showNotice,
+  toggleItemEncryption,
+} from '../../utils/noteContextActions';
 
 export default function FolderDetailScreen() {
   const router = useRouter();
@@ -32,11 +44,25 @@ export default function FolderDetailScreen() {
 
   const [folderTitle, setFolderTitle] = useState(initialTitle || '文件夹');
   const [notebookId, setNotebookId] = useState(initialNotebookId || '');
-  const [notebookName, setNotebookName] = useState(initialNotebookName || '笔记本');
+  const notebookName = initialNotebookName || '笔记本';
   const [childItems, setChildItems] = useState<Note[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // 长按菜单与协同弹窗状态
+  const [contextItem, setContextItem] = useState<Note | null>(null);
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [moveTargetNote, setMoveTargetNote] = useState<Note | null>(null);
+  const [showVaultModal, setShowVaultModal] = useState(false);
+  const [pendingEncryptItem, setPendingEncryptItem] = useState<Note | null>(null);
+  const [promptConfig, setPromptConfig] = useState<{
+    mode: 'rename' | 'create_folder';
+    item: Note;
+    title: string;
+    placeholder: string;
+    defaultValue: string;
+  } | null>(null);
 
   // 加载当前文件夹详情与内部笔记/子文件夹
   const loadFolderData = useCallback(async (isRefresh = false) => {
@@ -93,11 +119,32 @@ export default function FolderDetailScreen() {
     );
     try {
       await notesApi.updateNoteStarred(item._id, newStatus);
-    } catch (e) {
+    } catch (e: any) {
+      if (!e?.status) {
+        await mobileSyncManager.queueOfflineAction(item._id, 'star', { isStarred: newStatus });
+        return;
+      }
       setChildItems(prev =>
         prev.map(n => (n._id === item._id ? { ...n, isStarred: !newStatus } : n))
       );
     }
+  };
+
+  const handleToggleEncryption = async (item: Note) => {
+    await toggleItemEncryption(item, {
+      onRequireVaultUnlock: () => {
+        setPendingEncryptItem(item);
+        setShowVaultModal(true);
+      },
+      onSuccess: () => {
+        void loadFolderData(true);
+      },
+    });
+  };
+
+  const handleItemLongPress = (item: Note) => {
+    triggerHaptic('light');
+    setContextItem(item);
   };
 
   const cleanSnippet = (content: string) => {
@@ -160,6 +207,8 @@ export default function FolderDetailScreen() {
             });
           }
         }}
+        onLongPress={() => handleItemLongPress(item)}
+        delayLongPress={400}
         activeOpacity={0.7}
       >
         <View style={styles.cardHeader}>
@@ -173,6 +222,9 @@ export default function FolderDetailScreen() {
             <Text style={styles.cardTitle} numberOfLines={1}>
               {item.title || (isSubFolder ? '新建文件夹' : '无标题笔记')}
             </Text>
+            {item.isEncrypted && (
+              <Ionicons name="lock-closed" size={13} color="#d97706" style={{ marginLeft: 5 }} />
+            )}
           </View>
 
           {isSubFolder ? (
@@ -195,7 +247,11 @@ export default function FolderDetailScreen() {
         </View>
 
         <Text style={[styles.cardSnippet, isSubFolder && styles.folderSnippet]} numberOfLines={2}>
-          {isSubFolder ? '📁 点击浏览子文件夹内容' : cleanSnippet(item.content)}
+          {item.isEncrypted && !cryptoVault.hasSessionKey()
+            ? '私密内容（端到端加密保护）'
+            : isSubFolder
+            ? '点击浏览子文件夹内容'
+            : cleanSnippet(item.content)}
         </Text>
 
         <View style={styles.cardFooter}>
@@ -318,6 +374,124 @@ export default function FolderDetailScreen() {
       >
         <Ionicons name="add" size={28} color="#ffffff" />
       </TouchableOpacity>
+
+      {moveTargetNote && (
+        <MoveNoteBottomSheet
+          visible={showMoveModal}
+          noteId={moveTargetNote._id}
+          noteTitle={moveTargetNote.title || ''}
+          isFolder={moveTargetNote.type === 'folder'}
+          currentNotebookId={moveTargetNote.notebookId || notebookId || undefined}
+          currentParentId={moveTargetNote.parentId}
+          onClose={() => {
+            setShowMoveModal(false);
+            setMoveTargetNote(null);
+          }}
+          onSuccess={() => {
+            void loadFolderData(true);
+            showNotice('成功', '已移动到新位置');
+          }}
+        />
+      )}
+
+      <VaultUnlockModal
+        visible={showVaultModal}
+        onClose={() => {
+          setShowVaultModal(false);
+          setPendingEncryptItem(null);
+        }}
+        onSuccess={() => {
+          setShowVaultModal(false);
+          if (pendingEncryptItem) {
+            void handleToggleEncryption(pendingEncryptItem);
+            setPendingEncryptItem(null);
+          }
+        }}
+      />
+
+      <ActionContextSheet
+        visible={Boolean(contextItem)}
+        title={
+          contextItem?.title ||
+          (contextItem?.type === 'folder' ? '未命名文件夹' : '无标题笔记')
+        }
+        subtitle={`${notebookName} / ${folderTitle}`}
+        items={
+          contextItem
+            ? buildNoteFolderActionItems(contextItem, {
+                onToggleStar: target => void toggleStar(target),
+                onCopyWikiLink: target => void copyNoteWikiLink(target.title),
+                onNewNoteInFolder: folder => {
+                  router.push({
+                    pathname: '/note/edit',
+                    params: {
+                      notebookId: folder.notebookId || notebookId || '',
+                      parentId: folder._id,
+                    },
+                  });
+                },
+                onNewSubfolder: folder => {
+                  setPromptConfig({
+                    mode: 'create_folder',
+                    item: folder,
+                    title: '新建子文件夹',
+                    placeholder: '请输入子文件夹名称',
+                    defaultValue: '',
+                  });
+                },
+                onRename: target => {
+                  setPromptConfig({
+                    mode: 'rename',
+                    item: target,
+                    title: target.type === 'folder' ? '重命名文件夹' : '重命名笔记',
+                    placeholder: '请输入新名称',
+                    defaultValue: target.title || '',
+                  });
+                },
+                onMove: target => {
+                  setMoveTargetNote(target);
+                  setShowMoveModal(true);
+                },
+                onToggleEncryption: target => void handleToggleEncryption(target),
+                onDelete: target => {
+                  void deleteNoteOrFolder(target, () => {
+                    void loadFolderData(true);
+                  });
+                },
+              })
+            : []
+        }
+        onClose={() => setContextItem(null)}
+      />
+
+      <TextPromptModal
+        visible={Boolean(promptConfig)}
+        title={promptConfig?.title || ''}
+        placeholder={promptConfig?.placeholder}
+        defaultValue={promptConfig?.defaultValue}
+        confirmLabel="确定"
+        onClose={() => setPromptConfig(null)}
+        onConfirm={async value => {
+          if (!promptConfig) return;
+          const target = promptConfig.item;
+          try {
+            if (promptConfig.mode === 'rename') {
+              await notesApi.updateNote(target._id, { title: value });
+            } else {
+              await notesApi.createNote({
+                title: value,
+                content: '',
+                type: 'folder',
+                notebookId: target.notebookId || notebookId || '',
+                parentId: target._id,
+              });
+            }
+            void loadFolderData(true);
+          } catch (err: any) {
+            showNotice('操作失败', err?.message || '网络异常');
+          }
+        }}
+      />
     </SafeAreaView>
   );
 }

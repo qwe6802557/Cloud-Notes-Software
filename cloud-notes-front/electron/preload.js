@@ -42,6 +42,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
             return () => ipcRenderer.removeListener('theme:changed', listener);
         }
     },
+    mirror: {
+        selectDir: () => ipcRenderer.invoke('mirror:selectDir'),
+        getConfig: () => ipcRenderer.invoke('mirror:getConfig'),
+        setConfig: patch => ipcRenderer.invoke('mirror:setConfig', patch),
+        runSync: payload => ipcRenderer.invoke('mirror:runSync', payload),
+        openDir: () => ipcRenderer.invoke('mirror:openDir')
+    },
     updater: {
         check: (isManual = false) => ipcRenderer.invoke('updater:check', isManual),
         download: () => ipcRenderer.invoke('updater:download'),

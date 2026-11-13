@@ -23,7 +23,8 @@ import {
     InfoCircleOutlined,
     DesktopOutlined,
     SunOutlined,
-    MoonOutlined
+    MoonOutlined,
+    FolderOpenOutlined
 } from '@ant-design/icons';
 import { updateUserInfo } from '@/api/user';
 import { getAIConfig, updateAIConfig, testAIConnection } from '@/api/ai';
@@ -32,6 +33,7 @@ import { getEditorPreferences, setEditorPreferences, setCachedAIConfig } from '@
 import { getVaultStatus, updateVault } from '@/api/vault';
 import cryptoVault from '@/utils/cryptoVault';
 import themeManager from '@/utils/themeManager';
+import MirrorSettingsPanel from './MirrorSettingsPanel';
 import './index.less';
 
 const FEATURED_SYSTEM_MODELS = [
@@ -48,7 +50,7 @@ const FEATURED_SYSTEM_MODELS = [
         name: 'Grok 极速创作',
         badge: '高速推荐',
         badgeColor: 'purple',
-        icon: <RocketOutlined style={{ color: '#7c3aed' }} />,
+        icon: <RocketOutlined style={{ color: '#1890ff' }} />,
         desc: '系统内置极速通道，响应飞快，适合扩写、润色与大纲生成'
     },
     {
@@ -427,6 +429,12 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             label: '偏好设置',
             icon: <SettingOutlined />,
             desc: '编辑器视图与交互习惯'
+        },
+        {
+            key: 'mirror',
+            label: '目录镜像',
+            icon: <FolderOpenOutlined />,
+            desc: '本地文件夹单向只读备份'
         },
         {
             key: 'ai',
@@ -824,8 +832,9 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                             {/* 私密偏好状态指示 */}
                             <div className="panel-section-title" style={{ marginTop: 24 }}>私密保护偏好</div>
                             <div style={{ padding: '12px 14px', background: '#F8FAFC', borderRadius: 8, border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <div style={{ fontSize: 13, color: '#475569' }}>
-                                    🔒 私密保险箱已就绪（支持笔记本、文件夹及笔记单独加密）。安全密码修改请前往「账号安全」。
+                                <div style={{ fontSize: 13, color: '#475569', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <LockOutlined style={{ color: '#d97706' }} />
+                                    <span>私密保险箱已就绪（支持笔记本、文件夹及笔记单独加密）。安全密码修改请前往「账号安全」。</span>
                                 </div>
                                 <Button type="link" size="small" onClick={() => setActiveTab('security')}>
                                     前往设置
@@ -913,7 +922,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                             <div className="switch-setting-row">
                                 <div className="switch-setting-info">
                                     <div className="setting-title">
-                                        <ApiOutlined style={{ color: '#7c3aed', marginRight: 6 }} />
+                                        <ApiOutlined style={{ color: '#1890ff', marginRight: 6 }} />
                                         启用个人专属自定义大模型
                                     </div>
                                     <div className="setting-desc">
@@ -984,6 +993,11 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                     </div>
                                 </div>
                             )}
+                        </div>
+
+                        {/* 本地目录镜像面板 */}
+                        <div className={`tab-panel ${activeTab === 'mirror' ? 'is-visible' : 'is-hidden'}`}>
+                            <MirrorSettingsPanel active={open && activeTab === 'mirror'} />
                         </div>
 
                         {/* 关于与系统面板 */}

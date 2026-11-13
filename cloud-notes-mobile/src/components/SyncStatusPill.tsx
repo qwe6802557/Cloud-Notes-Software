@@ -1,55 +1,68 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
   Modal,
   Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   TouchableWithoutFeedback,
   View,
 } from 'react-native';
+import Animated, {
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import mobileSyncManager, { SyncStateSnapshot } from '../utils/storage/mobileSyncManager';
+import { useTheme } from '../hooks/use-theme';
+import ConflictResolveModal from './ConflictResolveModal';
+import {
+  mobileSyncManager,
+  ConflictEntry,
+  SyncStateSnapshot,
+} from '../utils/storage/mobileSyncManager';
 
 const STATUS_CONFIG = {
   synced: {
     text: '已同步',
     dotColor: '#059669',
     icon: 'checkmark-circle-outline' as const,
-    title: '所有更改已实时同步至云端',
   },
   pending: {
     text: '待同步',
     dotColor: '#d97706',
     icon: 'cloud-upload-outline' as const,
-    title: '内容已牢固保存在本地 AsyncStorage，等待上传',
   },
   syncing: {
     text: '同步中',
     dotColor: '#1890ff',
     icon: 'sync-outline' as const,
-    title: '正在增量推送到云端服务',
   },
   offline: {
     text: '离线保护',
-    dotColor: '#71717a',
+    dotColor: '#64748b',
     icon: 'cloud-offline-outline' as const,
-    title: '网络未连接，已转入本地离线突变队列安全保护',
   },
   conflict: {
-    text: '冲突已分叉',
-    dotColor: '#e11d48',
-    icon: 'alert-circle-outline' as const,
-    title: '检测到云端存在并发修改，已自动安全分叉另存为副本',
+    text: '待处理冲突',
+    dotColor: '#ef4444',
+    icon: 'git-compare-outline' as const,
   },
 };
 
 export default function SyncStatusPill() {
-  const [syncState, setSyncState] = useState<SyncStateSnapshot>(() => mobileSyncManager.getSnapshot());
+  const theme = useTheme();
+  const [syncState, setSyncState] = useState<SyncStateSnapshot>(() =>
+    mobileSyncManager.getSnapshot()
+  );
   const [modalVisible, setModalVisible] = useState(false);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const [selectedConflict, setSelectedConflict] = useState<ConflictEntry | null>(null);
+  const pulseScale = useSharedValue(1);
 
   useEffect(() => {
     const unsubscribe = mobileSyncManager.subscribe(snapshot => {
@@ -60,28 +73,30 @@ export default function SyncStatusPill() {
 
   useEffect(() => {
     if (syncState.status === 'pending' || syncState.status === 'syncing') {
-      const loop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.25,
-            duration: 750,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 0.85,
-            duration: 750,
-            useNativeDriver: true,
-          }),
-        ])
+      pulseScale.value = withRepeat(
+        withSequence(
+          withTiming(1.25, { duration: 750 }),
+          withTiming(0.85, { duration: 750 })
+        ),
+        -1,
+        false
       );
-      loop.start();
-      return () => loop.stop();
-    } else {
-      pulseAnim.setValue(1);
+      return () => {
+        cancelAnimation(pulseScale);
+        pulseScale.value = 1;
+      };
     }
-  }, [syncState.status]);
+    cancelAnimation(pulseScale);
+    pulseScale.value = 1;
+  }, [syncState.status, pulseScale]);
+
+  const pulseAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pulseScale.value }],
+  }));
 
   const currentConfig = STATUS_CONFIG[syncState.status] || STATUS_CONFIG.synced;
+  const conflicts = syncState.conflicts || [];
+  const hasConflicts = conflicts.length > 0;
 
   const formatTime = (date: Date | null) => {
     if (!date) return '尚未同步';
@@ -90,30 +105,44 @@ export default function SyncStatusPill() {
     return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
 
+  const handleOpenConflict = (conflict: ConflictEntry) => {
+    setModalVisible(false);
+    setSelectedConflict(conflict);
+  };
+
+  const handlePillPress = () => {
+    setModalVisible(true);
+  };
+
   return (
     <>
       <TouchableOpacity
         style={[
           styles.pillContainer,
+          { backgroundColor: theme.backgroundElement, borderColor: theme.border },
           syncState.status === 'offline' && styles.pillOffline,
           syncState.status === 'conflict' && styles.pillConflict,
         ]}
-        onPress={() => setModalVisible(true)}
+        onPress={handlePillPress}
         activeOpacity={0.75}
       >
         <Animated.View
           style={[
             styles.statusDot,
-            {
-              backgroundColor: currentConfig.dotColor,
-              transform: [{ scale: pulseAnim }],
-            },
+            { backgroundColor: currentConfig.dotColor },
+            pulseAnimatedStyle,
           ]}
         />
-        <Text style={[styles.statusText, syncState.status === 'conflict' && styles.textConflict]}>
-          {currentConfig.text}
+        <Text
+          style={[
+            styles.statusText,
+            { color: theme.text },
+            syncState.status === 'conflict' && styles.textConflict,
+          ]}
+        >
+          {hasConflicts ? `待裁决 (${conflicts.length})` : currentConfig.text}
         </Text>
-        {syncState.queuedCount > 0 && (
+        {!hasConflicts && syncState.queuedCount > 0 && (
           <View style={styles.badgeCount}>
             <Text style={styles.badgeText}>{syncState.queuedCount}</Text>
           </View>
@@ -132,75 +161,120 @@ export default function SyncStatusPill() {
             <View style={StyleSheet.absoluteFill} />
           </TouchableWithoutFeedback>
 
-          <View style={styles.sheetContainer}>
-            <View style={styles.sheetHeader}>
+          <View style={[styles.sheetContainer, { backgroundColor: theme.card }]}>
+            <View style={[styles.sheetHeader, { borderBottomColor: theme.border }]}>
               <View style={styles.sheetHeaderLeft}>
-                <Ionicons name="hardware-chip-outline" size={18} color="#1890ff" style={{ marginRight: 6 }} />
-                <Text style={styles.sheetTitle}>本地优先存储引擎</Text>
+                <Ionicons
+                  name="hardware-chip-outline"
+                  size={18}
+                  color={theme.primary}
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={[styles.sheetTitle, { color: theme.text }]}>本地优先存储引擎</Text>
               </View>
               <View style={styles.engineBadge}>
-                <Text style={styles.engineBadgeText}>AsyncStorage (Local-First)</Text>
+                <Text style={styles.engineBadgeText}>Local-First</Text>
               </View>
             </View>
 
             <View style={styles.sheetBody}>
               <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>当前网络：</Text>
+                <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>当前网络：</Text>
                 <Text style={[styles.infoVal, syncState.isOnline ? styles.valOnline : styles.valOffline]}>
-                  {syncState.isOnline ? '在线网络已就绪' : '离线保护模式 (断网自愈中)'}
+                  {syncState.isOnline ? '在线网络已就绪' : '离线保护模式 (断网队列排队中)'}
                 </Text>
               </View>
 
               <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>排队待传：</Text>
-                <Text style={[styles.infoVal, styles.valMono]}>
-                  {syncState.queuedCount > 0 ? `${syncState.queuedCount} 条突变任务待发` : '无挂起任务'}
+                <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>排队待传：</Text>
+                <Text style={[styles.infoVal, styles.valMono, { color: theme.text }]}>
+                  {syncState.queuedCount > 0 ? `${syncState.queuedCount} 条变更待同步` : '无挂起任务'}
                 </Text>
               </View>
 
               <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>最近同步：</Text>
-                <Text style={[styles.infoVal, styles.valMono]}>{formatTime(syncState.lastSyncedAt)}</Text>
+                <Text style={[styles.infoLabel, { color: theme.textSecondary }]}>最近同步：</Text>
+                <Text style={[styles.infoVal, styles.valMono, { color: theme.text }]}>
+                  {formatTime(syncState.lastSyncedAt)}
+                </Text>
               </View>
 
-              {Boolean(syncState.lastConflictNote) && (
+              {hasConflicts && (
                 <View style={styles.conflictCard}>
-                  <Text style={styles.conflictTip}>⚠️ 检测到版本冲突，已自动安全分叉另存：</Text>
-                  <Text style={styles.conflictTitle} numberOfLines={1}>
-                    {syncState.lastConflictNote?.title || '新副本'}
-                  </Text>
+                  <View style={styles.conflictHeaderRow}>
+                    <Ionicons name="git-compare-outline" size={15} color="#dc2626" />
+                    <Text style={styles.conflictTip}>
+                      检测到 {conflicts.length} 篇并发冲突，点击展开 Diff 比对裁决
+                    </Text>
+                  </View>
+                  <ScrollView style={styles.conflictList} nestedScrollEnabled>
+                    {conflicts.map(item => (
+                      <TouchableOpacity
+                        key={item.noteId}
+                        style={styles.conflictItemBtn}
+                        onPress={() => handleOpenConflict(item)}
+                        activeOpacity={0.75}
+                      >
+                        <Text style={styles.conflictTitle} numberOfLines={1}>
+                          {item.title || '无标题笔记'}
+                        </Text>
+                        <View style={styles.conflictResolveBadge}>
+                          <Text style={styles.conflictResolveText}>比对裁决</Text>
+                          <Ionicons name="chevron-forward" size={12} color="#dc2626" />
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
                 </View>
               )}
             </View>
 
             <View style={styles.sheetFooter}>
-              <TouchableOpacity
-                style={styles.actionBtn}
-                onPress={() => {
-                  mobileSyncManager.retryManual();
-                }}
-                disabled={syncState.status === 'syncing'}
-                activeOpacity={0.8}
-              >
-                {syncState.status === 'syncing' ? (
-                  <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 6 }} />
-                ) : (
-                  <Ionicons name="sync-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
-                )}
-                <Text style={styles.actionBtnText}>立即同步</Text>
-              </TouchableOpacity>
+              {hasConflicts ? (
+                <TouchableOpacity
+                  style={styles.conflictActionBtn}
+                  onPress={() => handleOpenConflict(conflicts[0])}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="git-compare-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                  <Text style={styles.actionBtnText}>立即比对裁决</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.actionBtn}
+                  onPress={() => {
+                    void mobileSyncManager.retryManual();
+                  }}
+                  disabled={syncState.status === 'syncing'}
+                  activeOpacity={0.8}
+                >
+                  {syncState.status === 'syncing' ? (
+                    <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 6 }} />
+                  ) : (
+                    <Ionicons name="sync-outline" size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                  )}
+                  <Text style={styles.actionBtnText}>立即同步</Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
-                style={styles.closeBtn}
+                style={[styles.closeBtn, { backgroundColor: theme.backgroundElement }]}
                 onPress={() => setModalVisible(false)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.closeBtnText}>关闭</Text>
+                <Text style={[styles.closeBtnText, { color: theme.textSecondary }]}>关闭</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
+
+      <ConflictResolveModal
+        visible={Boolean(selectedConflict)}
+        conflict={selectedConflict}
+        onClose={() => setSelectedConflict(null)}
+        onResolved={() => setSelectedConflict(null)}
+      />
     </>
   );
 }
@@ -214,14 +288,11 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#f8fafc',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
     marginRight: 6,
   },
   pillOffline: {
-    backgroundColor: '#f1f5f9',
-    borderColor: '#cbd5e1',
+    opacity: 0.9,
   },
   pillConflict: {
     backgroundColor: '#fff1f2',
@@ -235,10 +306,9 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#334155',
   },
   textConflict: {
-    color: '#e11d48',
+    color: '#dc2626',
   },
   badgeCount: {
     backgroundColor: '#fef3c7',
@@ -252,7 +322,6 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#d97706',
   },
-
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.45)',
@@ -263,7 +332,6 @@ const styles = StyleSheet.create({
   sheetContainer: {
     width: '100%',
     maxWidth: 340,
-    backgroundColor: '#ffffff',
     borderRadius: 16,
     padding: 18,
     shadowColor: '#0f172a',
@@ -277,8 +345,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
+    borderBottomWidth: StyleSheet.hairlineWidth,
     marginBottom: 12,
   },
   sheetHeaderLeft: {
@@ -288,7 +355,6 @@ const styles = StyleSheet.create({
   sheetTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#0f172a',
   },
   engineBadge: {
     backgroundColor: '#e6f4ff',
@@ -313,39 +379,69 @@ const styles = StyleSheet.create({
   },
   infoLabel: {
     fontSize: 12,
-    color: '#64748b',
   },
   infoVal: {
     fontSize: 12,
     fontWeight: '500',
-    color: '#1e293b',
   },
   valOnline: {
     color: '#059669',
   },
   valOffline: {
-    color: '#71717a',
+    color: '#64748b',
   },
   valMono: {
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   conflictCard: {
     marginTop: 6,
-    padding: 8,
+    padding: 10,
     backgroundColor: '#fff1f2',
     borderWidth: 1,
     borderColor: '#fecdd3',
-    borderRadius: 8,
+    borderRadius: 10,
+    gap: 8,
+  },
+  conflictHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   conflictTip: {
+    flex: 1,
     fontSize: 11,
     fontWeight: '600',
-    color: '#e11d48',
-    marginBottom: 2,
+    color: '#dc2626',
+  },
+  conflictList: {
+    maxHeight: 132,
+  },
+  conflictItemBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 7,
+    paddingHorizontal: 8,
+    backgroundColor: '#ffffff',
+    borderRadius: 7,
+    marginBottom: 4,
+    gap: 8,
   },
   conflictTitle: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  conflictResolveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  conflictResolveText: {
     fontSize: 11,
-    color: '#9f1239',
+    fontWeight: '600',
+    color: '#dc2626',
   },
   sheetFooter: {
     flexDirection: 'row',
@@ -353,9 +449,18 @@ const styles = StyleSheet.create({
   },
   actionBtn: {
     flex: 1,
-    height: 36,
-    borderRadius: 8,
+    height: 40,
+    borderRadius: 10,
     backgroundColor: '#1890ff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  conflictActionBtn: {
+    flex: 1,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#dc2626',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -367,14 +472,13 @@ const styles = StyleSheet.create({
   },
   closeBtn: {
     paddingHorizontal: 16,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: '#f1f5f9',
+    height: 40,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeBtnText: {
     fontSize: 13,
-    color: '#475569',
+    fontWeight: '500',
   },
 });

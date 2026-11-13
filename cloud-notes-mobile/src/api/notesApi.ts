@@ -94,6 +94,7 @@ export const createNote = async (data: {
   type?: 'note' | 'folder';
   isEncrypted?: boolean;
   encryptedData?: string | null;
+  clientId?: string;
 }): Promise<ApiResponse<Note>> => {
   const res: any = await request({
     url: '/notes',
@@ -103,17 +104,42 @@ export const createNote = async (data: {
   return { ...res, data: res?.data?.note || res?.data };
 };
 
-// 更新笔记
+// 更新笔记本
 export const updateNotebook = async (notebookId: string, data: { title?: string; name?: string; isEncrypted?: boolean }): Promise<ApiResponse<Notebook>> => {
   const res: any = await request({
     url: `/notebooks/${notebookId}`,
     method: 'put',
     data,
   });
-  return { ...res, data: res?.data?.notebook || res?.data };
+  const rawNb = res?.data?.notebook || res?.data;
+  const normalizedNb = rawNb ? {
+    ...rawNb,
+    title: rawNb.title || rawNb.name || data.title || data.name || '未命名笔记本',
+    name: rawNb.name || rawNb.title || data.name || data.title || '未命名笔记本',
+  } : rawNb;
+  return { ...res, data: normalizedNb };
 };
 
-export const updateNote = async (noteId: string, data: { title?: string; content?: string; isEncrypted?: boolean; encryptedData?: string | null }): Promise<ApiResponse<Note>> => {
+// 删除笔记本
+export const deleteNotebook = (notebookId: string): Promise<ApiResponse<any>> => {
+  return request({
+    url: `/notebooks/${notebookId}`,
+    method: 'delete',
+  });
+};
+
+export const updateNote = async (
+  noteId: string,
+  data: {
+    title?: string;
+    content?: string;
+    isEncrypted?: boolean;
+    encryptedData?: string | null;
+    expectedVersion?: number;
+    force?: boolean;
+    saveType?: 'manual' | 'auto' | 'rollback' | 'conflict';
+  }
+): Promise<ApiResponse<Note>> => {
   const res: any = await request({
     url: `/notes/${noteId}`,
     method: 'put',
@@ -248,23 +274,23 @@ export const getKnowledgeGraph = (params?: {
   notebookId?: string;
   depth?: number;
 }): Promise<ApiResponse<{
-  nodes: Array<{
+  nodes: {
     id: string;
     title: string;
     notebookId: string;
     notebookName: string;
     notebookColor: string;
     totalDegree?: number;
-  }>;
-  links: Array<{
+  }[];
+  links: {
     source: string;
     target: string;
-  }>;
-  notebooks: Array<{
+  }[];
+  notebooks: {
     id: string;
     name: string;
     color: string;
-  }>;
+  }[];
   isLocal?: boolean;
   focusId?: string;
 }>> => {
@@ -276,7 +302,7 @@ export const getKnowledgeGraph = (params?: {
 };
 
 // 获取知识库轻量词典（供 Ghost Link 主动概念感知毫秒级离线匹配）
-export const getNoteDictionary = (): Promise<ApiResponse<{ dictionary: Array<{ _id: string; title: string; notebookName?: string }> }>> => {
+export const getNoteDictionary = (): Promise<ApiResponse<{ dictionary: { _id: string; title: string; notebookName?: string }[] }>> => {
   return request({
     url: '/notes/dictionary',
     method: 'get',
@@ -299,6 +325,33 @@ export interface NoteIndexItem {
 export const syncNoteIndex = (params?: { since?: string }): Promise<ApiResponse<{ items: NoteIndexItem[]; serverTime: string }>> => {
   return request({
     url: '/notes/index-sync',
+    method: 'get',
+    params,
+  });
+};
+
+export interface DeltaSyncCursor {
+  since: string;
+  cursorId: string;
+}
+
+export interface DeltaSyncResponse {
+  items: Note[];
+  notebooks: Notebook[];
+  nextCursor: DeltaSyncCursor | null;
+  hasMore: boolean;
+  serverTime: string;
+}
+
+// 增量同步变更笔记与删除墓碑（支持游标分页与版本对账）
+export const deltaSyncNotes = (params?: {
+  since?: string;
+  cursorId?: string;
+  limit?: number;
+  includeContent?: boolean | 'true' | 'false';
+}): Promise<ApiResponse<DeltaSyncResponse>> => {
+  return request({
+    url: '/notes/delta-sync',
     method: 'get',
     params,
   });

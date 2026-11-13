@@ -269,3 +269,168 @@
     font-weight: 500;
   }
 }
+
+html[data-theme='dark'] {
+  .cloud-notes-diff-viewer {
+    background: #0f172a;
+    border-color: #334155;
+
+    .diff-header-bar {
+      background: #1e293b;
+      border-bottom-color: #334155;
+
+      .diff-header-titles {
+        color: #94a3b8;
+
+        .diff-side-title .diff-indicator-dot {
+          &.base-dot {
+            background: #64748b;
+          }
+
+          &.target-dot {
+            background: #38bdf8;
+          }
+        }
+
+        .diff-title-arrow {
+          color: #475569;
+        }
+      }
+
+      .diff-stats-badges .diff-stat-item {
+        &.stat-added {
+          background: rgba(16, 185, 129, 0.16);
+          color: #6ee7b7;
+          border-color: rgba(16, 185, 129, 0.35);
+        }
+
+        &.stat-removed {
+          background: rgba(239, 68, 68, 0.16);
+          color: #fca5a5;
+          border-color: rgba(239, 68, 68, 0.35);
+        }
+
+        &.stat-identical {
+          background: #1e293b;
+          color: #94a3b8;
+          border-color: #475569;
+        }
+      }
+    }
+
+    .diff-body-container {
+      background: #0f172a;
+    }
+
+    .diff-identical-notice {
+      color: #94a3b8;
+
+      .identical-icon {
+        color: #34d399;
+      }
+
+      .identical-text {
+        color: #e2e8f0;
+      }
+    }
+
+    .diff-unified-table {
+      tr {
+        &.row-add {
+          background: rgba(16, 185, 129, 0.12);
+
+          .gutter-num,
+          .gutter-sign {
+            color: #6ee7b7;
+            background: rgba(16, 185, 129, 0.2);
+          }
+        }
+
+        &.row-del {
+          background: rgba(239, 68, 68, 0.12);
+
+          .gutter-num,
+          .gutter-sign {
+            color: #fca5a5;
+            background: rgba(239, 68, 68, 0.2);
+          }
+        }
+
+        &.row-normal:hover {
+          background: #1e293b;
+        }
+      }
+
+      .gutter-num,
+      .gutter-sign {
+        color: #64748b;
+        border-right-color: #1e293b;
+        background: #0b1120;
+      }
+
+      .diff-code-cell {
+        color: #e2e8f0;
+      }
+    }
+
+    .diff-split-container {
+      .split-pane.pane-left {
+        border-right-color: #334155;
+      }
+
+      .split-table {
+        tr {
+          &.cell-add {
+            background: rgba(16, 185, 129, 0.12);
+
+            .gutter-num {
+              color: #6ee7b7;
+              background: rgba(16, 185, 129, 0.2);
+            }
+          }
+
+          &.cell-del {
+            background: rgba(239, 68, 68, 0.12);
+
+            .gutter-num {
+              color: #fca5a5;
+              background: rgba(239, 68, 68, 0.2);
+            }
+          }
+
+          &.cell-empty {
+            background: #0b1120;
+
+            .gutter-num {
+              background: #0b1120;
+            }
+          }
+
+          &.cell-normal:hover {
+            background: #1e293b;
+          }
+        }
+
+        .gutter-num {
+          color: #64748b;
+          border-right-color: #1e293b;
+          background: #0b1120;
+        }
+
+        .diff-code-cell {
+          color: #e2e8f0;
+        }
+      }
+    }
+
+    .diff-token-del {
+      background: rgba(239, 68, 68, 0.28);
+      color: #fecaca;
+    }
+
+    .diff-token-add {
+      background: rgba(16, 185, 129, 0.28);
+      color: #a7f3d0;
+    }
+  }
+}
