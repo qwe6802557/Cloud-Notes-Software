@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -20,6 +20,8 @@ import ActionContextSheet, { triggerHaptic } from '../../components/ActionContex
 import TextPromptModal from '../../components/TextPromptModal';
 import MoveNoteBottomSheet from '../../components/MoveNoteBottomSheet';
 import VaultUnlockModal from '../../components/VaultUnlockModal';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Config } from '../../constants/Config';
 import {
   buildNoteFolderActionItems,
   copyNoteWikiLink,
@@ -27,25 +29,49 @@ import {
   showNotice,
   toggleItemEncryption,
 } from '../../utils/noteContextActions';
+import {
+  extractEntityId,
+  markNotebookSelected,
+  markNotesDataDirty,
+  normalizeRouteParam,
+} from '../../utils/notebookNavigationHelper';
 
 export default function FolderDetailScreen() {
   const router = useRouter();
   const {
-    id: folderId,
-    title: initialTitle,
-    notebookId: initialNotebookId,
-    notebookName: initialNotebookName,
+    id: rawFolderId,
+    title: rawInitialTitle,
+    notebookId: rawInitialNotebookId,
+    notebookName: rawInitialNotebookName,
   } = useLocalSearchParams<{
-    id: string;
-    title?: string;
-    notebookId?: string;
-    notebookName?: string;
+    id: string | string[];
+    title?: string | string[];
+    notebookId?: string | string[];
+    notebookName?: string | string[];
   }>();
 
+  const folderId = normalizeRouteParam(rawFolderId) || '';
+  const initialTitle = normalizeRouteParam(rawInitialTitle);
+  const initialNotebookId = extractEntityId(normalizeRouteParam(rawInitialNotebookId)) || '';
+  const notebookName = normalizeRouteParam(rawInitialNotebookName) || '笔记本';
+
   const [folderTitle, setFolderTitle] = useState(initialTitle || '文件夹');
-  const [notebookId, setNotebookId] = useState(initialNotebookId || '');
-  const notebookName = initialNotebookName || '笔记本';
+  const [notebookId, setNotebookId] = useState(initialNotebookId);
+  const notebookIdRef = useRef(initialNotebookId);
+  const folderTitleRef = useRef(initialTitle || '文件夹');
+  const fetchSeqRef = useRef(0);
   const [childItems, setChildItems] = useState<Note[]>([]);
+
+  useEffect(() => {
+    if (initialNotebookId) {
+      notebookIdRef.current = initialNotebookId;
+      setNotebookId(initialNotebookId);
+    }
+    if (initialTitle) {
+      folderTitleRef.current = initialTitle;
+      setFolderTitle(initialTitle);
+    }
+  }, [folderId, initialNotebookId, initialTitle]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -68,22 +94,29 @@ export default function FolderDetailScreen() {
   const loadFolderData = useCallback(async (isRefresh = false) => {
     if (!folderId) return;
 
+    const fetchSeq = ++fetchSeqRef.current;
+
     try {
       if (isRefresh) setIsRefreshing(true);
       else setIsLoading(true);
 
-      let currentNbId = notebookId;
+      let currentNbId = notebookIdRef.current || initialNotebookId;
+      const currentTitle = folderTitleRef.current;
 
       // 若未传入笔记本信息，补充拉取该文件夹本身的详情以获取其所属笔记本
-      if (!currentNbId || !folderTitle || folderTitle === '文件夹') {
+      if (!currentNbId || !currentTitle || currentTitle === '文件夹') {
         const folderDetailRes = await notesApi.getNoteDetail(folderId).catch(() => null);
+        if (fetchSeq !== fetchSeqRef.current) return;
         if (folderDetailRes && folderDetailRes.code === 200 && folderDetailRes.data) {
           if (folderDetailRes.data.title) {
+            folderTitleRef.current = folderDetailRes.data.title;
             setFolderTitle(folderDetailRes.data.title);
           }
-          if (folderDetailRes.data.notebookId) {
-            currentNbId = folderDetailRes.data.notebookId;
-            setNotebookId(currentNbId);
+          const resolvedNbId = extractEntityId(folderDetailRes.data.notebookId);
+          if (resolvedNbId) {
+            currentNbId = resolvedNbId;
+            notebookIdRef.current = resolvedNbId;
+            setNotebookId(resolvedNbId);
           }
         }
       }
@@ -93,6 +126,7 @@ export default function FolderDetailScreen() {
         const res = await notesApi.getNotebookNotes(currentNbId, {
           parentId: folderId,
         });
+        if (fetchSeq !== fetchSeqRef.current) return;
 
         if (res.code === 200 && Array.isArray(res.data)) {
           setChildItems(res.data);
@@ -101,14 +135,16 @@ export default function FolderDetailScreen() {
     } catch (e: any) {
       console.warn('Load folder children error:', e?.message);
     } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (fetchSeq === fetchSeqRef.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
-  }, [folderId, notebookId, folderTitle]);
+  }, [folderId, initialNotebookId]);
 
   useFocusEffect(
     useCallback(() => {
-      loadFolderData();
+      void loadFolderData();
     }, [loadFolderData])
   );
 
@@ -283,12 +319,27 @@ export default function FolderDetailScreen() {
 
         <Ionicons name="chevron-forward" size={12} color="#cbd5e1" style={styles.breadcrumbDivider} />
 
-        <View style={styles.breadcrumbItem}>
+        <TouchableOpacity
+          style={styles.breadcrumbItem}
+          disabled={!notebookId}
+          onPress={async () => {
+            if (!notebookId) return;
+            await AsyncStorage.setItem(Config.storageKeys.activeNotebookId, notebookId);
+            const { selectionSeq } = markNotebookSelected(notebookId);
+            router.navigate({
+              pathname: '/(tabs)',
+              params: {
+                notebookId,
+                nbSelectSeq: String(selectionSeq),
+              },
+            });
+          }}
+        >
           <Ionicons name="book-outline" size={13} color="#64748b" style={{ marginRight: 3 }} />
-          <Text style={styles.breadcrumbText} numberOfLines={1}>
+          <Text style={notebookId ? styles.breadcrumbLink : styles.breadcrumbText} numberOfLines={1}>
             {notebookName}
           </Text>
-        </View>
+        </TouchableOpacity>
 
         <Ionicons name="chevron-forward" size={12} color="#cbd5e1" style={styles.breadcrumbDivider} />
 
@@ -388,6 +439,7 @@ export default function FolderDetailScreen() {
             setMoveTargetNote(null);
           }}
           onSuccess={() => {
+            markNotesDataDirty();
             void loadFolderData(true);
             showNotice('成功', '已移动到新位置');
           }}
@@ -486,6 +538,7 @@ export default function FolderDetailScreen() {
                 parentId: target._id,
               });
             }
+            markNotesDataDirty();
             void loadFolderData(true);
           } catch (err: any) {
             showNotice('操作失败', err?.message || '网络异常');

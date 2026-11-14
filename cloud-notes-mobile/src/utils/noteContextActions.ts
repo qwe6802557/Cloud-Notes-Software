@@ -4,6 +4,7 @@ import * as notesApi from '../api/notesApi';
 import * as cryptoVault from './cryptoVault';
 import { mobileSyncManager } from './storage/mobileSyncManager';
 import { deleteNoteCache } from './storage/mobileNotesDB';
+import { markNotesDataDirty } from './notebookNavigationHelper';
 import {
   ActionSheetItem,
   confirmAction,
@@ -52,6 +53,7 @@ export async function toggleItemEncryption(
     if (isFolder) {
       const res = await notesApi.updateNote(noteId, { isEncrypted: nextStatus });
       if (res.code === 200) {
+        markNotesDataDirty();
         showNotice('提示', nextStatus ? '文件夹已设为私密' : '文件夹已解除私密');
         callbacks.onSuccess();
       } else {
@@ -73,6 +75,7 @@ export async function toggleItemEncryption(
         content: '',
       });
       if (res.code === 200) {
+        markNotesDataDirty();
         showNotice('提示', '笔记已加密设为私密');
         callbacks.onSuccess();
       } else {
@@ -89,6 +92,7 @@ export async function toggleItemEncryption(
         content: plainContent,
       });
       if (res.code === 200) {
+        markNotesDataDirty();
         showNotice('提示', '笔记已解除私密保护');
         callbacks.onSuccess();
       } else {
@@ -198,17 +202,20 @@ export async function deleteNoteOrFolder(item: any, onDone: () => void): Promise
     if (String(noteId).startsWith('local_')) {
       await mobileSyncManager.queueOfflineAction(noteId, 'delete');
       await deleteNoteCache(noteId);
+      markNotesDataDirty();
       onDone();
       return;
     }
 
     await notesApi.deleteNote(noteId);
     await deleteNoteCache(noteId);
+    markNotesDataDirty();
     onDone();
   } catch (err: any) {
     if (!err?.status) {
       await mobileSyncManager.queueOfflineAction(noteId, 'delete');
       await deleteNoteCache(noteId);
+      markNotesDataDirty();
       showNotice('已加入离线队列', '当前离线，删除操作将在联网后自动同步');
       onDone();
       return;

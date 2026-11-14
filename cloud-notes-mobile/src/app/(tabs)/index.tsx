@@ -12,7 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as notesApi from '../../api/notesApi';
@@ -37,6 +37,16 @@ import {
   showNotice,
   toggleItemEncryption,
 } from '../../utils/noteContextActions';
+import {
+  filterCachedNotesForScope,
+  getNotebookSelectionState,
+  getNotesDataVersion,
+  markNotebookSelected,
+  markNotesDataDirty,
+  normalizeRouteParam,
+  resolveTargetNotebookId,
+  shouldBypassNotesThrottle,
+} from '../../utils/notebookNavigationHelper';
 
 const renderHighlightedText = (text: string, query: string, style?: any, highlightStyle?: any) => {
   if (!text) return null;
@@ -82,6 +92,12 @@ const renderHighlightedText = (text: string, query: string, style?: any, highlig
 
 export default function NotesScreen() {
   const router = useRouter();
+  const routeParams = useLocalSearchParams<{
+    notebookId?: string | string[];
+    nbSelectSeq?: string | string[];
+  }>();
+  const routeNbId = normalizeRouteParam(routeParams.notebookId);
+  const routeSelectSeq = normalizeRouteParam(routeParams.nbSelectSeq);
 
   const [notes, setNotes] = useState<Note[]>([]);
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
@@ -112,39 +128,124 @@ export default function NotesScreen() {
   // SWR 保活控制器：初次挂载冷启动展示 Loading，切 Tab 聚焦时保持 FlatList 存活与滚动位不变
   const hasLoadedOnceRef = useRef(false);
   const lastFetchTimeRef = useRef(0);
+  const activeNotebookIdRef = useRef<string | null>(null);
+  const notebooksRef = useRef<Notebook[]>([]);
+  const fetchSeqRef = useRef(0);
+  const consumedSelectionSeqRef = useRef(0);
+  const lastHandledRouteSelectSeqRef = useRef<string | null>(null);
+  const loadedDataVersionRef = useRef(-1);
+  const latestRouteParamsRef = useRef<{ routeNbId: string | null; routeSelectSeq: string | null }>({
+    routeNbId: null,
+    routeSelectSeq: null,
+  });
+  latestRouteParamsRef.current = { routeNbId, routeSelectSeq };
 
-  // 初始化全库倒排索引引擎 (微任务延迟，确保首屏组件挂载零阻塞)
+  // 初始化全库倒排索引引擎，并监听笔记同步写入事件驱动列表及时拉新
   useEffect(() => {
     const timer = setTimeout(() => {
       mobileSearchEngine.init();
     }, 200);
-    return () => clearTimeout(timer);
+    const unsubscribeSync = mobileSyncManager.subscribeNoteSynced(() => {
+      markNotesDataDirty();
+    });
+    return () => {
+      clearTimeout(timer);
+      unsubscribeSync();
+    };
   }, []);
 
-  // 加载数据 (SWR 就地保活模型：绝不卸载已渲染的列表)
+  // 加载数据 (SWR 就地保活模型：仅在同笔记本且无变更且未过期时复用缓存)
   const loadData = useCallback(async (isRefresh = false, overrideNbId?: string | null) => {
     const isFirstLoad = !hasLoadedOnceRef.current;
     const now = Date.now();
+    const { routeNbId: currentRouteNbId, routeSelectSeq: currentRouteSelectSeq } =
+      latestRouteParamsRef.current;
 
-    // SWR 限流：已有数据且未切换笔记本、非下拉刷新、30秒内不重复向后端发请求
-    if (!isRefresh && !isFirstLoad && overrideNbId === undefined && now - lastFetchTimeRef.current < 30000) {
+    const storedNbId = await AsyncStorage.getItem(Config.storageKeys.activeNotebookId).catch(
+      () => null
+    );
+    const selectionState = getNotebookSelectionState();
+    const hasPendingInMemorySelection =
+      selectionState.selectionSeq > consumedSelectionSeqRef.current;
+    const hasPendingRouteSelection = Boolean(
+      currentRouteSelectSeq && currentRouteSelectSeq !== lastHandledRouteSelectSeqRef.current
+    );
+    const hasExplicitSelection = hasPendingInMemorySelection || hasPendingRouteSelection;
+
+    const pendingSelectedNbId = hasPendingInMemorySelection
+      ? selectionState.pendingNotebookId
+      : null;
+    const activeRouteNbId = hasPendingRouteSelection ? currentRouteNbId : null;
+
+    const preliminaryTargetNbId =
+      (overrideNbId !== undefined ? overrideNbId : null) ||
+      pendingSelectedNbId ||
+      activeRouteNbId ||
+      storedNbId ||
+      activeNotebookIdRef.current;
+
+    const currentDataVersion = getNotesDataVersion();
+
+    if (
+      !shouldBypassNotesThrottle({
+        isRefresh,
+        isFirstLoad,
+        overrideNbId,
+        hasExplicitSelection,
+        targetNbId: preliminaryTargetNbId,
+        activeNbId: activeNotebookIdRef.current,
+        dataVersion: currentDataVersion,
+        loadedDataVersion: loadedDataVersionRef.current,
+        now,
+        lastFetchTime: lastFetchTimeRef.current,
+      })
+    ) {
       return;
     }
+
+    consumedSelectionSeqRef.current = selectionState.selectionSeq;
+    if (currentRouteSelectSeq) {
+      lastHandledRouteSelectSeqRef.current = currentRouteSelectSeq;
+    }
+
+    const fetchSeq = ++fetchSeqRef.current;
+    const isNotebookSwitching = Boolean(
+      preliminaryTargetNbId && preliminaryTargetNbId !== activeNotebookIdRef.current
+    );
+
+    if (hasExplicitSelection || isNotebookSwitching || overrideNbId !== undefined) {
+      // 从“笔记本”Tab 或过滤器明确进入新笔记本时清空残留搜索词，确保呈现目标笔记本列表
+      setSearchQuery('');
+      setSearchResults([]);
+      setSearchMetrics({ latencyMs: 0, total: 0 });
+    }
+
+    let resolvedTargetNbForCatch: string | null = preliminaryTargetNbId;
 
     try {
       if (isRefresh) {
         setIsRefreshing(true);
+      } else if (isNotebookSwitching) {
+        // 切换至不同笔记本时立即清理上一笔记本旧列表并显示加载态，杜绝旧数据残留或误显示
+        setNotes([]);
+        if (preliminaryTargetNbId) {
+          activeNotebookIdRef.current = preliminaryTargetNbId;
+          setActiveNotebookId(preliminaryTargetNbId);
+        }
+        setIsLoading(true);
       } else if (isFirstLoad) {
         // 本地优先瞬时上屏
         try {
           const cached = await getAllCachedNotes();
-          if (cached.length > 0) {
+          const scopedCached = filterCachedNotesForScope(cached, preliminaryTargetNbId, null);
+          if (scopedCached.length > 0) {
             setNotes(
-              cached.map(c => ({
+              scopedCached.map(c => ({
                 _id: c.id,
                 title: c.title,
                 content: c.content,
-                notebookId: '',
+                notebookId: c.notebookId || '',
+                parentId: c.parentId ?? null,
                 userId: '',
                 updatedAt: c.updatedAt,
                 createdAt: c.updatedAt,
@@ -161,13 +262,16 @@ export default function NotesScreen() {
         }
       }
 
-      const [nbRes, activeNbStored] = await Promise.all([
-        notesApi.getNotebooks().catch(() => ({ code: 500, data: [] as Notebook[] })),
-        AsyncStorage.getItem(Config.storageKeys.activeNotebookId).catch(() => null),
-      ]);
+      const nbRes = await notesApi
+        .getNotebooks()
+        .catch(() => ({ code: 500, data: [] as Notebook[] }));
 
-      let loadedNotebooks: Notebook[] = [];
-      if (nbRes.code === 200 && Array.isArray(nbRes.data)) {
+      if (fetchSeq !== fetchSeqRef.current) return;
+
+      const notebooksFetchOk = nbRes.code === 200 && Array.isArray(nbRes.data);
+      let loadedNotebooks: Notebook[] = notebooksRef.current;
+
+      if (notebooksFetchOk) {
         // 确保“默认笔记本”排在首位
         loadedNotebooks = [...nbRes.data].sort((a, b) => {
           const aIsDefault = (a.title || a.name) === '默认笔记本';
@@ -176,19 +280,27 @@ export default function NotesScreen() {
           if (!aIsDefault && bIsDefault) return 1;
           return 0;
         });
+        notebooksRef.current = loadedNotebooks;
         setNotebooks(loadedNotebooks);
       }
 
-      // 默认选中“默认笔记本”，若无则选首个笔记本
-      const defaultNb =
-        loadedNotebooks.find(nb => (nb.title || nb.name) === '默认笔记本') ||
-        loadedNotebooks[0];
+      const targetNbId = resolveTargetNotebookId({
+        overrideNbId,
+        routeNbId: activeRouteNbId,
+        pendingSelectedNbId,
+        storedNbId,
+        previousNbId: activeNotebookIdRef.current,
+        loadedNotebooks,
+        notebooksFetchOk,
+      });
 
-      let targetNbId = overrideNbId !== undefined ? overrideNbId : activeNbStored;
-      if (!targetNbId || !loadedNotebooks.some(nb => nb._id === targetNbId)) {
-        targetNbId = defaultNb ? defaultNb._id : null;
-      }
+      resolvedTargetNbForCatch = targetNbId;
+      activeNotebookIdRef.current = targetNbId;
       setActiveNotebookId(targetNbId);
+
+      if (targetNbId && targetNbId !== storedNbId) {
+        AsyncStorage.setItem(Config.storageKeys.activeNotebookId, targetNbId).catch(() => {});
+      }
 
       let notesRes;
       if (targetNbId) {
@@ -197,16 +309,25 @@ export default function NotesScreen() {
         notesRes = await notesApi.getRecentNotes();
       }
 
+      if (fetchSeq !== fetchSeqRef.current) return;
+
       if (notesRes && notesRes.code === 200 && Array.isArray(notesRes.data)) {
         const remoteNotes = notesRes.data;
         const cached = await getAllCachedNotes();
-        const pendingOffline = cached.filter(c => c.id.startsWith('local_'));
+        if (fetchSeq !== fetchSeqRef.current) return;
+
+        const pendingOffline = filterCachedNotesForScope(
+          cached.filter(c => c.id.startsWith('local_')),
+          targetNbId,
+          null
+        );
         const mergedNotes: Note[] = [
           ...pendingOffline.map(c => ({
             _id: c.id,
             title: c.title,
             content: c.content,
-            notebookId: '',
+            notebookId: c.notebookId || targetNbId || '',
+            parentId: c.parentId ?? null,
             userId: '',
             updatedAt: c.updatedAt,
             createdAt: c.updatedAt,
@@ -230,18 +351,22 @@ export default function NotesScreen() {
         }));
         mobileSearchEngine.batchUpsertDocuments(searchDocs);
         lastFetchTimeRef.current = Date.now();
+        loadedDataVersionRef.current = getNotesDataVersion();
       }
     } catch (e: any) {
+      if (fetchSeq !== fetchSeqRef.current) return;
       console.warn('Load notes error:', e.message);
       try {
         const cached = await getAllCachedNotes();
-        if (cached.length > 0) {
+        const scopedCached = filterCachedNotesForScope(cached, resolvedTargetNbForCatch, null);
+        if (scopedCached.length > 0) {
           setNotes(
-            cached.map(c => ({
+            scopedCached.map(c => ({
               _id: c.id,
               title: c.title,
               content: c.content,
-              notebookId: '',
+              notebookId: c.notebookId || '',
+              parentId: c.parentId ?? null,
               userId: '',
               updatedAt: c.updatedAt,
               createdAt: c.updatedAt,
@@ -252,18 +377,27 @@ export default function NotesScreen() {
         }
       } catch {}
     } finally {
-      hasLoadedOnceRef.current = true;
-      setIsLoading(false);
-      setIsRefreshing(false);
+      if (fetchSeq === fetchSeqRef.current) {
+        hasLoadedOnceRef.current = true;
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, []);
 
   // 页面聚焦时自动刷新
   useFocusEffect(
     useCallback(() => {
-      loadData();
+      void loadData();
     }, [loadData])
   );
+
+  // 路由选择序列变化时兜底触发刷新（防止组件未失焦或参数延迟到达）
+  useEffect(() => {
+    if (routeSelectSeq && routeSelectSeq !== lastHandledRouteSelectSeqRef.current) {
+      void loadData();
+    }
+  }, [routeSelectSeq, loadData]);
 
   // 搜索输入触发全库穿透毫秒级倒排检索
   const handleSearchChange = (text: string) => {
@@ -281,9 +415,12 @@ export default function NotesScreen() {
   };
 
   const handleSelectNotebook = async (id: string) => {
+    markNotebookSelected(id);
+    activeNotebookIdRef.current = id;
     setActiveNotebookId(id);
+    setNotes([]);
     await AsyncStorage.setItem(Config.storageKeys.activeNotebookId, id);
-    loadData(false, id);
+    void loadData(false, id);
   };
 
   const toggleStar = async (item: Note | SearchResultItem) => {
@@ -653,6 +790,7 @@ export default function NotesScreen() {
             setMoveTargetNote(null);
           }}
           onSuccess={() => {
+            markNotesDataDirty();
             loadData(true);
             Alert.alert('成功', '已移动到新位置');
           }}
@@ -707,6 +845,7 @@ export default function NotesScreen() {
                 parentId: targetId,
               });
             }
+            markNotesDataDirty();
             void loadData(true);
           } catch (err: any) {
             showNotice('操作失败', err?.message || '网络异常');

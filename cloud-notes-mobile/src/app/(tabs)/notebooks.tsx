@@ -27,6 +27,12 @@ import ActionContextSheet, {
 } from '../../components/ActionContextSheet';
 import TextPromptModal from '../../components/TextPromptModal';
 import { showNotice } from '../../utils/noteContextActions';
+import {
+  getNotebooksDataVersion,
+  markNotebooksDataDirty,
+  markNotebookSelected,
+  markNotesDataDirty,
+} from '../../utils/notebookNavigationHelper';
 
 export default function NotebooksScreen() {
   const router = useRouter();
@@ -38,6 +44,7 @@ export default function NotebooksScreen() {
   // SWR 保活控制器：初次挂载展示全屏菊花，后续切 Tab 聚焦就地复用内存态
   const hasLoadedOnceRef = useRef(false);
   const lastFetchTimeRef = useRef(0);
+  const loadedNotebooksVersionRef = useRef(-1);
 
   // 新建笔记本弹窗
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -65,9 +72,11 @@ export default function NotebooksScreen() {
   const loadNotebooks = useCallback(async (isRefresh = false) => {
     const isFirstLoad = !hasLoadedOnceRef.current;
     const now = Date.now();
+    const currentVersion = getNotebooksDataVersion();
+    const hasMutations = currentVersion !== loadedNotebooksVersionRef.current;
 
-    // SWR 限流：已有缓存数据、非手动下拉刷新且 30 秒内聚焦不重复请求
-    if (!isRefresh && !isFirstLoad && now - lastFetchTimeRef.current < 30000) {
+    // SWR 限流：已有缓存数据、无变更标记、非手动下拉刷新且 30 秒内聚焦不重复请求
+    if (!isRefresh && !isFirstLoad && !hasMutations && now - lastFetchTimeRef.current < 30000) {
       return;
     }
 
@@ -82,6 +91,7 @@ export default function NotebooksScreen() {
       if (res.code === 200 && Array.isArray(res.data)) {
         setNotebooks(res.data);
         lastFetchTimeRef.current = Date.now();
+        loadedNotebooksVersionRef.current = getNotebooksDataVersion();
       }
     } catch (e: any) {
       console.warn('Fetch notebooks failed:', e.message);
@@ -117,6 +127,8 @@ export default function NotebooksScreen() {
     try {
       const res = await notesApi.deleteNotebook(notebook._id);
       if (res?.code === 200 || res?.data !== undefined) {
+        markNotebooksDataDirty();
+        markNotesDataDirty();
         showNotice('已删除', '笔记本及所属目录已移入回收站');
         void loadNotebooks(true);
       } else {
@@ -211,7 +223,14 @@ export default function NotebooksScreen() {
 
   const handleSelectNotebook = async (notebook: Notebook) => {
     await AsyncStorage.setItem(Config.storageKeys.activeNotebookId, notebook._id);
-    router.navigate('/(tabs)');
+    const { selectionSeq } = markNotebookSelected(notebook._id);
+    router.navigate({
+      pathname: '/(tabs)',
+      params: {
+        notebookId: notebook._id,
+        nbSelectSeq: String(selectionSeq),
+      },
+    });
   };
 
   const handleCreateNotebook = async () => {
@@ -224,9 +243,10 @@ export default function NotebooksScreen() {
       setIsCreating(true);
       const res = await notesApi.createNotebook({ title: newNotebookTitle.trim() });
       if (res.code === 200) {
+        markNotebooksDataDirty();
         setShowCreateModal(false);
         setNewNotebookTitle('');
-        loadNotebooks();
+        loadNotebooks(true);
         Alert.alert('成功', '笔记本创建成功');
       } else {
         throw new Error(res.message);
@@ -401,6 +421,7 @@ export default function NotebooksScreen() {
           try {
             if (promptConfig.mode === 'rename_notebook') {
               await notesApi.updateNotebook(nb._id, { name: value, title: value });
+              markNotebooksDataDirty();
             } else {
               await notesApi.createNote({
                 title: value,
@@ -409,6 +430,7 @@ export default function NotebooksScreen() {
                 notebookId: nb._id,
                 parentId: null,
               });
+              markNotesDataDirty();
               showNotice('已创建', `已在「${nb.title || nb.name}」创建文件夹`);
             }
             void loadNotebooks(true);
