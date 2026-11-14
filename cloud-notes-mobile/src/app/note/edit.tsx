@@ -33,7 +33,10 @@ import {
   resolveNoteId,
   hasPendingMutationsForNote,
 } from '../../utils/storage/mobileNotesDB';
-import mobileSyncManager, { ConflictEntry } from '../../utils/storage/mobileSyncManager';
+import mobileSyncManager, {
+  ConflictEntry,
+  computeInMemoryContentDigest,
+} from '../../utils/storage/mobileSyncManager';
 import * as cryptoVault from '../../utils/cryptoVault';
 import VaultUnlockModal from '../../components/VaultUnlockModal';
 
@@ -58,6 +61,14 @@ export default function NoteEditScreen() {
   const isDirtyRef = useRef(false);
   const baseVersionRef = useRef<number | undefined>(undefined);
   const syncSeqRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     isDirtyRef.current = isDirty;
@@ -212,7 +223,7 @@ export default function NoteEditScreen() {
     });
 
     if (finalContent !== content) {
-      setContent(finalContent);
+      handleContentChange(finalContent);
       Alert.alert('已织入双链', `已将命中的「${word}」转换为 [[${word}]]`);
     }
   };
@@ -239,7 +250,7 @@ export default function NoteEditScreen() {
     });
 
     if (current !== content) {
-      setContent(current);
+      handleContentChange(current);
       Alert.alert('已全部织入', `已成功将 ${words.length} 处概念词条升级为 [[双链]]`);
       setGhostSuggestVisible(false);
     }
@@ -306,9 +317,21 @@ export default function NoteEditScreen() {
       }
     );
 
+    const unsubscribeSynced = mobileSyncManager.subscribeNoteSynced(event => {
+      if (!isMountedRef.current || event.noteId !== targetId) return;
+      if (event.updatedAt) {
+        setBaseUpdatedAt(event.updatedAt);
+      }
+      if (typeof event.contentVersion === 'number') {
+        setBaseVersion(event.contentVersion);
+        baseVersionRef.current = event.contentVersion;
+      }
+    });
+
     return () => {
       unsubscribeSync();
       unsubscribeResolved();
+      unsubscribeSynced();
     };
   }, [id, resolvedNoteId, reloadResolvedLocalCache]);
 
@@ -473,8 +496,10 @@ export default function NoteEditScreen() {
           mobileSyncManager.setLastKnownRemoteUpdatedAt(
             targetId,
             remote.updatedAt,
-            remote.isEncrypted ? '' : noteContent,
-            remote.contentVersion
+            remote.isEncrypted ? (remote.encryptedData ?? '') : noteContent,
+            remote.contentVersion,
+            remote.title,
+            computeInMemoryContentDigest(noteContent)
           );
           setTitle(remote.title || '');
           setContent(noteContent);
@@ -567,7 +592,7 @@ export default function NoteEditScreen() {
 
     const inserted = `${prefix}${selected}${suffix}`;
     const newContent = `${before}${inserted}${after}`;
-    setContent(newContent);
+    handleContentChange(newContent);
 
     // 重新聚焦
     const newPos = start + prefix.length + selected.length;
@@ -717,11 +742,11 @@ export default function NoteEditScreen() {
     if (range.start !== range.end) {
       const before = content.substring(0, range.start);
       const after = content.substring(range.end);
-      setContent(before + replacementText + after);
+      handleContentChange(before + replacementText + after);
       const newPos = range.start + replacementText.length;
       setCursorPosition({ start: newPos, end: newPos });
     } else {
-      setContent(replacementText);
+      handleContentChange(replacementText);
     }
     setInlineCardVisible(false);
     setInlineSelectionSnapshot(null);
@@ -735,7 +760,7 @@ export default function NoteEditScreen() {
     const before = content.substring(0, insertPos);
     const after = content.substring(insertPos);
     const prefix = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
-    setContent(before + prefix + insertionText + after);
+    handleContentChange(before + prefix + insertionText + after);
     const newPos = insertPos + prefix.length + insertionText.length;
     setCursorPosition({ start: newPos, end: newPos });
 
@@ -753,29 +778,32 @@ export default function NoteEditScreen() {
     }
 
     const targetId = await resolveNoteId(id);
-    if (seq !== syncSeqRef.current) return;
+    if (!isMountedRef.current || seq !== syncSeqRef.current) return;
 
     let encryptedData: string | null = null;
     if (isEncrypted) {
       const pin = cryptoVault.getSessionKey()!;
       const salt = cryptoVault.getSessionSalt() || '00'.repeat(16);
       encryptedData = await cryptoVault.encryptNote(nextContent, pin, salt);
-      if (seq !== syncSeqRef.current) return;
+      if (!isMountedRef.current || seq !== syncSeqRef.current) return;
     }
 
     const safePlainContent = isEncrypted ? '' : nextContent;
+    const contentDigest = computeInMemoryContentDigest(nextContent);
+    const latestKnownVer = mobileSyncManager.getLastKnownVersion(targetId) ?? baseVersionRef.current;
+
     await mobileSyncManager.notifyLocalDirty(targetId, {
       title: nextTitle,
       content: safePlainContent,
       baseUpdatedAt,
-      expectedVersion: baseVersionRef.current,
+      expectedVersion: latestKnownVer,
       notebookId,
       parentId: initialParentId || null,
       isEncrypted,
       encryptedData,
     });
 
-    if (seq !== syncSeqRef.current) return;
+    if (!isMountedRef.current || seq !== syncSeqRef.current) return;
 
     mobileSyncManager.scheduleAutoSync(
       targetId,
@@ -783,12 +811,14 @@ export default function NoteEditScreen() {
         title: nextTitle,
         content: safePlainContent,
         baseUpdatedAt,
-        expectedVersion: baseVersionRef.current,
+        expectedVersion: mobileSyncManager.getLastKnownVersion(targetId) ?? latestKnownVer,
         notebookId,
         parentId: initialParentId || null,
         isEncrypted,
         encryptedData,
+        contentDigest,
         onSyncSuccess: syncRes => {
+          if (!isMountedRef.current) return;
           if (syncRes?.resolvedId && syncRes.resolvedId !== resolvedNoteId) {
             setResolvedNoteId(syncRes.resolvedId);
           }
@@ -829,6 +859,7 @@ export default function NoteEditScreen() {
 
   // 保存笔记
   const handleSave = async () => {
+    if (isSaving) return;
     if (!title.trim()) {
       Alert.alert('提示', '请输入笔记标题');
       return;
@@ -837,6 +868,8 @@ export default function NoteEditScreen() {
     try {
       setIsSaving(true);
       if (id) {
+        // 失效所有尚在加密/异步队列中的旧防抖自动保存任务
+        syncSeqRef.current += 1;
         const targetId = await resolveNoteId(id);
         let encryptedData: string | null = null;
         if (isEncrypted) {
@@ -850,16 +883,20 @@ export default function NoteEditScreen() {
           encryptedData = await cryptoVault.encryptNote(content, pin, salt);
         }
 
+        const contentDigest = computeInMemoryContentDigest(content);
+        const authoritativeVersion = mobileSyncManager.getLastKnownVersion(targetId) ?? baseVersionRef.current;
+
         const syncRes = await mobileSyncManager.syncNote(targetId, {
           title: title.trim(),
           content: isEncrypted ? '' : content,
           baseUpdatedAt,
-          expectedVersion: baseVersionRef.current,
+          expectedVersion: authoritativeVersion,
           notebookId,
           parentId: initialParentId || null,
           isEncrypted,
           encryptedData,
           saveType: 'manual',
+          contentDigest,
         });
 
         if (syncRes.conflict) {
@@ -875,6 +912,14 @@ export default function NoteEditScreen() {
               : syncRes.error?.message || '保存失败，请稍后重试';
           Alert.alert('保存失败', errMsg);
           return;
+        }
+
+        if (syncRes.updatedAt) {
+          setBaseUpdatedAt(syncRes.updatedAt);
+        }
+        if (typeof syncRes.contentVersion === 'number') {
+          setBaseVersion(syncRes.contentVersion);
+          baseVersionRef.current = syncRes.contentVersion;
         }
 
         setIsDirty(false);
@@ -1181,9 +1226,9 @@ export default function NoteEditScreen() {
           if (start !== end) {
             const before = content.substring(0, start);
             const after = content.substring(end);
-            setContent(before + replacement + after);
+            handleContentChange(before + replacement + after);
           } else {
-            setContent(replacement);
+            handleContentChange(replacement);
           }
         }}
         onInsertContent={insertion => {
@@ -1191,7 +1236,7 @@ export default function NoteEditScreen() {
           const insertPos = end || content.length;
           const before = content.substring(0, insertPos);
           const after = content.substring(insertPos);
-          setContent(before + insertion + after);
+          handleContentChange(before + insertion + after);
         }}
       />
 
@@ -1203,8 +1248,29 @@ export default function NoteEditScreen() {
           noteId={resolvedNoteId || id!}
           currentContent={content}
           onRollbackSuccess={updatedNote => {
-            setTitle(updatedNote.title || '');
-            setContent(updatedNote.content || '');
+            const rollbackTitle = updatedNote.title || '';
+            const rollbackContent = updatedNote.content || '';
+            const rollbackId = resolvedNoteId || id!;
+            syncSeqRef.current += 1;
+            setTitle(rollbackTitle);
+            setContent(rollbackContent);
+            setIsDirty(false);
+            isDirtyRef.current = false;
+            if (updatedNote.updatedAt) {
+              setBaseUpdatedAt(updatedNote.updatedAt);
+            }
+            if (typeof updatedNote.contentVersion === 'number') {
+              setBaseVersion(updatedNote.contentVersion);
+              baseVersionRef.current = updatedNote.contentVersion;
+            }
+            mobileSyncManager.setLastKnownRemoteUpdatedAt(
+              rollbackId,
+              updatedNote.updatedAt || new Date().toISOString(),
+              updatedNote.isEncrypted ? (updatedNote.encryptedData ?? '') : rollbackContent,
+              updatedNote.contentVersion,
+              rollbackTitle,
+              computeInMemoryContentDigest(rollbackContent)
+            );
           }}
         />
       )}

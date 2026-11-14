@@ -86,7 +86,7 @@ import {
     clearSessionKey,
     subscribeVaultLock
 } from '@/utils/cryptoVault';
-import { prepareNoteSavePayload, decryptNoteInMemory } from '@/utils/noteCryptoHelper';
+import { prepareNoteSavePayload, decryptNoteInMemory, computeInMemoryContentDigest } from '@/utils/noteCryptoHelper';
 import { getNoteCache, saveNoteCache } from '@/utils/storage/localNotesDB';
 import syncManager from '@/utils/storage/syncManager';
 
@@ -1973,7 +1973,11 @@ const NoteEditor = ({
                             selectedNote,
                             memCached.updatedAt,
                             memCached.lastSavedSnapshot,
-                            memCached.contentVersion
+                            memCached.contentVersion,
+                            memCached.title,
+                            memCached.isDirty
+                                ? null
+                                : computeInMemoryContentDigest(lastSavedContentRef.current)
                         );
                     }
                     setLoading(false);
@@ -2015,7 +2019,11 @@ const NoteEditor = ({
                             selectedNote,
                             idbCached.remoteUpdatedAt || idbCached.updatedAt,
                             idbCached.isEncrypted ? (idbCached.encryptedData || '') : restoredContent,
-                            idbCached.contentVersion
+                            idbCached.contentVersion,
+                            idbCached.title,
+                            idbCached.isDirty
+                                ? null
+                                : computeInMemoryContentDigest(restoredContent)
                         );
                     }
                     setLoading(false);
@@ -2072,7 +2080,9 @@ const NoteEditor = ({
                             selectedNote,
                             result.note.updatedAt,
                             remoteSnapshot,
-                            result.note.contentVersion
+                            result.note.contentVersion,
+                            loadedTitle,
+                            computeInMemoryContentDigest(noteContent)
                         );
                     }
                     setIsDirty(false);
@@ -2163,7 +2173,9 @@ const NoteEditor = ({
                                 selectedNote,
                                 note.updatedAt,
                                 snapshot,
-                                note.contentVersion
+                                note.contentVersion,
+                                newTitle,
+                                computeInMemoryContentDigest(newContent)
                             );
                         }
                     }
@@ -2224,6 +2236,16 @@ const NoteEditor = ({
                     syncManager.notifyLocalDirty(activeNoteId, prep.payload);
                     syncManager.scheduleAutoSync(activeNoteId, {
                         ...prep.payload,
+                        onSyncStart: () => {
+                            if (currentLoadedNoteIdRef.current === activeNoteId) {
+                                setAutoSaving(true);
+                            }
+                        },
+                        onSyncFinally: () => {
+                            if (currentLoadedNoteIdRef.current === activeNoteId) {
+                                setAutoSaving(false);
+                            }
+                        },
                         onSyncSuccess: syncRes => {
                             if (currentLoadedNoteIdRef.current !== activeNoteId) return;
                             if (syncRes?.updatedAt) {
@@ -2266,7 +2288,8 @@ const NoteEditor = ({
             return;
         }
 
-        if (!isDirty && content === lastSavedContentRef.current && !syncManager.getConflict(selectedNote)) {
+        const liveContent = contentRef.current ?? content;
+        if (!isDirty && liveContent === lastSavedContentRef.current && !syncManager.getConflict(selectedNote)) {
             return;
         }
 
@@ -2278,8 +2301,13 @@ const NoteEditor = ({
             return;
         }
 
-        if (saving || autoSaving) {
+        if (options.auto ? (saving || autoSaving) : saving) {
             return;
+        }
+
+        if (!options.auto) {
+            // 失效尚未完成的异步防抖前驱加密任务，避免手动保存后又挂起旧版本定时器
+            editDispatchSeqRef.current += 1;
         }
 
         if (options.auto) {
@@ -2291,7 +2319,7 @@ const NoteEditor = ({
         try {
             const prep = await prepareNoteSavePayload({
                 title: noteTitle,
-                content,
+                content: liveContent,
                 isEncrypted: noteIsEncrypted,
                 baseUpdatedAt: lastSavedAt,
                 expectedVersion: syncManager.getContentVersion(selectedNote),
@@ -2339,31 +2367,33 @@ const NoteEditor = ({
             }
 
             if (onSave) {
-                await onSave(targetId, content, {
+                await onSave(targetId, liveContent, {
                     title: noteTitle,
                     saveType: options.auto ? 'auto' : 'manual',
+                    coalesced: Boolean(syncRes?.coalesced),
                     note: syncRes?.note
                 });
             }
 
-            lastSavedContentRef.current = content;
+            lastSavedContentRef.current = liveContent;
             if (syncRes?.updatedAt) {
                 setLastSavedAt(new Date(syncRes.updatedAt));
             } else {
                 setLastSavedAt(new Date());
             }
-            setIsDirty(false);
+            const hasNewerEdits = contentRef.current !== liveContent;
+            setIsDirty(hasNewerEdits);
             setSaveError('');
 
             noteContentCacheRef.current.set(targetId, {
-                content,
-                lastSavedContent: content,
-                lastSavedSnapshot: noteIsEncrypted ? prep.payload.encryptedData : content,
+                content: contentRef.current ?? liveContent,
+                lastSavedContent: liveContent,
+                lastSavedSnapshot: noteIsEncrypted ? prep.payload.encryptedData : liveContent,
                 title: noteTitle,
                 isEncrypted: noteIsEncrypted,
                 contentVersion: syncRes?.contentVersion ?? syncManager.getContentVersion(targetId),
                 updatedAt: syncRes?.updatedAt || new Date().toISOString(),
-                isDirty: false
+                isDirty: hasNewerEdits
             });
 
             if (!options.silent) {
@@ -2784,7 +2814,7 @@ const NoteEditor = ({
                     icon={<SaveOutlined />}
                     onClick={() => handleSave()}
                     loading={saving}
-                    disabled={!selectedNote || !isDirty || loading || autoSaving || uploadingImage}
+                    disabled={!selectedNote || !isDirty || loading || uploadingImage}
                 >
                     保存
                 </Button>
@@ -3055,7 +3085,9 @@ const NoteEditor = ({
                                                     selectedNote,
                                                     res.note.updatedAt,
                                                     res.note.encryptedData,
-                                                    res.note.contentVersion
+                                                    res.note.contentVersion,
+                                                    res.note.title,
+                                                    computeInMemoryContentDigest(dec)
                                                 );
                                             }
                                         } catch {}

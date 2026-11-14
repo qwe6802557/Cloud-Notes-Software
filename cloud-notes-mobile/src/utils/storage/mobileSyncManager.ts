@@ -50,8 +50,33 @@ export interface SyncStateSnapshot {
   conflicts: ConflictEntry[];
 }
 
+export interface NoteSyncedEvent {
+  noteId: string;
+  updatedAt?: string;
+  contentVersion?: number;
+  title?: string;
+  coalesced?: boolean;
+  saveType?: 'manual' | 'auto' | 'rollback' | 'conflict';
+}
+
 export type SyncStateSubscriber = (state: SyncStateSnapshot) => void;
 export type ConflictResolvedListener = (noteId: string, strategy: ConflictStrategy) => void;
+export type NoteSyncedListener = (event: NoteSyncedEvent) => void;
+
+// 仅在内存态生成非持久化摘要，用于同明文加密笔记多次重加密后的幂等合并
+export function computeInMemoryContentDigest(text = ''): string {
+  const str = String(text ?? '');
+  let h1 = 0x811c9dc5;
+  let h2 = 0x811c9dc5;
+  for (let i = 0; i < str.length; i += 1) {
+    const code = str.charCodeAt(i);
+    h1 ^= code;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 ^= (code + i) & 0xffff;
+    h2 = Math.imul(h2, 0x01000193);
+  }
+  return `${str.length}:${(h1 >>> 0).toString(16)}:${(h2 >>> 0).toString(16)}`;
+}
 
 class MobileSyncManager {
   private status: SyncStatusType = 'synced';
@@ -62,11 +87,16 @@ class MobileSyncManager {
   private conflictsMap = new Map<string, ConflictEntry>();
   private subscribers = new Set<SyncStateSubscriber>();
   private conflictResolvedListeners = new Set<ConflictResolvedListener>();
+  private noteSyncedListeners = new Set<NoteSyncedListener>();
   private isFlushing = false;
   private debounceTimers = new Map<string, any>();
+  private inFlightSyncs = new Map<string, Promise<any>>();
+  private remappedIdsMap = new Map<string, string>();
   private lastKnownRemoteUpdatedAt = new Map<string, string>();
   private lastKnownVersionMap = new Map<string, number>();
   private lastSavedContentMap = new Map<string, string>();
+  private lastSavedTitleMap = new Map<string, string>();
+  private lastSavedDigestMap = new Map<string, string>();
 
   constructor() {
     this.initAppStateListener();
@@ -137,25 +167,65 @@ class MobileSyncManager {
     noteId: string,
     updatedAt: string,
     content?: string,
-    contentVersion?: number
+    contentVersion?: number,
+    title?: string,
+    contentDigest?: string | null
   ) {
     if (noteId) {
+      const resolvedId = this.remappedIdsMap.get(noteId) || noteId;
       if (updatedAt) {
-        this.lastKnownRemoteUpdatedAt.set(noteId, updatedAt);
+        this.lastKnownRemoteUpdatedAt.set(resolvedId, updatedAt);
       }
       if (content !== undefined) {
-        this.lastSavedContentMap.set(noteId, content);
+        this.lastSavedContentMap.set(resolvedId, content);
       }
       if (typeof contentVersion === 'number') {
-        this.lastKnownVersionMap.set(noteId, contentVersion);
+        this.lastKnownVersionMap.set(resolvedId, contentVersion);
+      }
+      if (title !== undefined) {
+        this.lastSavedTitleMap.set(resolvedId, String(title ?? '').trim());
+      }
+      if (contentDigest === null) {
+        this.lastSavedDigestMap.delete(resolvedId);
+      } else if (contentDigest !== undefined) {
+        this.lastSavedDigestMap.set(resolvedId, contentDigest);
       }
     }
   }
 
   public setLastKnownRemoteVersion(noteId: string, contentVersion?: number) {
     if (noteId && typeof contentVersion === 'number') {
-      this.lastKnownVersionMap.set(noteId, contentVersion);
+      const resolvedId = this.remappedIdsMap.get(noteId) || noteId;
+      this.lastKnownVersionMap.set(resolvedId, contentVersion);
     }
+  }
+
+  public getLastKnownVersion(noteId: string): number | undefined {
+    if (!noteId) return undefined;
+    const resolvedId = this.remappedIdsMap.get(noteId) || noteId;
+    return this.lastKnownVersionMap.get(resolvedId);
+  }
+
+  public isSyncingNote(noteId: string): boolean {
+    if (!noteId) return false;
+    const resolvedId = this.remappedIdsMap.get(noteId) || noteId;
+    return this.inFlightSyncs.has(noteId) || this.inFlightSyncs.has(resolvedId);
+  }
+
+  private resolveEffectiveExpectedVersion(
+    resolvedId: string,
+    explicitExpectedVersion?: number,
+    cachedVersion?: number,
+    options: { fromQueue?: boolean } = {}
+  ): number | undefined {
+    const knownVersion = this.lastKnownVersionMap.get(resolvedId);
+    if (options.fromQueue) {
+      return explicitExpectedVersion ?? knownVersion ?? cachedVersion;
+    }
+    if (typeof knownVersion === 'number' && typeof explicitExpectedVersion === 'number') {
+      return Math.max(knownVersion, explicitExpectedVersion);
+    }
+    return knownVersion ?? explicitExpectedVersion ?? cachedVersion;
   }
 
   private initAppStateListener() {
@@ -184,6 +254,23 @@ class MobileSyncManager {
     return () => {
       this.conflictResolvedListeners.delete(callback);
     };
+  }
+
+  public subscribeNoteSynced(callback: NoteSyncedListener): () => void {
+    this.noteSyncedListeners.add(callback);
+    return () => {
+      this.noteSyncedListeners.delete(callback);
+    };
+  }
+
+  private emitNoteSynced(event: NoteSyncedEvent) {
+    this.noteSyncedListeners.forEach(cb => {
+      try {
+        cb(event);
+      } catch (err) {
+        console.warn('[MobileSyncManager] NoteSynced listener error:', err);
+      }
+    });
   }
 
   private emitConflictResolved(noteId: string, strategy: ConflictStrategy) {
@@ -402,31 +489,139 @@ class MobileSyncManager {
       parentId?: string | null;
       isEncrypted?: boolean;
       encryptedData?: string | null;
+      contentDigest?: string;
+      onSyncStart?: () => void;
       onSyncSuccess?: (res: any) => void;
+      onSyncError?: (res: any) => void;
+      onSyncFinally?: () => void;
     },
     delay = 1500
   ) {
     if (!noteId) return;
+    const resolvedKey = this.remappedIdsMap.get(noteId) || noteId;
 
     if (this.debounceTimers.has(noteId)) {
       clearTimeout(this.debounceTimers.get(noteId));
+      this.debounceTimers.delete(noteId);
+    }
+    if (resolvedKey !== noteId && this.debounceTimers.has(resolvedKey)) {
+      clearTimeout(this.debounceTimers.get(resolvedKey));
+      this.debounceTimers.delete(resolvedKey);
     }
 
     const timer = setTimeout(async () => {
       this.debounceTimers.delete(noteId);
-      const res = await this.syncNote(noteId, noteData, { auto: true });
-      if (res?.success && !res.forked && !res.conflict && typeof noteData?.onSyncSuccess === 'function') {
-        noteData.onSyncSuccess(res);
+      this.debounceTimers.delete(resolvedKey);
+      if (typeof noteData?.onSyncStart === 'function') {
+        noteData.onSyncStart();
+      }
+      try {
+        const res = await this.syncNote(resolvedKey, noteData, { auto: true });
+        if (res?.success && !res.forked && !res.conflict && typeof noteData?.onSyncSuccess === 'function') {
+          noteData.onSyncSuccess(res);
+        } else if (!res?.success && typeof noteData?.onSyncError === 'function') {
+          noteData.onSyncError(res);
+        }
+      } finally {
+        if (typeof noteData?.onSyncFinally === 'function') {
+          noteData.onSyncFinally();
+        }
       }
     }, delay);
 
-    this.debounceTimers.set(noteId, timer);
+    this.debounceTimers.set(resolvedKey, timer);
   }
 
   /**
-   * 核心保存同步逻辑（基于 expectedVersion 乐观锁 + 409 非破坏性暂存冲突）
+   * 核心保存同步逻辑（按单笔记串行化排空 + 同快照幂等合并 + expectedVersion 乐观锁）
    */
   public async syncNote(
+    noteId: string,
+    params: {
+      title: string;
+      content: string;
+      baseUpdatedAt?: string | null;
+      expectedVersion?: number;
+      notebookId?: string;
+      parentId?: string | null;
+      isEncrypted?: boolean;
+      encryptedData?: string | null;
+      force?: boolean;
+      saveType?: 'manual' | 'auto' | 'rollback' | 'conflict';
+      contentDigest?: string;
+    },
+    options: { auto?: boolean; silent?: boolean; fromQueue?: boolean } = {}
+  ): Promise<{
+    success: boolean;
+    localOnly?: boolean;
+    offline?: boolean;
+    conflict?: boolean;
+    coalesced?: boolean;
+    conflictEntry?: ConflictEntry;
+    forked?: boolean;
+    forkedNote?: any;
+    updatedAt?: string;
+    contentVersion?: number;
+    resolvedId?: string;
+    error?: any;
+  }> {
+    if (!noteId) return { success: false, error: 'Note ID required' };
+
+    // 先同步计算锁键并注册在途队列，确保同 tick 并发调用（如 Promise.all）也能严格串行
+    const initialLockKey = this.remappedIdsMap.get(noteId) || noteId;
+
+    [noteId, initialLockKey].forEach(key => {
+      if (this.debounceTimers.has(key)) {
+        clearTimeout(this.debounceTimers.get(key));
+        this.debounceTimers.delete(key);
+      }
+    });
+
+    const prevPromise =
+      this.inFlightSyncs.get(initialLockKey) ||
+      (noteId !== initialLockKey ? this.inFlightSyncs.get(noteId) : undefined);
+
+    let taskPromise!: Promise<any>;
+    taskPromise = (async () => {
+      if (prevPromise) {
+        try {
+          await prevPromise;
+        } catch {
+          // 前序同步异常已在上次调用内处理，继续串行化推进当前请求
+        }
+      }
+      const rawResolved = await resolveNoteId(noteId);
+      const nextLockKey = this.remappedIdsMap.get(rawResolved) || rawResolved;
+      const trailingPromise =
+        nextLockKey !== initialLockKey ? this.inFlightSyncs.get(nextLockKey) : undefined;
+      if (trailingPromise && trailingPromise !== taskPromise) {
+        try {
+          await trailingPromise;
+        } catch {
+          // ignore
+        }
+      }
+      return this._executeSyncNote(noteId, params, options);
+    })();
+
+    this.inFlightSyncs.set(initialLockKey, taskPromise);
+    if (noteId !== initialLockKey) {
+      this.inFlightSyncs.set(noteId, taskPromise);
+    }
+
+    try {
+      return await taskPromise;
+    } finally {
+      if (this.inFlightSyncs.get(initialLockKey) === taskPromise) {
+        this.inFlightSyncs.delete(initialLockKey);
+      }
+      if (noteId !== initialLockKey && this.inFlightSyncs.get(noteId) === taskPromise) {
+        this.inFlightSyncs.delete(noteId);
+      }
+    }
+  }
+
+  private async _executeSyncNote(
     noteId: string,
     {
       title,
@@ -439,6 +634,7 @@ class MobileSyncManager {
       encryptedData,
       force,
       saveType,
+      contentDigest,
     }: {
       title: string;
       content: string;
@@ -450,30 +646,91 @@ class MobileSyncManager {
       encryptedData?: string | null;
       force?: boolean;
       saveType?: 'manual' | 'auto' | 'rollback' | 'conflict';
+      contentDigest?: string;
     },
-    options: { auto?: boolean; silent?: boolean } = {}
-  ): Promise<{
-    success: boolean;
-    localOnly?: boolean;
-    offline?: boolean;
-    conflict?: boolean;
-    conflictEntry?: ConflictEntry;
-    forked?: boolean;
-    forkedNote?: any;
-    updatedAt?: string;
-    contentVersion?: number;
-    resolvedId?: string;
-    error?: any;
-  }> {
-    if (!noteId) return { success: false, error: 'Note ID required' };
+    options: { auto?: boolean; silent?: boolean; fromQueue?: boolean } = {}
+  ) {
+    const rawResolved = await resolveNoteId(noteId);
+    const resolvedId = this.remappedIdsMap.get(rawResolved) || rawResolved;
 
-    if (this.debounceTimers.has(noteId)) {
-      clearTimeout(this.debounceTimers.get(noteId));
-      this.debounceTimers.delete(noteId);
+    [noteId, rawResolved, resolvedId].forEach(key => {
+      if (this.debounceTimers.has(key)) {
+        clearTimeout(this.debounceTimers.get(key));
+        this.debounceTimers.delete(key);
+      }
+    });
+
+    const safeContent = isEncrypted ? '' : content;
+    const currentSnapshot = isEncrypted ? (encryptedData ?? '') : safeContent;
+    const normalizedTitle = String(title ?? '').trim();
+
+    // 若已存在未裁决的冲突且未强制覆盖，拒绝静默推送覆盖，保留本地草稿等待用户裁决
+    if (!force && this.conflictsMap.has(resolvedId)) {
+      this.setStatus('conflict');
+      return {
+        success: false,
+        conflict: true,
+        conflictEntry: this.conflictsMap.get(resolvedId),
+        resolvedId,
+      };
     }
 
-    const resolvedId = await resolveNoteId(noteId);
-    const safeContent = isEncrypted ? '' : content;
+    // 同标题同内容幂等合并：若前序自动/手动保存已把完全一致快照推上云端，直接返回成功
+    const knownVersion = this.lastKnownVersionMap.get(resolvedId);
+    const hasSavedTitle = this.lastSavedTitleMap.has(resolvedId);
+    const isSameTitle = hasSavedTitle && (this.lastSavedTitleMap.get(resolvedId) ?? '') === normalizedTitle;
+    const isSameContent =
+      (this.lastSavedContentMap.has(resolvedId) &&
+        this.lastSavedContentMap.get(resolvedId) === currentSnapshot) ||
+      Boolean(contentDigest && this.lastSavedDigestMap.get(resolvedId) === contentDigest);
+
+    if (
+      !force &&
+      !options.fromQueue &&
+      !resolvedId.startsWith('local_') &&
+      this.isOnline &&
+      typeof knownVersion === 'number' &&
+      isSameTitle &&
+      isSameContent
+    ) {
+      const savedUpdatedAt = this.lastKnownRemoteUpdatedAt.get(resolvedId) || new Date().toISOString();
+      await saveNoteCache({
+        id: resolvedId,
+        title,
+        content: safeContent,
+        notebookId,
+        parentId,
+        isEncrypted: Boolean(isEncrypted),
+        encryptedData: encryptedData ?? null,
+        contentVersion: knownVersion,
+        remoteUpdatedAt: savedUpdatedAt,
+        updatedAt: savedUpdatedAt,
+        lastSavedContent: safeContent,
+        lastSyncedAt: new Date().toISOString(),
+        isDirty: false,
+      });
+
+      await clearMutationsForNote(resolvedId);
+      await this.refreshQueuedCount();
+      this.lastSyncedAt = new Date();
+      this.setStatus(this.conflictsMap.size > 0 ? 'conflict' : 'synced');
+      this.emitNoteSynced({
+        noteId: resolvedId,
+        updatedAt: savedUpdatedAt,
+        contentVersion: knownVersion,
+        title,
+        coalesced: true,
+        saveType: saveType || (options.auto ? 'auto' : 'manual'),
+      });
+      return {
+        success: true,
+        localOnly: false,
+        coalesced: true,
+        resolvedId,
+        updatedAt: savedUpdatedAt,
+        contentVersion: knownVersion,
+      };
+    }
 
     // 无论在线与否，先行稳固持久化到本地（保留既有 remoteUpdatedAt / contentVersion）
     await saveNoteCache({
@@ -499,22 +756,15 @@ class MobileSyncManager {
       });
     }
 
-    // 若已存在未裁决的冲突且未强制覆盖，拒绝静默推送覆盖，保留本地草稿等待用户裁决
-    if (!force && this.conflictsMap.has(resolvedId)) {
-      this.setStatus('conflict');
-      return {
-        success: false,
-        conflict: true,
-        conflictEntry: this.conflictsMap.get(resolvedId),
-        resolvedId,
-      };
-    }
-
     // 1. 离线状态保底入队
     if (!this.isOnline) {
       const cached = await getNoteCache(resolvedId);
-      const effectiveVersion =
-        expectedVersion ?? this.lastKnownVersionMap.get(resolvedId) ?? cached?.contentVersion;
+      const effectiveVersion = this.resolveEffectiveExpectedVersion(
+        resolvedId,
+        expectedVersion,
+        cached?.contentVersion,
+        { fromQueue: Boolean(options.fromQueue) }
+      );
       await enqueueMutation({
         noteId: resolvedId,
         action: 'update',
@@ -550,9 +800,25 @@ class MobileSyncManager {
           resolvedId
         );
         if (promoted.success && promoted.realId) {
+          this.remappedIdsMap.set(resolvedId, promoted.realId);
+          this.setLastKnownRemoteUpdatedAt(
+            promoted.realId,
+            promoted.realNote?.updatedAt || new Date().toISOString(),
+            currentSnapshot,
+            promoted.realNote?.contentVersion,
+            title,
+            contentDigest
+          );
           await clearMutationsForNote(resolvedId);
           await clearMutationsForNote(promoted.realId);
           await this.refreshQueuedCount();
+          this.emitNoteSynced({
+            noteId: promoted.realId,
+            updatedAt: promoted.realNote?.updatedAt,
+            contentVersion: promoted.realNote?.contentVersion,
+            title,
+            saveType: saveType || (options.auto ? 'auto' : 'manual'),
+          });
           return {
             success: true,
             localOnly: false,
@@ -608,7 +874,12 @@ class MobileSyncManager {
     // 2. 在线状态推送（携带 expectedVersion 乐观锁给服务端原子判冲）
     this.setStatus('syncing');
 
-    let effectiveVersion = expectedVersion ?? this.lastKnownVersionMap.get(resolvedId);
+    let effectiveVersion = this.resolveEffectiveExpectedVersion(
+      resolvedId,
+      expectedVersion,
+      undefined,
+      { fromQueue: Boolean(options.fromQueue) }
+    );
     if (effectiveVersion === undefined) {
       const cached = await getNoteCache(resolvedId);
       effectiveVersion = cached?.contentVersion;
@@ -644,11 +915,14 @@ class MobileSyncManager {
       const savedUpdatedAt = savedNote?.updatedAt || new Date().toISOString();
       const savedVersion = savedNote?.contentVersion;
 
-      this.lastKnownRemoteUpdatedAt.set(resolvedId, savedUpdatedAt);
-      this.lastSavedContentMap.set(resolvedId, safeContent);
-      if (typeof savedVersion === 'number') {
-        this.lastKnownVersionMap.set(resolvedId, savedVersion);
-      }
+      this.setLastKnownRemoteUpdatedAt(
+        resolvedId,
+        savedUpdatedAt,
+        currentSnapshot,
+        savedVersion,
+        title,
+        contentDigest
+      );
 
       await saveNoteCache({
         id: resolvedId,
@@ -677,6 +951,13 @@ class MobileSyncManager {
       this.isOnline = true;
       this.lastSyncedAt = new Date();
       this.setStatus(this.conflictsMap.size > 0 ? 'conflict' : 'synced');
+      this.emitNoteSynced({
+        noteId: resolvedId,
+        updatedAt: savedUpdatedAt,
+        contentVersion: savedVersion,
+        title,
+        saveType: savePayload.saveType || (options.auto ? 'auto' : 'manual'),
+      });
       return {
         success: true,
         localOnly: false,
@@ -941,11 +1222,14 @@ class MobileSyncManager {
       isDirty: false,
     });
 
-    this.lastKnownRemoteUpdatedAt.set(resolvedId, serverUpdatedAt);
-    this.lastSavedContentMap.set(resolvedId, serverContent);
-    if (typeof serverNote?.contentVersion === 'number') {
-      this.lastKnownVersionMap.set(resolvedId, serverNote.contentVersion);
-    }
+    this.setLastKnownRemoteUpdatedAt(
+      resolvedId,
+      serverUpdatedAt,
+      serverIsEncrypted ? (serverNote?.encryptedData ?? '') : serverContent,
+      typeof serverNote?.contentVersion === 'number' ? serverNote.contentVersion : undefined,
+      serverNote?.title || cached?.title || '无标题笔记',
+      null
+    );
 
     if (!serverIsEncrypted) {
       mobileSearchEngine.upsertDocument({
@@ -1063,11 +1347,14 @@ class MobileSyncManager {
       contentVersion: realNote.contentVersion,
     });
 
+    this.remappedIdsMap.set(tempId, realId);
     this.setLastKnownRemoteUpdatedAt(
       realId,
       realNote.updatedAt,
-      realNote.isEncrypted ? '' : realNote.content,
-      realNote.contentVersion
+      realNote.isEncrypted ? (realNote.encryptedData ?? '') : realNote.content,
+      realNote.contentVersion,
+      realNote.title,
+      undefined
     );
 
     mobileSearchEngine.removeDocument(tempId);
@@ -1182,7 +1469,7 @@ class MobileSyncManager {
                 isEncrypted: payload.isEncrypted,
                 encryptedData: payload.encryptedData,
               },
-              { auto: true }
+              { auto: true, fromQueue: true }
             );
 
             if (res.success && !res.offline) {

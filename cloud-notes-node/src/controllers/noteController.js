@@ -19,6 +19,63 @@ const computeNoteContentHash = ({ title = '', content = '', isEncrypted = false,
     return crypto.createHash('sha256').update(`${title || ''}\n${body}`).digest('hex');
 };
 
+const CONTENT_MUTATION_KEYS = new Set(['title', 'content', 'rawContent', 'isEncrypted', 'encryptedData']);
+
+// 统一评估更新载荷相对当前文档是否存在实质内容变更及非内容元数据变更
+const evaluateNoteSnapshotChange = (noteDoc, updateData) => {
+    const nextTitle = updateData.title !== undefined ? String(updateData.title).trim() : noteDoc.title;
+    const nextContent = updateData.content !== undefined ? updateData.content : noteDoc.content;
+    const nextIsEncrypted = updateData.isEncrypted !== undefined
+        ? Boolean(updateData.isEncrypted)
+        : Boolean(noteDoc.isEncrypted);
+    const nextEncryptedData = updateData.encryptedData !== undefined
+        ? (updateData.encryptedData || null)
+        : (noteDoc.encryptedData || null);
+
+    const hasContentChange =
+        (updateData.title !== undefined && nextTitle !== (noteDoc.title || '').trim()) ||
+        (updateData.content !== undefined && updateData.content !== (noteDoc.content ?? '')) ||
+        (updateData.rawContent !== undefined && updateData.rawContent !== noteDoc.rawContent) ||
+        (updateData.isEncrypted !== undefined && nextIsEncrypted !== Boolean(noteDoc.isEncrypted)) ||
+        (updateData.encryptedData !== undefined && nextEncryptedData !== (noteDoc.encryptedData || null));
+
+    const recomputedServerHash = computeNoteContentHash({
+        title: (noteDoc.title || '').trim(),
+        content: noteDoc.content ?? '',
+        isEncrypted: Boolean(noteDoc.isEncrypted),
+        encryptedData: noteDoc.encryptedData || null
+    });
+    const serverHash = noteDoc.contentHash || recomputedServerHash;
+    const incomingHash = computeNoteContentHash({
+        title: nextTitle,
+        content: nextContent,
+        isEncrypted: nextIsEncrypted,
+        encryptedData: nextEncryptedData
+    });
+
+    const isSameSnapshot = !hasContentChange && (incomingHash === serverHash || incomingHash === recomputedServerHash);
+    const hasNonContentUpdate = Object.keys(updateData).some(key => !CONTENT_MUTATION_KEYS.has(key));
+
+    return {
+        nextTitle,
+        nextContent,
+        nextIsEncrypted,
+        nextEncryptedData,
+        hasContentChange,
+        isSameSnapshot,
+        hasNonContentUpdate
+    };
+};
+
+// 安全填充标签关联字段，兼容测试桩对象或标准 Mongoose Query
+const hydrateNoteWithTags = async (noteId, userId, fallbackDoc) => {
+    const queryOrDoc = Note.findOne({ _id: noteId, userId, isDeleted: false });
+    if (queryOrDoc && typeof queryOrDoc.populate === 'function') {
+        return (await queryOrDoc.populate('tags', 'name color')) || fallbackDoc;
+    }
+    return (await queryOrDoc) || fallbackDoc;
+};
+
 // 构造 409 冲突响应中的服务端最新笔记快照
 const buildServerNoteSnapshot = noteDoc => ({
     _id: noteDoc._id,
@@ -399,15 +456,33 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
 
     const currentVersion = currentNote.contentVersion || 1;
     const hasExpectedVersion = typeof expectedVersion === 'number' && Number.isFinite(expectedVersion);
+    const snapshotEval = evaluateNoteSnapshotChange(currentNote, updateData);
+    // outlinks/unresolvedLinks 由后端提取注入，判定客户端是否修改非内容元数据应以原始请求体为准
+    const clientHasNonContentUpdate = snapshotEval.hasNonContentUpdate;
+
+    // 若版本落后但请求内容哈希与服务端最新快照完全一致，视为同源滞后/重放保存，幂等收敛不误报 409
     if (hasExpectedVersion && !force && currentVersion !== expectedVersion) {
-        return res.status(409).json({
-            code: 409,
-            status: 'conflict',
-            message: '云端笔记存在更新版本，请对比处理冲突',
-            data: {
-                serverNote: buildServerNoteSnapshot(currentNote)
-            }
-        });
+        if (!snapshotEval.isSameSnapshot) {
+            return res.status(409).json({
+                code: 409,
+                status: 'conflict',
+                message: '云端笔记存在更新版本，请对比处理冲突',
+                data: {
+                    serverNote: buildServerNoteSnapshot(currentNote)
+                }
+            });
+        }
+        if (!snapshotEval.hasNonContentUpdate) {
+            const hydratedNote = await hydrateNoteWithTags(noteId, userId, currentNote);
+            return res.status(200).json({
+                code: 200,
+                message: '更新笔记成功',
+                data: {
+                    note: hydratedNote,
+                    idempotent: true
+                }
+            });
+        }
     }
 
     // 检查并处理标签变更
@@ -465,25 +540,17 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
         await NoteChunk.deleteMany({ userId, noteId });
     }
 
-    const nextTitle = updateData.title !== undefined ? String(updateData.title).trim() : currentNote.title;
-    const nextContent = updateData.content !== undefined ? updateData.content : currentNote.content;
-    const nextIsEncrypted = updateData.isEncrypted !== undefined
-        ? Boolean(updateData.isEncrypted)
-        : Boolean(currentNote.isEncrypted);
-    const nextEncryptedData = updateData.encryptedData !== undefined
-        ? (updateData.encryptedData || null)
-        : (currentNote.encryptedData || null);
-
-    // 仅当标题、正文、原始正文或加密载荷发生实质变化时推进版本语义
-    const hasContentChange =
-        (updateData.title !== undefined && nextTitle !== (currentNote.title || '').trim()) ||
-        (updateData.content !== undefined && updateData.content !== (currentNote.content ?? '')) ||
-        (updateData.rawContent !== undefined && updateData.rawContent !== currentNote.rawContent) ||
-        (updateData.isEncrypted !== undefined && nextIsEncrypted !== Boolean(currentNote.isEncrypted)) ||
-        (updateData.encryptedData !== undefined && nextEncryptedData !== (currentNote.encryptedData || null));
+    const {
+        nextTitle,
+        nextContent,
+        nextIsEncrypted,
+        nextEncryptedData,
+        hasContentChange,
+        isSameSnapshot
+    } = snapshotEval;
 
     const updateFilter = { _id: noteId, userId, isDeleted: false };
-    if (hasExpectedVersion && !force) {
+    if (hasExpectedVersion && !force && !isSameSnapshot) {
         updateFilter.$or = expectedVersion === 1
             ? [{ contentVersion: 1 }, { contentVersion: { $exists: false } }, { contentVersion: null }]
             : [{ contentVersion: expectedVersion }];
@@ -521,6 +588,18 @@ exports.updateNote = asyncHandler(async (req, res, next) => {
         const latestNote = await Note.findOne({ _id: noteId, userId });
         if (!latestNote || latestNote.isDeleted) {
             return next(new AppError('笔记不存在', 404));
+        }
+        const latestEval = evaluateNoteSnapshotChange(latestNote, updateData);
+        if (!force && latestEval.isSameSnapshot && !clientHasNonContentUpdate) {
+            const hydratedLatest = await hydrateNoteWithTags(noteId, userId, latestNote);
+            return res.status(200).json({
+                code: 200,
+                message: '更新笔记成功',
+                data: {
+                    note: hydratedLatest,
+                    idempotent: true
+                }
+            });
         }
         return res.status(409).json({
             code: 409,

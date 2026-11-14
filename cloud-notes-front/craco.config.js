@@ -114,6 +114,22 @@ module.exports = {
 
     return devServerConfig;
   },
+  jest: {
+    configure: jestConfig => {
+      jestConfig.moduleNameMapper = {
+        ...jestConfig.moduleNameMapper,
+        '^@/(.*)$': '<rootDir>/src/$1'
+      };
+      try {
+        require.resolve('@testing-library/jest-dom');
+      } catch {
+        jestConfig.setupFilesAfterEnv = (jestConfig.setupFilesAfterEnv || []).filter(
+          file => !String(file).includes('setupTests')
+        );
+      }
+      return jestConfig;
+    }
+  },
   plugins: [
     {
       plugin: CracoLessPlugin,

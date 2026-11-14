@@ -28,7 +28,7 @@ import zhHansGfm from '@bytemd/plugin-gfm/locales/zh_Hans.json';
 import zhHansMath from '@bytemd/plugin-math/locales/zh_Hans.json';
 import { getNoteDetail, getRecentNotes, suggestNoteLinks } from '@/api/notes';
 import syncManager from '@/utils/storage/syncManager';
-import { prepareNoteSavePayload, decryptNoteInMemory } from '@/utils/noteCryptoHelper';
+import { prepareNoteSavePayload, decryptNoteInMemory, computeInMemoryContentDigest } from '@/utils/noteCryptoHelper';
 import { hasSessionKey, subscribeVaultLock } from '@/utils/cryptoVault';
 import lazyImagePlugin from '../plugins/lazyImagePlugin';
 import wikiLinkPlugin from '../plugins/wikiLinkPlugin';
@@ -141,7 +141,9 @@ const SecondaryNotePane = ({
                     resolvedId,
                     data.updatedAt,
                     data.isEncrypted ? (data.encryptedData || '') : (data.content || ''),
-                    data.contentVersion
+                    data.contentVersion,
+                    data.title,
+                    computeInMemoryContentDigest(resolvedContent)
                 );
 
                 if (data._id && data.title) {
@@ -268,11 +270,15 @@ const SecondaryNotePane = ({
 
         setSaving(true);
         try {
+            const mgrVersion = syncManager.getContentVersion(targetId);
+            const authoritativeVersion = noteData.contentVersion != null && mgrVersion != null
+                ? Math.max(noteData.contentVersion, mgrVersion)
+                : (mgrVersion ?? noteData.contentVersion);
             const prep = await prepareNoteSavePayload({
                 title: noteData.title,
                 content: editContent,
                 isEncrypted: Boolean(noteData.isEncrypted),
-                expectedVersion: noteData.contentVersion ?? syncManager.getContentVersion(targetId),
+                expectedVersion: authoritativeVersion,
                 baseUpdatedAt: noteData.updatedAt,
                 notebookId: noteData.notebookId?._id || noteData.notebookId || selectedNotebook,
                 source: 'secondary'

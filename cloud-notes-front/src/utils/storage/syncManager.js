@@ -54,9 +54,14 @@ class SyncManager {
         this.noteEventSubscribers = new Set();
         this.isFlushing = false;
         this.debounceTimers = new Map(); // noteId -> timer
+        this.inFlightSyncs = new Map(); // noteId -> Promise (单笔记并发保存串行化链)
+        this.remappedIdsMap = new Map(); // tempId -> realId
         this.lastKnownRemoteUpdatedAt = new Map(); // noteId -> string
         this.contentVersionMap = new Map(); // noteId -> number
         this.lastSavedContentMap = new Map(); // noteId -> string (明文或密文基准快照)
+        this.lastSavedTitleMap = new Map(); // noteId -> string
+        this.lastSavedDigestMap = new Map(); // noteId -> string (内存态摘要，辅助加密笔记合并)
+        this.lastSavedNoteMap = new Map(); // noteId -> 最近一次服务端确认返回的 note 实体
         this.conflictsMap = new Map(); // noteId -> ConflictRecord
 
         this.initNetworkListeners();
@@ -96,21 +101,63 @@ class SyncManager {
         }
     }
 
-    setLastKnownRemoteUpdatedAt(noteId, updatedAt, content, contentVersion) {
+    setLastKnownRemoteUpdatedAt(noteId, updatedAt, content, contentVersion, title, contentDigest, noteDoc) {
         if (!noteId) return;
+        const resolvedId = this.remappedIdsMap.get(noteId) || noteId;
         if (updatedAt) {
-            this.lastKnownRemoteUpdatedAt.set(noteId, updatedAt);
+            this.lastKnownRemoteUpdatedAt.set(resolvedId, updatedAt);
         }
         if (content !== undefined) {
-            this.lastSavedContentMap.set(noteId, content);
+            this.lastSavedContentMap.set(resolvedId, content);
         }
         if (contentVersion !== undefined && contentVersion !== null) {
-            this.contentVersionMap.set(noteId, contentVersion);
+            this.contentVersionMap.set(resolvedId, contentVersion);
+        }
+        if (title !== undefined) {
+            this.lastSavedTitleMap.set(resolvedId, title ?? '');
+        }
+        if (contentDigest === null) {
+            this.lastSavedDigestMap.delete(resolvedId);
+        } else if (contentDigest !== undefined) {
+            this.lastSavedDigestMap.set(resolvedId, contentDigest);
+        }
+        if (noteDoc && typeof noteDoc === 'object') {
+            this.lastSavedNoteMap.set(resolvedId, noteDoc);
         }
     }
 
     getContentVersion(noteId) {
-        return this.contentVersionMap.has(noteId) ? this.contentVersionMap.get(noteId) : null;
+        const resolvedId = this.remappedIdsMap.get(noteId) || noteId;
+        return this.contentVersionMap.has(resolvedId) ? this.contentVersionMap.get(resolvedId) : null;
+    }
+
+    isSyncingNote(noteId) {
+        if (!noteId) return false;
+        const resolvedId = this.remappedIdsMap.get(noteId) || noteId;
+        return this.inFlightSyncs.has(noteId) || this.inFlightSyncs.has(resolvedId);
+    }
+
+    // 清理单篇笔记积压的非结构化冗余 update 队列项，保留 move/star/delete 等操作
+    async clearPendingUpdateMutations(noteId) {
+        const pending = await getPendingMutations();
+        if (!Array.isArray(pending) || pending.length === 0) return;
+        await Promise.all(
+            pending
+                .filter(t => t.noteId === noteId && t.action === 'update')
+                .map(t => dequeueMutation(t.seq))
+        );
+    }
+
+    // 交互保存优先取内存已知最高版本号，离线重放任务保留其离线基线版本
+    resolveEffectiveExpectedVersion(noteId, explicitExpectedVersion, { fromQueue = false } = {}) {
+        const knownVersion = this.getContentVersion(noteId);
+        if (fromQueue) {
+            return explicitExpectedVersion ?? knownVersion;
+        }
+        if (knownVersion != null && explicitExpectedVersion != null) {
+            return Math.max(knownVersion, explicitExpectedVersion);
+        }
+        return knownVersion ?? explicitExpectedVersion;
     }
 
     getConflict(noteId) {
@@ -348,20 +395,36 @@ class SyncManager {
      */
     scheduleAutoSync(noteId, noteData, delay = 1500) {
         if (!noteId) return;
+        const resolvedId = this.remappedIdsMap.get(noteId) || noteId;
 
         if (this.debounceTimers.has(noteId)) {
             clearTimeout(this.debounceTimers.get(noteId));
         }
+        if (resolvedId !== noteId && this.debounceTimers.has(resolvedId)) {
+            clearTimeout(this.debounceTimers.get(resolvedId));
+        }
 
         const timer = setTimeout(async () => {
             this.debounceTimers.delete(noteId);
-            const res = await this.syncNote(noteId, noteData, { auto: true, saveType: 'auto' });
-            if (res?.success && !res.conflict && typeof noteData?.onSyncSuccess === 'function') {
-                noteData.onSyncSuccess(res);
+            this.debounceTimers.delete(resolvedId);
+            if (typeof noteData?.onSyncStart === 'function') {
+                noteData.onSyncStart();
+            }
+            try {
+                const res = await this.syncNote(resolvedId, noteData, { auto: true, saveType: 'auto' });
+                if (res?.success && !res.conflict && typeof noteData?.onSyncSuccess === 'function') {
+                    noteData.onSyncSuccess(res);
+                } else if (!res?.success && typeof noteData?.onSyncError === 'function') {
+                    noteData.onSyncError(res);
+                }
+            } finally {
+                if (typeof noteData?.onSyncFinally === 'function') {
+                    noteData.onSyncFinally();
+                }
             }
         }, delay);
 
-        this.debounceTimers.set(noteId, timer);
+        this.debounceTimers.set(resolvedId, timer);
     }
 
     /**
@@ -440,10 +503,68 @@ class SyncManager {
     }
 
     /**
-     * 核心保存同步逻辑（携带 expectedVersion，409 严格进入冲突态，离线自动入队）
+     * 核心保存同步逻辑（按单篇笔记维度串行化排空、同快照幂等合并，409 严格进入冲突态，离线自动入队）
      */
     async syncNote(noteId, noteData = {}, options = {}) {
         if (!noteId) return { success: false, error: 'Note ID required' };
+
+        const rawKey = String(noteId);
+        const initialKey = String(this.remappedIdsMap.get(rawKey) || rawKey);
+
+        // 立即取消该笔记尚在等待防抖的自动保存定时器，避免后续重入
+        [rawKey, initialKey].forEach(key => {
+            if (this.debounceTimers.has(key)) {
+                clearTimeout(this.debounceTimers.get(key));
+                this.debounceTimers.delete(key);
+            }
+        });
+
+        const prevPromise = this.inFlightSyncs.get(initialKey) || (
+            initialKey !== rawKey ? this.inFlightSyncs.get(rawKey) : null
+        );
+
+        const taskPromise = (async () => {
+            if (prevPromise) {
+                try {
+                    await prevPromise;
+                } catch {
+                    // 前序同步异常已在前次调用内兜底，继续串行处理当前请求
+                }
+            }
+            const resolvedAfterPrev = String(this.remappedIdsMap.get(rawKey) || initialKey);
+            const trailingPromise = resolvedAfterPrev !== initialKey
+                ? this.inFlightSyncs.get(resolvedAfterPrev)
+                : null;
+            if (trailingPromise && trailingPromise !== taskPromise) {
+                try {
+                    await trailingPromise;
+                } catch {
+                    // ignore
+                }
+            }
+            return this._executeSyncNote(rawKey, noteData, options);
+        })();
+
+        this.inFlightSyncs.set(initialKey, taskPromise);
+        if (rawKey !== initialKey) {
+            this.inFlightSyncs.set(rawKey, taskPromise);
+        }
+
+        try {
+            return await taskPromise;
+        } finally {
+            if (this.inFlightSyncs.get(initialKey) === taskPromise) {
+                this.inFlightSyncs.delete(initialKey);
+            }
+            if (rawKey !== initialKey && this.inFlightSyncs.get(rawKey) === taskPromise) {
+                this.inFlightSyncs.delete(rawKey);
+            }
+        }
+    }
+
+    async _executeSyncNote(rawNoteId, noteData = {}, options = {}) {
+        const noteId = this.remappedIdsMap.get(rawNoteId) || rawNoteId;
+        const wasRemapped = noteId !== rawNoteId;
 
         const {
             title,
@@ -458,14 +579,17 @@ class SyncManager {
             noteType,
             clientId,
             saveType,
+            contentDigest,
             source = 'primary'
         } = noteData;
 
-        // 取消正在等待的防抖定时器
-        if (this.debounceTimers.has(noteId)) {
-            clearTimeout(this.debounceTimers.get(noteId));
-            this.debounceTimers.delete(noteId);
-        }
+        // 再次清理进入串行队列期间可能挂载的防抖定时器
+        [rawNoteId, noteId].forEach(key => {
+            if (this.debounceTimers.has(key)) {
+                clearTimeout(this.debounceTimers.get(key));
+                this.debounceTimers.delete(key);
+            }
+        });
 
         const encrypted = Boolean(isEncrypted);
         const safePayload = this.buildSafePayload({
@@ -495,7 +619,66 @@ class SyncManager {
             return { success: false, conflict: true, conflictRecord };
         }
 
-        // 2. 无论在线与否，首先安全落盘本地 IndexedDB（保留原 remoteUpdatedAt 与 contentVersion）
+        const isLocalTemp = String(noteId).startsWith('local_');
+        const currentSnapshot = encrypted ? (encryptedData || '') : (content ?? '');
+        const knownVersion = this.getContentVersion(noteId);
+        const hasSavedTitle = this.lastSavedTitleMap.has(noteId);
+        const isSameTitle = hasSavedTitle && (this.lastSavedTitleMap.get(noteId) ?? '') === (title ?? '');
+        const isSameContent =
+            (this.lastSavedContentMap.has(noteId) && this.lastSavedContentMap.get(noteId) === currentSnapshot) ||
+            Boolean(contentDigest && this.lastSavedDigestMap.get(noteId) === contentDigest);
+
+        // 2. 同内容同标题幂等合并：若前序自动/手动保存已将完全一致快照推上云端，直接收口成功
+        if (!options.force && !options.fromQueue && !isLocalTemp && this.isOnline && knownVersion != null && isSameTitle && isSameContent) {
+            const savedUpdatedAt = this.lastKnownRemoteUpdatedAt.get(noteId) || new Date().toISOString();
+            await saveNoteCache({
+                id: noteId,
+                title,
+                content: safePayload.content,
+                isEncrypted: encrypted,
+                encryptedData: encryptedData !== undefined ? encryptedData : undefined,
+                contentVersion: knownVersion,
+                remoteUpdatedAt: savedUpdatedAt,
+                updatedAt: savedUpdatedAt,
+                lastSavedContent: safePayload.content,
+                lastSyncedAt: new Date().toISOString(),
+                isDirty: false
+            });
+
+            await this.clearPendingUpdateMutations(noteId);
+            await this.refreshQueuedCount();
+            this.lastSyncedAt = new Date();
+            this.recomputeStatus();
+
+            const cachedNote = this.lastSavedNoteMap.get(noteId);
+
+            this.emitNoteEvent({
+                type: 'synced',
+                noteId,
+                source,
+                updatedAt: savedUpdatedAt,
+                contentVersion: knownVersion,
+                note: cachedNote,
+                draft: {
+                    title,
+                    content: safePayload.content,
+                    isEncrypted: encrypted,
+                    encryptedData: encryptedData || null
+                }
+            });
+
+            return {
+                success: true,
+                localOnly: false,
+                coalesced: true,
+                ...(wasRemapped ? { remapped: true, tempId: rawNoteId, realId: noteId } : {}),
+                updatedAt: savedUpdatedAt,
+                contentVersion: knownVersion,
+                note: cachedNote
+            };
+        }
+
+        // 3. 无论在线与否，首先安全落盘本地 IndexedDB（保留原 remoteUpdatedAt 与 contentVersion）
         await saveNoteCache({
             id: noteId,
             title,
@@ -515,10 +698,11 @@ class SyncManager {
             });
         }
 
-        const isLocalTemp = String(noteId).startsWith('local_');
-        const resolvedExpectedVersion = expectedVersion ?? this.getContentVersion(noteId);
+        const resolvedExpectedVersion = this.resolveEffectiveExpectedVersion(noteId, expectedVersion, {
+            fromQueue: Boolean(options.fromQueue)
+        });
 
-        // 3. 离线直接入队保底
+        // 4. 离线直接入队保底
         if (!this.isOnline) {
             await enqueueMutation({
                 noteId,
@@ -549,11 +733,15 @@ class SyncManager {
                 if (realId) {
                     const savedUpdatedAt = createdNote.updatedAt || new Date().toISOString();
                     const nextVersion = createdNote.contentVersion ?? 1;
+                    this.remappedIdsMap.set(noteId, realId);
                     this.setLastKnownRemoteUpdatedAt(
                         realId,
                         savedUpdatedAt,
                         encrypted ? (encryptedData || '') : (content ?? ''),
-                        nextVersion
+                        nextVersion,
+                        title,
+                        contentDigest,
+                        createdNote
                     );
 
                     await remapNoteIdInLocalDB(noteId, realId, {
@@ -602,7 +790,6 @@ class SyncManager {
             // 5. 若尚未拿到服务端 contentVersion，降级保留旧版时间+快照预检（禁止自动分叉）
             const lastKnown = this.lastKnownRemoteUpdatedAt.get(noteId) || baseUpdatedAt;
             const lastSavedSnapshot = this.lastSavedContentMap.get(noteId);
-            const currentSnapshot = encrypted ? (encryptedData || '') : (content ?? '');
 
             if (resolvedExpectedVersion == null && lastKnown && !options.force) {
                 try {
@@ -662,7 +849,15 @@ class SyncManager {
                 resolvedExpectedVersion != null ? resolvedExpectedVersion + 1 : undefined
             );
 
-            this.setLastKnownRemoteUpdatedAt(noteId, savedUpdatedAt, currentSnapshot, nextVersion);
+            this.setLastKnownRemoteUpdatedAt(
+                noteId,
+                savedUpdatedAt,
+                currentSnapshot,
+                nextVersion,
+                title,
+                contentDigest,
+                savedNote
+            );
 
             if (this.conflictsMap.has(noteId)) {
                 this.conflictsMap.delete(noteId);
@@ -685,12 +880,7 @@ class SyncManager {
 
             if (!options.fromQueue) {
                 // 仅清掉冗余 update 任务，保留待重放的 move/star 等其他队列项
-                const pending = await getPendingMutations();
-                await Promise.all(
-                    pending
-                        .filter(t => t.noteId === noteId && t.action === 'update')
-                        .map(t => dequeueMutation(t.seq))
-                );
+                await this.clearPendingUpdateMutations(noteId);
             }
 
             await this.refreshQueuedCount();
@@ -923,7 +1113,10 @@ class SyncManager {
             noteId,
             serverNote.updatedAt,
             serverSnapshot,
-            serverNote.contentVersion
+            serverNote.contentVersion,
+            serverNote.title,
+            null,
+            serverNote
         );
 
         if (!serverEncrypted) {

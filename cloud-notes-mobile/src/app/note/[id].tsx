@@ -737,8 +737,9 @@ export default function NoteDetailScreen() {
         mobileSyncManager.setLastKnownRemoteUpdatedAt(
           res.data._id,
           res.data.updatedAt,
-          res.data.isEncrypted ? '' : res.data.content,
-          res.data.contentVersion
+          res.data.isEncrypted ? (res.data.encryptedData ?? '') : res.data.content,
+          res.data.contentVersion,
+          res.data.title
         );
         await saveNoteCache({
           id: res.data._id,

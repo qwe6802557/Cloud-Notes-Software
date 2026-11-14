@@ -1,5 +1,20 @@
 import { encryptNote, decryptNote, hasSessionKey, getSessionKey, getSessionSalt } from '@/utils/cryptoVault';
 
+// 仅在内存态生成轻量双哈希摘要（绝不落盘或上传），用于同内容加密笔记并发保存幂等合并
+export function computeInMemoryContentDigest(text = '') {
+    const str = String(text ?? '');
+    let h1 = 0x811c9dc5;
+    let h2 = 0x811c9dc5;
+    for (let i = 0; i < str.length; i += 1) {
+        const code = str.charCodeAt(i);
+        h1 ^= code;
+        h1 = Math.imul(h1, 0x01000193);
+        h2 ^= (code + i) & 0xffff;
+        h2 = Math.imul(h2, 0x01000193);
+    }
+    return `${str.length}:${(h1 >>> 0).toString(16)}:${(h2 >>> 0).toString(16)}`;
+}
+
 /**
  * 统一构造安全的笔记落盘与上云载荷：
  * - 加密笔记在有会话密钥时就地派生 AES-GCM 密文并清空明文 content
@@ -21,6 +36,7 @@ export async function prepareNoteSavePayload({
     source
 }) {
     const encrypted = Boolean(isEncrypted);
+    const contentDigest = computeInMemoryContentDigest(content ?? '');
     if (!encrypted) {
         return {
             ok: true,
@@ -36,7 +52,8 @@ export async function prepareNoteSavePayload({
                 parentId,
                 noteType,
                 clientId,
-                source
+                source,
+                contentDigest
             }
         };
     }
@@ -65,7 +82,8 @@ export async function prepareNoteSavePayload({
             parentId,
             noteType,
             clientId,
-            source
+            source,
+            contentDigest
         }
     };
 }
