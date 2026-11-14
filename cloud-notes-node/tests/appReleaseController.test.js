@@ -53,7 +53,7 @@ describe('appReleaseController', () => {
         assert.equal(AppRelease.schema.path('portableSize').defaultValue, 0);
     });
 
-    it('无 Windows 记录时返回 hasUpdate: false，禁止跨平台下发 Android 记录', async () => {
+    it('无 Windows 记录时返回 hasUpdate: false，禁止跨平台及历史 all 移动端记录下发桌面端', async () => {
         const queries = [];
         AppRelease.findOne = (query) => {
             queries.push(query);
@@ -73,7 +73,7 @@ describe('appReleaseController', () => {
         assert.equal(res.body.data.hasUpdate, false);
         assert.equal(queries.length, 1);
         assert.deepEqual(queries[0], {
-            platform: { $in: ['windows', 'all'] },
+            platform: 'windows',
             isActive: true
         });
     });

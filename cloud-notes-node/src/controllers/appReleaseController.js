@@ -26,10 +26,12 @@ const isVersionOlder = (vA, vB) => {
 exports.checkUpdate = asyncHandler(async (req, res) => {
     const { platform = 'android', currentVersion = '1.0.0', buildNumber = 0 } = req.query;
     const clientBuild = parseInt(buildNumber, 10) || 0;
+    const isMobilePlatform = ['android', 'ios'].includes(platform);
+    // 移动端兼容历史 platform='all' 记录；桌面端严格按平台隔离，避免误匹配移动端 OTA/APK 记录
+    const platformFilter = isMobilePlatform ? { $in: [platform, 'all'] } : platform;
 
-    // 仅查找当前平台或全平台适用的最新激活版本，禁止跨平台兜底以免误发 Android 包给桌面端
     const latestRelease = await AppRelease.findOne({
-        platform: { $in: [platform, 'all'] },
+        platform: platformFilter,
         isActive: true
     }).sort({ buildNumber: -1 });
 
@@ -63,7 +65,6 @@ exports.checkUpdate = asyncHandler(async (req, res) => {
     // 判断是否强制整包更新：低于最低兼容版本，或移动端旧底包未激活 OTA (buildNumber < 15) 时强制升级
     let effectiveType = latestRelease.type;
     let effectiveForce = latestRelease.forceUpdate;
-    const isMobilePlatform = ['android', 'ios'].includes(platform);
 
     if (isVersionOlder(currentVersion, latestRelease.minCompatibleVersion) || (isMobilePlatform && clientBuild < 15)) {
         effectiveType = 'native';
@@ -76,7 +77,7 @@ exports.checkUpdate = asyncHandler(async (req, res) => {
 
     if (effectiveType === 'native' && latestRelease.type !== 'native') {
         const latestNative = await AppRelease.findOne({
-            platform: { $in: [platform, 'all'] },
+            platform: platformFilter,
             type: 'native',
             isActive: true
         }).sort({ buildNumber: -1 });

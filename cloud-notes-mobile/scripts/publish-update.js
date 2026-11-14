@@ -20,7 +20,7 @@ const getArg = (name, fallback = '') => {
 const hasFlag = name => args.includes(`--${name}`);
 
 const releaseType = getArg('type', 'ota'); // 'ota' | 'native'
-const platform = getArg('platform', 'all');
+const platform = getArg('platform', 'android');
 const version = getArg('version', appJson.expo.version || '1.0.1');
 const buildNumber = parseInt(getArg('build', String(appJson.expo.android?.versionCode || 101)), 10);
 const changelog = getArg('changelog', '· 新增「文件暂存」跨端即时互传中转站\n· 优化图片懒加载性能与长图浏览体验\n· 界面细节打磨与系统稳定性提升');
