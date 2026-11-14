@@ -1,17 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter, HashRouter } from 'react-router-dom';
 import { ConfigProvider, theme as antdTheme } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
 import { Router } from './router';
 import { themeManager } from './utils/themeManager';
+import { shouldUseHashRouter } from './utils/env';
 import 'antd/dist/reset.css';
 
 dayjs.locale('zh-cn');
 
-// 路由 basename：从环境变量读取子路径，默认为根路径，便于同域名多项目隔离部署
+// Web 端沿用 basename 子路径部署；Electron 与 file:// 协议统一切换 HashRouter
 const routerBasename = process.env.REACT_APP_ROUTER_URL || '/';
+const useHashRouter = shouldUseHashRouter();
 
 function App() {
   const [resolvedTheme, setResolvedTheme] = useState(() => themeManager.init());
@@ -43,9 +45,15 @@ function App() {
         },
       }}
     >
-      <BrowserRouter basename={routerBasename}>
-        <Router />
-      </BrowserRouter>
+      {useHashRouter ? (
+        <HashRouter>
+          <Router />
+        </HashRouter>
+      ) : (
+        <BrowserRouter basename={routerBasename}>
+          <Router />
+        </BrowserRouter>
+      )}
     </ConfigProvider>
   );
 }

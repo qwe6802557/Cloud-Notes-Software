@@ -24,11 +24,13 @@ import {
     DesktopOutlined,
     SunOutlined,
     MoonOutlined,
-    FolderOpenOutlined
+    FolderOpenOutlined,
+    CopyOutlined
 } from '@ant-design/icons';
 import { updateUserInfo } from '@/api/user';
 import { getAIConfig, updateAIConfig, testAIConnection } from '@/api/ai';
 import { getUser, setUser } from '@/utils/auth';
+import { resolveAssetUrl } from '@/utils/env';
 import { getEditorPreferences, setEditorPreferences, setCachedAIConfig } from '@/utils/preferences';
 import { getVaultStatus, updateVault } from '@/api/vault';
 import cryptoVault from '@/utils/cryptoVault';
@@ -126,6 +128,41 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
     };
     const [checkingUpdate, setCheckingUpdate] = useState(false);
     const [updateStatusText, setUpdateStatusText] = useState('');
+    const [appInfo, setAppInfo] = useState(null);
+    const isElectronEnv = Boolean(window.electronAPI?.isElectron);
+
+    useEffect(() => {
+        if (!open || !window.electronAPI?.appInfo?.get) return;
+        window.electronAPI.appInfo.get().then(info => {
+            if (info) setAppInfo(info);
+        }).catch(() => {});
+    }, [open]);
+
+    const displayVersion = appInfo?.version || '1.0.0';
+    const displayBuild = appInfo?.buildNumber || 1;
+    const channelLabel = isElectronEnv
+        ? (appInfo?.distribution === 'portable' ? 'Portable 便携版' : 'NSIS 安装版')
+        : (process.env.NODE_ENV === 'production' ? 'Web 生产端' : 'Web 开发端');
+
+    const handleCopyDiagnostics = async () => {
+        const runtimeLabel = isElectronEnv
+            ? `Electron v${window.electronAPI?.versions?.electron || ''} (Chromium v${window.electronAPI?.versions?.chrome || ''})`
+            : 'Web Browser';
+        const archLabel = window.electronAPI?.platform === 'win32'
+            ? 'Windows x64'
+            : (window.electronAPI?.platform || navigator.platform || 'Unknown');
+        const summary = `Cloud Notes v${displayVersion} (Build #${displayBuild}) | ${channelLabel} | ${runtimeLabel} | ${archLabel}`;
+        try {
+            if (navigator?.clipboard?.writeText) {
+                await navigator.clipboard.writeText(summary);
+                message.success('系统环境摘要已复制');
+                return;
+            }
+        } catch {
+            // fallback
+        }
+        message.info(summary);
+    };
 
     const handleCheckUpdate = async () => {
         if (!window.electronAPI?.updater) {
@@ -139,7 +176,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
             if (res?.hasUpdate) {
                 setUpdateStatusText(`发现新版本 v${res.updateInfo?.version || ''}`);
             } else {
-                setUpdateStatusText(`当前已是最新版本 (v${res?.currentVersion || '0.1.0'})`);
+                setUpdateStatusText(`当前已是最新版本 (v${res?.currentVersion || displayVersion})`);
             }
         } catch (err) {
             setUpdateStatusText('检查更新失败，请稍后重试');
@@ -522,7 +559,7 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                 <Upload {...uploadProps}>
                                     <div className="avatar-circle-wrapper" title="点击更换头像">
                                         {hasCustomAvatar ? (
-                                            <img src={avatarUrl} alt="头像" className="avatar-circle-img" />
+                                            <img src={resolveAssetUrl(avatarUrl)} alt="头像" className="avatar-circle-img" />
                                         ) : (
                                             <div className="avatar-circle-placeholder">
                                                 <UserOutlined />
@@ -1013,17 +1050,31 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                     <div className="about-brand-details">
                                         <h4 className="app-name">云笔记 Cloud Notes</h4>
                                         <div className="app-version-line">
-                                            <span className="version-tag">v0.1.0</span>
-                                            <span className="build-channel">Stable Release</span>
+                                            <span className="version-tag">v{displayVersion}</span>
+                                            {isElectronEnv && (
+                                                <span className="build-tag">Build #{displayBuild}</span>
+                                            )}
+                                            <span className={`build-channel ${appInfo?.distribution === 'portable' ? 'is-portable' : ''}`}>
+                                                {channelLabel}
+                                            </span>
                                         </div>
                                     </div>
+                                    <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<CopyOutlined />}
+                                        onClick={handleCopyDiagnostics}
+                                        className="copy-diagnostics-btn"
+                                    >
+                                        复制摘要
+                                    </Button>
                                 </div>
 
                                 <div className="about-info-rows">
                                     <div className="about-info-row">
                                         <span className="info-label">客户端形态</span>
                                         <span className="info-value">
-                                            {window.electronAPI?.isElectron
+                                            {isElectronEnv
                                                 ? `Electron v${window.electronAPI.versions?.electron || '33.4'} (Chromium v${window.electronAPI.versions?.chrome || '130'})`
                                                 : 'Web 浏览器现代端'}
                                         </span>
@@ -1037,6 +1088,16 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                         </span>
                                     </div>
                                     <div className="about-info-row">
+                                        <span className="info-label">{isElectronEnv ? '本地存储隔离' : '服务连接模式'}</span>
+                                        <span className="info-value">
+                                            {isElectronEnv
+                                                ? (appInfo?.distribution === 'portable'
+                                                    ? 'Portable 便携模式 (./data)'
+                                                    : 'NSIS 安装模式 (%APPDATA%)')
+                                                : window.location.origin}
+                                        </span>
+                                    </div>
+                                    <div className="about-info-row">
                                         <span className="info-label">数据同步通道</span>
                                         <span className="info-value">端对端 AES-GCM + 离线静默队列</span>
                                     </div>
@@ -1046,17 +1107,25 @@ const SettingsModal = ({ open, onClose, onCancel }) => {
                                     <div className="update-status-section">
                                         <div className="update-status-label">自动静默更新</div>
                                         <div className="update-status-desc">
-                                            {updateStatusText || '启动 5 秒后静默检测新版本，有可用更新时在沉浸式顶栏展示非阻断提示。'}
+                                            {isElectronEnv
+                                                ? (updateStatusText || '启动 5 秒后静默检测新版本，有可用更新时在沉浸式顶栏展示非阻断提示。')
+                                                : '当前运行于 Web 浏览器，在线刷新即可获取最新网页版；桌面更新仅在客户端内生效。'}
                                         </div>
                                     </div>
-                                    <Button
-                                        type="primary"
-                                        loading={checkingUpdate}
-                                        onClick={handleCheckUpdate}
-                                        className="check-update-btn"
-                                    >
-                                        {checkingUpdate ? '正在检测...' : '检查新版本'}
-                                    </Button>
+                                    {isElectronEnv ? (
+                                        <Button
+                                            type="primary"
+                                            loading={checkingUpdate}
+                                            onClick={handleCheckUpdate}
+                                            className="check-update-btn"
+                                        >
+                                            {checkingUpdate ? '正在检测...' : '检查新版本'}
+                                        </Button>
+                                    ) : (
+                                        <Button disabled className="check-update-btn is-web-disabled">
+                                            仅桌面端可用
+                                        </Button>
+                                    )}
                                 </div>
                             </div>
                         </div>

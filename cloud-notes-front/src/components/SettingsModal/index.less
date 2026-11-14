@@ -795,7 +795,8 @@
       .app-version-line {
         display: flex;
         align-items: center;
-        gap: 8px;
+        flex-wrap: wrap;
+        gap: 6px;
 
         .version-tag {
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -807,10 +808,42 @@
           font-weight: 600;
         }
 
-        .build-channel {
-          font-size: 12px;
-          color: #64748b;
+        .build-tag {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: 11px;
+          color: #475569;
+          background: #ffffff;
+          border: 1px solid #cbd5e1;
+          padding: 1px 6px;
+          border-radius: 4px;
         }
+
+        .build-channel {
+          font-size: 11px;
+          font-weight: 500;
+          color: #0284c7;
+          background: rgba(24, 144, 255, 0.08);
+          border: 1px solid rgba(24, 144, 255, 0.2);
+          padding: 1px 7px;
+          border-radius: 4px;
+
+          &.is-portable {
+            color: #047857;
+            background: #ecfdf5;
+            border-color: #a7f3d0;
+          }
+        }
+      }
+    }
+
+    .copy-diagnostics-btn {
+      margin-left: auto;
+      color: #64748b;
+      font-size: 12px;
+
+      &:hover {
+        color: #0f172a;
+        background: #e2e8f0;
       }
     }
   }
@@ -880,11 +913,18 @@
       border-color: #0f172a !important;
       border-radius: 6px;
       font-weight: 500;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
 
       &:hover {
         background: #1e293b !important;
         border-color: #1e293b !important;
+      }
+
+      &.is-web-disabled {
+        background: #f1f5f9 !important;
+        border-color: #e2e8f0 !important;
+        color: #64748b !important;
+        box-shadow: none;
       }
     }
   }
@@ -963,6 +1003,35 @@
       .app-name {
         color: #f8fafc;
       }
+      .about-brand-details .app-version-line {
+        .version-tag {
+          background: #1e293b;
+          color: #f8fafc;
+        }
+        .build-tag {
+          background: #0f172a;
+          border-color: #334155;
+          color: #cbd5e1;
+        }
+        .build-channel {
+          color: #38bdf8;
+          background: rgba(56, 189, 248, 0.12);
+          border-color: rgba(56, 189, 248, 0.25);
+
+          &.is-portable {
+            color: #34d399;
+            background: rgba(16, 185, 129, 0.12);
+            border-color: rgba(16, 185, 129, 0.25);
+          }
+        }
+      }
+      .copy-diagnostics-btn {
+        color: #94a3b8;
+        &:hover {
+          color: #f8fafc;
+          background: #1e293b;
+        }
+      }
     }
 
     .about-info-rows {
@@ -981,6 +1050,23 @@
       border-color: rgba(255, 255, 255, 0.08);
       .update-status-label {
         color: #f8fafc;
+      }
+      .check-update-btn {
+        background: #38bdf8 !important;
+        border-color: #38bdf8 !important;
+        color: #0f172a !important;
+        font-weight: 600;
+
+        &:hover {
+          background: #7dd3fc !important;
+          border-color: #7dd3fc !important;
+        }
+
+        &.is-web-disabled {
+          background: #1e293b !important;
+          border-color: #334155 !important;
+          color: #64748b !important;
+        }
       }
     }
   }

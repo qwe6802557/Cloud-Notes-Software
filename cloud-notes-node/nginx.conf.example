@@ -81,6 +81,35 @@ server {
         alias /var/lib/cloud-notes/uploads/;
         access_log off;
         expires 30d;
+
+        # 支持 Electron file:// 打包端导出/Canvas 只读读取站内图片资源
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin "*";
+            add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS";
+            add_header Access-Control-Max-Age 86400;
+            return 204;
+        }
+
+        add_header Cache-Control "public";
+        add_header Access-Control-Allow-Origin "*";
+        add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS";
+    }
+
+    # 桌面端与移动端 -latest 固定别名下载禁缓存，确保覆盖发版即时生效
+    location ~* ^/updates/.*-latest\.(exe|zip|apk)$ {
+        root /var/lib/cloud-notes;
+        sendfile on;
+        tcp_nopush on;
+        expires -1;
+        add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+    # 桌面端安装包与移动端 OTA/APK 静态下载分发
+    location /updates/ {
+        alias /var/lib/cloud-notes/updates/;
+        sendfile on;
+        tcp_nopush on;
+        expires 30d;
         add_header Cache-Control "public";
     }
 }

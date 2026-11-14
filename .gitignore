@@ -56,3 +56,7 @@ build.tar.gz
 # 移动端 APK 安装包归档
 *.apk
 apk-*/
+
+# 桌面端安装包与发布元数据
+*.exe
+desktop-release-meta.json

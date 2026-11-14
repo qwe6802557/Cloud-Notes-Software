@@ -27,18 +27,11 @@ exports.checkUpdate = asyncHandler(async (req, res) => {
     const { platform = 'android', currentVersion = '1.0.0', buildNumber = 0 } = req.query;
     const clientBuild = parseInt(buildNumber, 10) || 0;
 
-    // 查找当前平台或全平台适用的最新激活版本
-    let latestRelease = await AppRelease.findOne({
+    // 仅查找当前平台或全平台适用的最新激活版本，禁止跨平台兜底以免误发 Android 包给桌面端
+    const latestRelease = await AppRelease.findOne({
         platform: { $in: [platform, 'all'] },
         isActive: true
     }).sort({ buildNumber: -1 });
-
-    // 兜底：若未配置特定平台，获取全平台最新激活版本
-    if (!latestRelease) {
-        latestRelease = await AppRelease.findOne({
-            isActive: true
-        }).sort({ buildNumber: -1 });
-    }
 
     if (!latestRelease) {
         return res.status(200).json({
@@ -67,11 +60,12 @@ exports.checkUpdate = asyncHandler(async (req, res) => {
         });
     }
 
-    // 判断是否强制整包更新：如果客户端版本低于最低兼容版本，或原生构建未激活 OTA (buildNumber < 15)，强制降级为 native 整包
+    // 判断是否强制整包更新：低于最低兼容版本，或移动端旧底包未激活 OTA (buildNumber < 15) 时强制升级
     let effectiveType = latestRelease.type;
     let effectiveForce = latestRelease.forceUpdate;
+    const isMobilePlatform = ['android', 'ios'].includes(platform);
 
-    if (isVersionOlder(currentVersion, latestRelease.minCompatibleVersion) || clientBuild < 15) {
+    if (isVersionOlder(currentVersion, latestRelease.minCompatibleVersion) || (isMobilePlatform && clientBuild < 15)) {
         effectiveType = 'native';
         effectiveForce = true;
     }
@@ -122,6 +116,9 @@ exports.checkUpdate = asyncHandler(async (req, res) => {
             hash: latestRelease.hash,
             size: effectiveSize,
             apkUrl: resolveUrl(effectiveApkUrl),
+            portableUrl: resolveUrl(latestRelease.portableUrl),
+            portableHash: latestRelease.portableHash || '',
+            portableSize: latestRelease.portableSize || 0,
             releaseDate: latestRelease.createdAt
         }
     });
@@ -145,7 +142,10 @@ exports.publishRelease = asyncHandler(async (req, res) => {
         downloadUrl,
         hash,
         size,
-        apkUrl
+        apkUrl,
+        portableUrl,
+        portableHash,
+        portableSize
     } = req.body;
 
     // 校验密钥：防止未授权提交
@@ -154,12 +154,13 @@ exports.publishRelease = asyncHandler(async (req, res) => {
         throw new AppError('发布密钥无效或无权操作', 403);
     }
 
-    if (!version || buildNumber === undefined) {
+    const parsedBuildNumber = parseInt(buildNumber, 10);
+    if (!version || buildNumber === undefined || Number.isNaN(parsedBuildNumber)) {
         throw new AppError('version 与 buildNumber 为必填项', 400);
     }
 
     // 检查是否存在同版本
-    let release = await AppRelease.findOne({ platform, buildNumber });
+    let release = await AppRelease.findOne({ platform, buildNumber: parsedBuildNumber });
     if (release) {
         release.version = version;
         release.type = type;
@@ -171,6 +172,9 @@ exports.publishRelease = asyncHandler(async (req, res) => {
         release.hash = hash || '';
         release.size = size || 0;
         release.apkUrl = apkUrl || '';
+        release.portableUrl = portableUrl || '';
+        release.portableHash = portableHash || '';
+        release.portableSize = Number(portableSize) || 0;
         release.isActive = true;
         release.createdAt = new Date();
         await release.save();
@@ -178,7 +182,7 @@ exports.publishRelease = asyncHandler(async (req, res) => {
         release = await AppRelease.create({
             platform,
             version,
-            buildNumber: parseInt(buildNumber, 10),
+            buildNumber: parsedBuildNumber,
             type,
             forceUpdate,
             minCompatibleVersion,
@@ -188,6 +192,9 @@ exports.publishRelease = asyncHandler(async (req, res) => {
             hash: hash || '',
             size: size || 0,
             apkUrl: apkUrl || '',
+            portableUrl: portableUrl || '',
+            portableHash: portableHash || '',
+            portableSize: Number(portableSize) || 0,
             isActive: true
         });
     }
@@ -204,7 +211,13 @@ exports.publishRelease = asyncHandler(async (req, res) => {
  * GET /app/releases
  */
 exports.getReleases = asyncHandler(async (req, res) => {
-    const releases = await AppRelease.find().sort({ buildNumber: -1 }).limit(20);
+    const { platform } = req.query;
+    const filter = {};
+    if (platform && typeof platform === 'string' && platform.trim()) {
+        filter.platform = platform.trim();
+    }
+
+    const releases = await AppRelease.find(filter).sort({ buildNumber: -1 }).limit(20);
     res.status(200).json({
         code: 200,
         message: '获取版本历史成功',

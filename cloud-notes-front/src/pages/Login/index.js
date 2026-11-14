@@ -4,6 +4,7 @@ import { UserOutlined, LockOutlined, SafetyCertificateOutlined } from '@ant-desi
 import { useLocation, useNavigate } from 'react-router-dom';
 import { login, getCaptcha } from '@/api/user';
 import { setToken, setUser } from '@/utils/auth';
+import DesktopTitleBar from '@/components/Layout/DesktopTitleBar';
 import './index.less';
 
 const { Title } = Typography;
@@ -91,7 +92,9 @@ const Login = () => {
     };
 
     return (
-        <div className="login-container">
+        <div className="login-page-shell">
+            <DesktopTitleBar />
+            <div className="login-container">
             <div className="login-content">
                 <div className="login-header">
                     <div className="logo"></div>
@@ -167,9 +170,13 @@ const Login = () => {
                                 <Checkbox>记住我</Checkbox>
                             </Form.Item>
 
-                            <a className="login-form-forgot" href="#/reset-password">
+                            <button
+                                type="button"
+                                className="login-form-forgot"
+                                onClick={() => message.info('如需重置密码，请通过已绑定邮箱联系管理员处理')}
+                            >
                                 忘记密码
-                            </a>
+                            </button>
                         </Form.Item>
 
                         <Form.Item>
@@ -188,6 +195,7 @@ const Login = () => {
                     <p>© 2023-2025 囧人云笔记 版权所有</p>
                 </div>
             </div>
+        </div>
         </div>
     );
 };

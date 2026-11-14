@@ -1,6 +1,7 @@
 {
   "name": "my-electron-app",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "buildNumber": 1,
   "private": true,
   "description": "Cloud Notes desktop client",
   "author": "Cloud Notes",
@@ -40,35 +41,63 @@
     "test": "craco test",
     "eject": "react-scripts eject",
     "electron-dev": "concurrently \"cross-env BROWSER=none npm start\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron-pack": "cross-env PUBLIC_URL=./ npm run build && electron-builder",
-    "electron-pack:dir": "cross-env PUBLIC_URL=./ npm run build && electron-builder --dir",
+    "electron-pack": "node scripts/pack-win.js",
+    "electron-pack:dir": "node scripts/pack-win.js --dir",
+    "generate-assets": "node scripts/generate-assets.js",
     "postinstall": "electron-builder install-app-deps"
   },
   "build": {
     "extends": null,
-    "appId": "com.myapp.id",
+    "appId": "com.jiongren.cloudnotes",
     "productName": "Cloud Notes",
     "asar": true,
     "extraMetadata": {
-      "main": "electron/main.js"
+      "main": "electron/main.js",
+      "buildNumber": 1
     },
     "files": [
       "build/**/*",
       "electron/**/*",
-      "package.json"
+      "package.json",
+      "!build/**/*.map",
+      "!build/**/*.gz",
+      "!node_modules/**/*",
+      "!**/node_modules/**/*"
     ],
     "directories": {
       "buildResources": "assets",
       "output": "dist"
     },
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "artifactName": "CloudNotes-Setup-${version}-${os}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.utilities"
     },
     "win": {
+      "icon": "assets/icon.ico",
       "target": [
-        "nsis"
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Cloud Notes",
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "installerHeader": "assets/installerHeader.bmp",
+      "installerSidebar": "assets/installerSidebar.bmp",
+      "uninstallerSidebar": "assets/uninstallerSidebar.bmp"
     },
     "linux": {
       "target": [

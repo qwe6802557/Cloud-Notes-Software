@@ -44,6 +44,7 @@ import {
     downloadStashFolder
 } from '@/api/stash';
 import FilePreviewPanel from './FilePreviewPanel';
+import { resolveAssetUrl } from '@/utils/env';
 import './index.less';
 
 const formatBytes = (bytes, decimals = 1) => {
@@ -451,15 +452,16 @@ const FileStashBoard = () => {
 
     // 复制直链
     const handleCopyUrl = file => {
-        if (!file.url) return;
+        const targetUrl = resolveAssetUrl(file.url);
+        if (!targetUrl) return;
         if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(file.url).then(() => {
+            navigator.clipboard.writeText(targetUrl).then(() => {
                 message.success('文件直链已复制，可在手机浏览器或任意客户端直接打开');
             }).catch(() => {
-                fallbackCopy(file.url);
+                fallbackCopy(targetUrl);
             });
         } else {
-            fallbackCopy(file.url);
+            fallbackCopy(targetUrl);
         }
     };
 
@@ -475,8 +477,10 @@ const FileStashBoard = () => {
 
     // 下载单文件
     const handleDownloadFile = file => {
+        const targetUrl = resolveAssetUrl(file.url);
+        if (!targetUrl) return;
         const link = document.createElement('a');
-        link.href = file.url;
+        link.href = targetUrl;
         link.download = file.originalName || file.filename;
         link.target = '_blank';
         document.body.appendChild(link);

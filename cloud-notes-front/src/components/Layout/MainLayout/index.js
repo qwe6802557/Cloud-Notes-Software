@@ -12,7 +12,7 @@ import { updateNote, createNote } from '@/api/notes';
 import { isDesktopMirrorSupported, runLocalMirrorSync } from '@/utils/mirrorSyncClient';
 import { logout } from '@/api/user';
 import { clearAuth } from '@/utils/auth';
-import { getLoginPath } from '@/utils/request';
+import { navigateToLogin } from '@/utils/env';
 import './index.less';
 
 const LAST_NOTE_KEY = 'cloud_notes_last_active_note_id';
@@ -38,11 +38,19 @@ const MainLayout = () => {
     const [graphMounted, setGraphMounted] = useState(false);
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
     const [modal, contextHolder] = Modal.useModal();
+    const [appInfo, setAppInfo] = useState(null);
     const [updateInfo, setUpdateInfo] = useState(null);
     const [updateModalOpen, setUpdateModalOpen] = useState(false);
     const [downloadProgress, setDownloadProgress] = useState({ percent: 0, speed: 0, transferred: 0, total: 0 });
     const [downloadStatus, setDownloadStatus] = useState('idle');
     const [updateError, setUpdateError] = useState('');
+
+    useEffect(() => {
+        if (!window.electronAPI?.appInfo?.get) return;
+        window.electronAPI.appInfo.get().then(info => {
+            if (info) setAppInfo(info);
+        }).catch(() => {});
+    }, []);
 
     useEffect(() => {
         if (activeView === 'stash') setStashMounted(true);
@@ -222,7 +230,7 @@ const MainLayout = () => {
             // 本地清理优先，确保即便网络异常也能正常退出
         } finally {
             clearAuth();
-            window.location.href = getLoginPath();
+            navigateToLogin();
         }
     }, [confirmLeaveUnsavedNote]);
 
@@ -292,13 +300,15 @@ const MainLayout = () => {
         const unsubs = [
             window.electronAPI.updater.onUpdateAvailable(info => {
                 setUpdateInfo(info);
-                if (info?.isManual) {
+                setDownloadStatus('idle');
+                setUpdateError('');
+                if (info?.isManual || info?.forceUpdate) {
                     setUpdateModalOpen(true);
                 }
             }),
             window.electronAPI.updater.onUpdateNotAvailable(info => {
                 if (info?.isManual) {
-                    message.info(`当前已是最新版本 (v${info.currentVersion || '0.1.0'})`);
+                    message.info(`当前已是最新版本 (v${info.currentVersion || appInfo?.version || '1.0.0'})`);
                 }
             }),
             window.electronAPI.updater.onDownloadProgress(prog => {
@@ -321,7 +331,7 @@ const MainLayout = () => {
         return () => {
             unsubs.forEach(fn => fn?.());
         };
-    }, []);
+    }, [appInfo?.version]);
 
     const handleStartDownload = useCallback(async () => {
         try {
@@ -334,9 +344,12 @@ const MainLayout = () => {
         }
     }, []);
 
-    const handleInstallUpdate = useCallback(() => {
+    const handleInstallUpdate = useCallback(async () => {
         try {
-            window.electronAPI?.updater?.install();
+            const res = await window.electronAPI?.updater?.install();
+            if (res?.action === 'revealed') {
+                message.success('已为您定位到更新压缩包，请关闭应用后解压覆盖运行');
+            }
         } catch (err) {
             message.error(err?.message || '安装更新失败');
         }
@@ -452,9 +465,10 @@ const MainLayout = () => {
                 onToggleZenMode={handleCommandToggleZenMode}
                 onOpenSettings={handleCommandOpenSettings}
             />
-                    <DesktopUpdateModal
+            <DesktopUpdateModal
                 open={updateModalOpen}
                 onClose={() => setUpdateModalOpen(false)}
+                appInfo={appInfo}
                 updateInfo={updateInfo}
                 downloadProgress={downloadProgress}
                 downloadStatus={downloadStatus}

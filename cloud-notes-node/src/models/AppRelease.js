@@ -61,6 +61,21 @@ const appReleaseSchema = new mongoose.Schema({
         default: '',
         trim: true
     },
+    // 桌面端便携版 (.zip) 下载地址与校验元信息
+    portableUrl: {
+        type: String,
+        default: '',
+        trim: true
+    },
+    portableHash: {
+        type: String,
+        default: '',
+        trim: true
+    },
+    portableSize: {
+        type: Number,
+        default: 0
+    },
     isActive: {
         type: Boolean,
         default: true,

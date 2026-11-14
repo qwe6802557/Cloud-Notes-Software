@@ -9,6 +9,8 @@
  * 5. 全屏画廊完全兼容：保留 data-src 与真实 src 映射。
  */
 
+import { resolveAssetUrl } from '@/utils/env';
+
 const TRANSPARENT_PLACEHOLDER =
     'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"%3E%3C/svg%3E';
 
@@ -58,7 +60,7 @@ export default function lazyImagePlugin() {
                 }
 
                 img.dataset.lazyHandled = 'true';
-                img.dataset.src = originalSrc;
+                img.dataset.src = resolveAssetUrl(originalSrc);
                 img.setAttribute('loading', 'lazy');
                 img.setAttribute('decoding', 'async');
 

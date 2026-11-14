@@ -1,9 +1,80 @@
-const { app, BrowserWindow, shell, ipcMain, dialog, screen, Tray, Menu, globalShortcut, nativeImage, nativeTheme } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, screen, Tray, Menu, globalShortcut, nativeImage, nativeTheme, session } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { fileURLToPath, pathToFileURL } = require('url');
 const AppUpdater = require('./updater');
 const MirrorService = require('./mirrorService');
+const { rewriteApiCorsRequestHeaders, rewriteApiCorsResponseHeaders } = require('./corsHelpers');
+
+const DEFAULT_PROD_API_URL = 'https://notes.yanggenbwebsite.site/api';
+const DEFAULT_DEV_API_URL = 'http://localhost:3001/api';
+
+const readPackageMeta = () => {
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+        return {
+            version: pkg.version || '1.0.0',
+            buildNumber: Number(pkg.buildNumber) || 1
+        };
+    } catch {
+        return { version: '1.0.0', buildNumber: 1 };
+    }
+};
+
+const pkgMeta = readPackageMeta();
+const isDev = !app.isPackaged;
+let distributionMode = 'nsis';
+
+// 便携版数据隔离（必须在 app.whenReady 与单实例锁之前执行）
+if (!isDev) {
+    const exeDir = path.dirname(process.execPath);
+    const portableMarker = path.join(exeDir, '.portable');
+    if (fs.existsSync(portableMarker)) {
+        try {
+            const portableDataDir = path.join(exeDir, 'data');
+            fs.mkdirSync(portableDataDir, { recursive: true });
+            fs.accessSync(portableDataDir, fs.constants.W_OK);
+            app.setPath('userData', portableDataDir);
+            distributionMode = 'portable';
+        } catch (err) {
+            console.warn('[Portable] portable data dir unavailable, fallback to default userData:', err.message);
+        }
+    }
+}
+
+const getApiBaseUrl = () => {
+    const raw = (process.env.CLOUD_NOTES_API_URL || '').trim();
+    if (raw) return raw.replace(/\/+$/, '');
+    return isDev ? DEFAULT_DEV_API_URL : DEFAULT_PROD_API_URL;
+};
+
+const getApiOrigin = () => {
+    try {
+        return new URL(getApiBaseUrl()).origin;
+    } catch {
+        return 'https://notes.yanggenbwebsite.site';
+    }
+};
+
+const setupApiCorsOriginRewrite = () => {
+    if (!app.isPackaged || !session?.defaultSession?.webRequest) {
+        return;
+    }
+    const apiOrigin = getApiOrigin();
+    const filter = { urls: [`${apiOrigin}/*`] };
+
+    session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
+        callback({
+            requestHeaders: rewriteApiCorsRequestHeaders(details.requestHeaders, apiOrigin)
+        });
+    });
+
+    session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
+        callback({
+            responseHeaders: rewriteApiCorsResponseHeaders(details.responseHeaders, details.initiator)
+        });
+    });
+};
 
 const mirrorService = new MirrorService({
     getUserDataPath: () => app.getPath('userData'),
@@ -14,7 +85,6 @@ const mirrorService = new MirrorService({
 // 禁用硬件加速与 GPU 沙盒异常拦截，防止 Windows 驱动不匹配触发 Chromium 0x80000003 崩溃
 app.disableHardwareAcceleration();
 
-const isDev = !app.isPackaged;
 const devServerUrl = 'http://localhost:3000';
 const appBuildPath = path.join(__dirname, '../build');
 const appEntryUrl = isDev
@@ -141,15 +211,27 @@ const toggleMainWindow = () => {
 /**
  * 托盘图标加载与上下文菜单管理
  */
-const getTrayIcon = () => {
-    const icoPath = path.join(__dirname, '../public/favicon.ico');
-    if (fs.existsSync(icoPath)) return nativeImage.createFromPath(icoPath);
+const getAppIcon = () => {
+    const candidates = [
+        path.join(__dirname, '../build/favicon.ico'),
+        path.join(__dirname, '../build/favicon-32x32.png'),
+        path.join(__dirname, '../assets/icon.ico'),
+        path.join(__dirname, '../public/favicon.ico'),
+        path.join(__dirname, '../public/favicon-32x32.png')
+    ];
 
-    const pngPath = path.join(__dirname, '../public/favicon-32x32.png');
-    if (fs.existsSync(pngPath)) return nativeImage.createFromPath(pngPath);
-
-    return nativeImage.createEmpty();
+    for (const filePath of candidates) {
+        if (fs.existsSync(filePath)) {
+            const img = nativeImage.createFromPath(filePath);
+            if (!img.isEmpty()) {
+                return img;
+            }
+        }
+    }
+    return null;
 };
+
+const getTrayIcon = () => getAppIcon() || nativeImage.createEmpty();
 
 const getSyncStatusText = () => {
     const count = currentSyncStatus.queuedCount || 0;
@@ -161,7 +243,7 @@ const getSyncStatusText = () => {
         case 'offline':
             return `离线保护中 (待同步: ${count})`;
         case 'conflict':
-            return '检测到冲突副本已分叉';
+            return '检测到待裁决内容冲突';
         case 'synced':
         default:
             return '状态: 全部已同步';
@@ -257,6 +339,7 @@ const registerGlobalShortcuts = () => {
 
 function createWindow() {
     const windowState = loadWindowState();
+    const windowIcon = getAppIcon();
 
     mainWindow = new BrowserWindow({
         width: windowState.width,
@@ -266,6 +349,7 @@ function createWindow() {
         minWidth: 900,
         minHeight: 600,
         frame: false,
+        ...(windowIcon ? { icon: windowIcon } : {}),
         backgroundColor: nativeTheme.shouldUseDarkColors ? '#020617' : '#f8fafc',
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -282,7 +366,10 @@ function createWindow() {
     mainWindow.loadURL(appEntryUrl);
 
     // 初始化自动更新调度器
-    appUpdater = new AppUpdater(mainWindow);
+    appUpdater = new AppUpdater(mainWindow, {
+        distribution: distributionMode,
+        buildNumber: pkgMeta.buildNumber
+    });
 
     // 启动 5 秒后静默探测新版本
     setTimeout(() => {
@@ -355,6 +442,7 @@ if (!gotTheLock) {
     });
 
     app.whenReady().then(() => {
+        setupApiCorsOriginRewrite();
         createWindow();
         createTray();
         registerGlobalShortcuts();
@@ -452,6 +540,15 @@ ipcMain.handle('theme:set', (_event, mode = 'system') => {
     };
 });
 
+// 应用元数据与分发形态 IPC
+ipcMain.handle('app:getInfo', () => ({
+    version: app.getVersion() || pkgMeta.version,
+    buildNumber: pkgMeta.buildNumber,
+    distribution: distributionMode,
+    apiBaseUrl: getApiBaseUrl(),
+    isPackaged: app.isPackaged
+}));
+
 // 自动更新 IPC 调度通道
 ipcMain.handle('updater:check', (_event, isManual = false) => {
     return appUpdater ? appUpdater.checkForUpdates(isManual) : { hasUpdate: false };
@@ -463,9 +560,14 @@ ipcMain.handle('updater:download', () => {
 });
 
 ipcMain.handle('updater:install', () => {
-    if (appUpdater) {
-        appUpdater.quitAndInstall();
+    if (!appUpdater) {
+        throw new Error('更新调度器未就绪');
     }
+    return appUpdater.quitAndInstall();
+});
+
+ipcMain.handle('updater:openDownloadDir', () => {
+    return appUpdater ? appUpdater.openDownloadDir() : { ok: false };
 });
 
 // 文件导出对话框 IPC

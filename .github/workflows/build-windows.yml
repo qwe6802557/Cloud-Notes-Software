@@ -1,0 +1,105 @@
+name: Build Windows Desktop
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      force_update:
+        description: '是否为强制升级版本'
+        required: false
+        default: false
+        type: boolean
+      changelog:
+        description: '发布更新说明'
+        required: false
+        default: ''
+        type: string
+      publish_release:
+        description: '构建完成后是否上传并发布到更新中心'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: cloud-notes-front/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: cloud-notes-front
+        run: npm ci
+
+      - name: Verify frontend lint and unit tests
+        working-directory: cloud-notes-front
+        run: |
+          npx eslint src electron
+          node --test tests/desktopPackaging.test.js
+
+      - name: Package Windows NSIS & Portable builds
+        working-directory: cloud-notes-front
+        env:
+          CI: 'true'
+          REACT_APP_API_URL: ${{ vars.REACT_APP_API_URL || 'https://notes.yanggenbwebsite.site/api' }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: npm run electron-pack
+
+      - name: Upload Windows desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloud-notes-windows-desktop
+          path: |
+            cloud-notes-front/dist/CloudNotes-Setup-*-win-x64.exe
+            cloud-notes-front/dist/CloudNotes-Portable-*-win-x64.zip
+            cloud-notes-front/dist/desktop-release-meta.json
+
+      - name: Publish desktop release (when configured)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish_release
+        shell: pwsh
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_SSH_KEY_CONTENT: ${{ secrets.DEPLOY_SSH_KEY }}
+          RELEASE_SECRET: ${{ secrets.RELEASE_SECRET }}
+          PUBLIC_DOMAIN: ${{ vars.PUBLIC_DOMAIN || 'https://notes.yanggenbwebsite.site' }}
+          REMOTE_UPDATES_DIR: ${{ vars.REMOTE_UPDATES_DIR || '/var/lib/cloud-notes/updates/windows' }}
+          INPUT_FORCE_UPDATE: ${{ inputs.force_update }}
+          INPUT_CHANGELOG: ${{ inputs.changelog }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_SECRET) -or [string]::IsNullOrWhiteSpace($env:DEPLOY_HOST) -or [string]::IsNullOrWhiteSpace($env:DEPLOY_USER)) {
+            Write-Host "Skipping remote release publish: DEPLOY_HOST / DEPLOY_USER / RELEASE_SECRET not configured."
+            exit 0
+          }
+          $keyPath = ""
+          try {
+            if (-not [string]::IsNullOrWhiteSpace($env:DEPLOY_SSH_KEY_CONTENT)) {
+              $keyPath = Join-Path $env:RUNNER_TEMP "deploy_key"
+              Set-Content -Path $keyPath -Value $env:DEPLOY_SSH_KEY_CONTENT -NoNewline
+              icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+              $env:DEPLOY_SSH_KEY = $keyPath
+            }
+            $argsList = @("scripts/publish-desktop.js")
+            if ($env:INPUT_FORCE_UPDATE -eq "true") {
+              $argsList += "--force"
+            }
+            if (-not [string]::IsNullOrWhiteSpace($env:INPUT_CHANGELOG)) {
+              $argsList += @("--changelog", $env:INPUT_CHANGELOG)
+            }
+            node @argsList
+          } finally {
+            if ($keyPath -and (Test-Path $keyPath)) {
+              Remove-Item $keyPath -Force -ErrorAction SilentlyContinue
+            }
+          }

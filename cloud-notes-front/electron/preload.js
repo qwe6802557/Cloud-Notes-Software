@@ -49,10 +49,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
         runSync: payload => ipcRenderer.invoke('mirror:runSync', payload),
         openDir: () => ipcRenderer.invoke('mirror:openDir')
     },
+    appInfo: {
+        get: () => ipcRenderer.invoke('app:getInfo')
+    },
     updater: {
         check: (isManual = false) => ipcRenderer.invoke('updater:check', isManual),
         download: () => ipcRenderer.invoke('updater:download'),
         install: () => ipcRenderer.invoke('updater:install'),
+        openDownloadDir: () => ipcRenderer.invoke('updater:openDownloadDir'),
         onUpdateAvailable: callback => {
             const listener = (_event, info) => callback(info);
             ipcRenderer.on('update:available', listener);

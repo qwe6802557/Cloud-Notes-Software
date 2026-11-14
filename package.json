@@ -10,7 +10,8 @@
     "dev:backend": "npm --prefix cloud-notes-node run dev",
     "build:front": "npm --prefix cloud-notes-front run build",
     "pack:electron": "npm --prefix cloud-notes-front run electron-pack",
-    "pack:electron:dir": "npm --prefix cloud-notes-front run electron-pack:dir"
+    "pack:electron:dir": "npm --prefix cloud-notes-front run electron-pack:dir",
+    "publish:desktop": "node scripts/publish-desktop.js"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

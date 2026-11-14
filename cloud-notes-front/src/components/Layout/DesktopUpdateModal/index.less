@@ -20,6 +20,12 @@
       padding: 2px 8px;
       border-radius: 4px;
       margin-bottom: 8px;
+
+      &.is-force {
+        color: #b45309;
+        background: #fef3c7;
+        border: 1px solid #fde68a;
+      }
     }
 
     .update-modal-title {
@@ -33,7 +39,8 @@
     .update-modal-meta {
       display: flex;
       align-items: center;
-      gap: 10px;
+      flex-wrap: wrap;
+      gap: 8px;
 
       .version-chip {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -49,7 +56,18 @@
         }
       }
 
+      .channel-chip {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        color: #475569;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        padding: 2px 7px;
+        border-radius: 4px;
+      }
+
       .size-chip {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: 12px;
         color: #64748b;
       }
@@ -58,6 +76,17 @@
 
   .update-modal-content {
     margin-bottom: 24px;
+
+    .force-update-notice {
+      font-size: 12px;
+      line-height: 1.5;
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
 
     .changelog-label {
       font-size: 12px;
@@ -86,6 +115,29 @@
       }
     }
 
+    .checksum-meta-row {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      color: #64748b;
+      padding: 6px 10px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+
+      .checksum-label {
+        font-weight: 600;
+        color: #475569;
+      }
+
+      .checksum-value {
+        color: #334155;
+      }
+    }
+
     .download-progress-wrap {
       margin-top: 14px;
 
@@ -103,6 +155,14 @@
           color: #0f172a;
         }
       }
+
+      .ant-progress-inner {
+        background-color: #e2e8f0;
+      }
+
+      .ant-progress-bg {
+        background-color: #0f172a;
+      }
     }
 
     .download-ready-hint {
@@ -110,6 +170,7 @@
       align-items: center;
       gap: 8px;
       font-size: 12px;
+      line-height: 1.5;
       color: #047857;
       background: #ecfdf5;
       border: 1px solid #a7f3d0;
@@ -190,26 +251,42 @@
   .ant-modal-content {
     background: #0f172a;
     border-color: rgba(255, 255, 255, 0.08);
-    box-shadow: 0 20px 40px -8px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 20px 40px -8px rgba(2, 6, 23, 0.68);
   }
 
   .update-modal-header {
     .update-modal-badge {
       background: #1e293b;
       color: #94a3b8;
+
+      &.is-force {
+        color: #fbbf24;
+        background: rgba(217, 119, 6, 0.16);
+        border-color: rgba(245, 158, 11, 0.35);
+      }
     }
+
     .update-modal-title {
       color: #f8fafc;
     }
+
     .update-modal-meta {
       .version-chip {
         background: #0b1120;
         border-color: #334155;
         color: #94a3b8;
+
         strong {
           color: #38bdf8;
         }
       }
+
+      .channel-chip {
+        background: #1e293b;
+        border-color: #334155;
+        color: #cbd5e1;
+      }
+
       .size-chip {
         color: #64748b;
       }
@@ -217,21 +294,63 @@
   }
 
   .update-modal-content {
+    .force-update-notice {
+      background: rgba(217, 119, 6, 0.14);
+      border-color: rgba(245, 158, 11, 0.35);
+      color: #fde68a;
+    }
+
     .changelog-label {
       color: #64748b;
     }
+
     .changelog-body {
       background: #0b1120;
       border-color: #1e293b;
+
       .changelog-line {
         color: #cbd5e1;
       }
     }
+
+    .checksum-meta-row {
+      background: #0b1120;
+      border-color: #1e293b;
+      color: #64748b;
+
+      .checksum-label {
+        color: #94a3b8;
+      }
+
+      .checksum-value {
+        color: #cbd5e1;
+      }
+    }
+
+    .download-progress-wrap {
+      .progress-info {
+        color: #94a3b8;
+
+        .progress-percent {
+          color: #38bdf8;
+        }
+      }
+
+      .ant-progress-inner {
+        background-color: #1e293b;
+      }
+
+      .ant-progress-bg {
+        background-color: #38bdf8;
+      }
+    }
+
     .download-ready-hint {
       background: rgba(16, 185, 129, 0.1);
       border-color: rgba(16, 185, 129, 0.25);
       color: #34d399;
     }
+
     .download-error-hint {
       background: rgba(244, 63, 94, 0.1);
       border-color: rgba(244, 63, 94, 0.25);
@@ -245,19 +364,23 @@
         background: #38bdf8;
         color: #0f172a;
         font-weight: 600;
+
         &:hover {
           background: #7dd3fc;
         }
       }
+
       &.secondary-btn {
         background: #1e293b;
         color: #cbd5e1;
         border-color: #334155;
+
         &:hover {
           background: #334155;
           color: #f8fafc;
         }
       }
+
       &.disabled-btn {
         background: #1e293b;
         color: #64748b;

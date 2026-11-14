@@ -19,6 +19,7 @@ import {
     FileOutlined,
     CheckOutlined
 } from '@ant-design/icons';
+import { resolveAssetUrl } from '@/utils/env';
 import './index.less';
 
 /**
@@ -73,6 +74,7 @@ const FilePreviewPanel = ({
     const [codeCopied, setCodeCopied] = useState(false);
 
     const category = getFileCategory(file?.originalName, file?.mimetype);
+    const resolvedFileUrl = resolveAssetUrl(file?.url);
     const imageContainerRef = useRef(null);
 
     // 监听键盘 Esc 退出全屏或关闭面板
@@ -94,11 +96,11 @@ const FilePreviewPanel = ({
     useEffect(() => {
         setImageScale(1);
         setImageRotate(0);
-    }, [file?.url]);
+    }, [resolvedFileUrl]);
 
     // 异步加载纯文本与代码内容
     useEffect(() => {
-        if (category !== 'text' || !file?.url) {
+        if (category !== 'text' || !resolvedFileUrl) {
             setTextContent('');
             setTextError(false);
             return;
@@ -108,7 +110,7 @@ const FilePreviewPanel = ({
         setTextLoading(true);
         setTextError(false);
 
-        fetch(file.url)
+        fetch(resolvedFileUrl)
             .then(res => {
                 if (!res.ok) throw new Error('网络响应异常');
                 return res.text();
@@ -133,7 +135,7 @@ const FilePreviewPanel = ({
         return () => {
             isMounted = false;
         };
-    }, [file?.url, category]);
+    }, [resolvedFileUrl, category]);
 
     // 鼠标滚轮平滑缩放图片
     const handleImageWheel = useCallback(e => {
@@ -144,14 +146,14 @@ const FilePreviewPanel = ({
 
     // 复制直链
     const handleCopyUrl = () => {
-        if (!file?.url) return;
+        if (!resolvedFileUrl) return;
         if (navigator?.clipboard?.writeText) {
-            navigator.clipboard.writeText(file.url).then(() => {
+            navigator.clipboard.writeText(resolvedFileUrl).then(() => {
                 message.success('直链已复制');
             });
         } else {
             const textArea = document.createElement('textarea');
-            textArea.value = file.url;
+            textArea.value = resolvedFileUrl;
             document.body.appendChild(textArea);
             textArea.select();
             document.execCommand('copy');
@@ -162,9 +164,9 @@ const FilePreviewPanel = ({
 
     // 直接下载
     const handleDownload = () => {
-        if (!file?.url) return;
+        if (!resolvedFileUrl) return;
         const link = document.createElement('a');
-        link.href = file.url;
+        link.href = resolvedFileUrl;
         link.download = file.originalName || file.filename;
         link.target = '_blank';
         document.body.appendChild(link);
@@ -317,7 +319,7 @@ const FilePreviewPanel = ({
 
                         <div className="image-canvas">
                             <img
-                                src={file.url}
+                                src={resolvedFileUrl}
                                 alt={file.originalName}
                                 className="target-image"
                                 style={{
@@ -333,7 +335,7 @@ const FilePreviewPanel = ({
                 {category === 'video' && (
                     <div className="video-viewer-stage">
                         <video
-                            src={file.url}
+                            src={resolvedFileUrl}
                             controls
                             playsInline
                             className="target-video"
@@ -355,7 +357,7 @@ const FilePreviewPanel = ({
                                 </span>
                             </div>
                             <audio
-                                src={file.url}
+                                src={resolvedFileUrl}
                                 controls
                                 className="target-audio"
                             />
@@ -367,7 +369,7 @@ const FilePreviewPanel = ({
                 {category === 'pdf' && (
                     <div className="pdf-viewer-stage">
                         <iframe
-                            src={file.url}
+                            src={resolvedFileUrl}
                             title={file.originalName}
                             className="target-pdf-frame"
                         />

@@ -1,5 +1,6 @@
 import request from '@/utils/request';
 import { getToken } from '@/utils/auth';
+import { getApiBaseUrl } from '@/utils/env';
 
 /**
  * 获取当前用户的 AI 配置
@@ -39,8 +40,7 @@ export const testAIConnection = data => {
  * @param {object} callbacks { onDelta, onFinish, onError, signal }
  */
 export const streamAICall = async (params, { onDelta, onFinish, onError, signal }) => {
-    const apiBase = process.env.REACT_APP_API_URL || '/api';
-    const cleanBase = apiBase.replace(/\/+$/, '');
+    const cleanBase = getApiBaseUrl();
     const url = `${cleanBase}/ai/stream`;
     const token = getToken();
 

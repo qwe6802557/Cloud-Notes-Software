@@ -10,6 +10,7 @@ import {
     ClearOutlined
 } from '@ant-design/icons';
 import { getRAGStats, triggerReindex } from '@/api/rag';
+import { getApiBaseUrl } from '@/utils/env';
 import './RAGChatDrawer.less';
 
 const { TextArea } = Input;
@@ -160,7 +161,7 @@ const RAGChatDrawer = ({
         const token = localStorage.getItem('token') || '';
 
         try {
-            const response = await fetch('/api/ai/rag/chat', {
+            const response = await fetch(`${getApiBaseUrl()}/ai/rag/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

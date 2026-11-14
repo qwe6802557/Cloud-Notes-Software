@@ -57,6 +57,7 @@ import {
     getTargetDestinations
 } from '@/api/notes';
 import { getUser } from '@/utils/auth';
+import { resolveAssetUrl } from '@/utils/env';
 import { verifyVault } from '@/api/vault';
 import SettingsModal from '@/components/SettingsModal';
 import ContextMenu from '@/components/ContextMenu';
@@ -311,7 +312,9 @@ const NavTree = forwardRef(({
 
     const [modal, contextHolder] = Modal.useModal();
     const user = getUser();
-    const userAvatar = user?.avatar && user.avatar !== 'default-avatar.png' ? user.avatar : null;
+    const userAvatar = user?.avatar && user.avatar !== 'default-avatar.png'
+        ? resolveAssetUrl(user.avatar)
+        : null;
     const treeContainerRef = useRef(null);
 
     // 组件卸载时清理悬停定时器

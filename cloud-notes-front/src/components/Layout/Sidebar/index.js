@@ -15,6 +15,7 @@ import {
 } from '@ant-design/icons';
 import { createNotebook, getNotebooks } from '@/api/notes';
 import { getUser } from '@/utils/auth';
+import { resolveAssetUrl } from '@/utils/env';
 import SettingsModal from '@/components/SettingsModal';
 import './index.less';
 
@@ -28,7 +29,9 @@ const Sidebar = ({ collapsed, setCollapsed, selectedNotebook, setSelectedNoteboo
     const [syncing, setSyncing] = useState(false);
     const [settingsOpen, setSettingsOpen] = useState(false);
     const user = getUser();
-    const userAvatar = user?.avatar && user.avatar !== 'default-avatar.png' ? user.avatar : null;
+    const userAvatar = user?.avatar && user.avatar !== 'default-avatar.png'
+        ? resolveAssetUrl(user.avatar)
+        : null;
 
     useEffect(() => {
         let mounted = true;

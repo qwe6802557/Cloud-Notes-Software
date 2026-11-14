@@ -1,15 +1,18 @@
 import axios from 'axios';
 import { message } from 'antd';
 import { clearAuth, getToken } from './auth';
+import {
+    getApiBaseUrl,
+    getCurrentRouteTarget,
+    getWebLoginPath,
+    isAuthRoute,
+    navigateToLogin
+} from './env';
 
 const isFormData = data => typeof FormData !== 'undefined' && data instanceof FormData;
 
 // 获取规范化的登录页完整路径（彻底清洗斜杠，杜绝 //login 协议相对 URL 异常）
-export const getLoginPath = () => {
-    const rawBasename = (process.env.REACT_APP_ROUTER_URL || '').trim();
-    const normalizedBasename = rawBasename.replace(/^\/+|\/+$/g, '');
-    return normalizedBasename ? `/${normalizedBasename}/login` : '/login';
-};
+export const getLoginPath = () => getWebLoginPath();
 
 // 401 单例防抖与重定向状态锁
 let isAuthRedirecting = false;
@@ -29,11 +32,11 @@ const handleAuthExpired = (customMessage, config) => {
     clearAuth();
 
     // 2. 特殊场景放行：当前已在登录/注册页，或当前请求本身为登录接口（如密码错误返回 401），不触发重定向
-    const currentPath = window.location.pathname;
+    const currentRoute = getCurrentRouteTarget();
     const isLoginRequest = config?.url && (config.url.includes('/login') || config.url.includes('/auth/login'));
-    const isAuthPage = currentPath.endsWith('/login') || currentPath.endsWith('/register');
+    const isOnAuthPage = isAuthRoute(currentRoute);
 
-    if (isLoginRequest || isAuthPage) {
+    if (isLoginRequest || isOnAuthPage) {
         const errorMsg = customMessage || '未授权，请重新登录';
         message.error(errorMsg);
         return Promise.reject(new Error(errorMsg));
@@ -48,32 +51,23 @@ const handleAuthExpired = (customMessage, config) => {
     const errorMsg = customMessage || '登录状态已过期，请重新登录';
     message.error(errorMsg);
 
-    // 4. 构造带 redirect 参数的登录目标路径，以便重新登录后自动回跳
-    const targetLoginPath = getLoginPath();
-    const currentFullUrl = window.location.pathname + window.location.search + window.location.hash;
-    const redirectQuery = currentFullUrl && !isAuthPage
-        ? `?redirect=${encodeURIComponent(currentFullUrl)}`
-        : '';
-    const fullTarget = `${targetLoginPath}${redirectQuery}`;
-
-    // 5. 留出 600ms 平滑延时，确保用户看清提示后安全跳转
+    // 4. 留出 600ms 平滑延时，确保用户看清提示后安全跳转（兼容 BrowserRouter 与 HashRouter）
     if (authRedirectTimer) {
         clearTimeout(authRedirectTimer);
     }
     authRedirectTimer = setTimeout(() => {
-        if (!window.location.pathname.endsWith('/login')) {
-            window.location.href = fullTarget;
-        } else {
-            isAuthRedirecting = false;
+        if (!isAuthRoute()) {
+            navigateToLogin(currentRoute);
         }
+        isAuthRedirecting = false;
     }, 600);
 
-    // 6. 核心拦截：返回静默挂起的 Promise，彻底阻止下游业务组件进入 catch 弹出次生错误（如“笔记本加载失败”）
+    // 5. 核心拦截：返回静默挂起的 Promise，彻底阻止下游业务组件进入 catch 弹出次生错误（如“笔记本加载失败”）
     return new Promise(() => {});
 };
 
 const request = axios.create({
-    baseURL: process.env.REACT_APP_API_URL || '/api', // 从环境变量获取API地址
+    baseURL: getApiBaseUrl(), // 自动适配 Web 代理与 Electron 打包态域名
     timeout: 60000, // 请求超时时间
     headers: {
         'Content-Type': 'application/json;charset=UTF-8',

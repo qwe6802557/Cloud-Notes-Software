@@ -1,5 +1,14 @@
-.login-container {
+.login-page-shell {
+  display: flex;
+  flex-direction: column;
   height: 100vh;
+  width: 100%;
+  overflow: hidden;
+}
+
+.login-container {
+  flex: 1;
+  min-height: 0;
   width: 100%;
   display: flex;
   justify-content: center;
@@ -75,6 +84,10 @@
       .login-form-forgot {
         float: right;
         color: #1890ff;
+        background: transparent;
+        border: none;
+        padding: 0;
+        cursor: pointer;
       }
 
       .other-links {

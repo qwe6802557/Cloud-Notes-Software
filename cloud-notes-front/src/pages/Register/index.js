@@ -3,6 +3,7 @@ import { Card, Form, Input, Button, Row, Col, message, Typography } from 'antd';
 import { UserOutlined, LockOutlined, SafetyCertificateOutlined, MailOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { register, sendVerificationCode } from '@/api/user';
+import DesktopTitleBar from '@/components/Layout/DesktopTitleBar';
 import './index.less';
 
 const Register = () => {
@@ -57,7 +58,9 @@ const Register = () => {
     }, [countdown]);
 
     return (
-        <div className="register-container">
+        <div className="register-page-shell">
+            <DesktopTitleBar />
+            <div className="register-container">
             <div className="register-content">
                 <div className="register-header">
                     <div className="logo"></div>
@@ -183,6 +186,7 @@ const Register = () => {
                     <p>© 2023-2025 囧人云笔记 版权所有</p>
                 </div>
             </div>
+        </div>
         </div>
     );
 };
