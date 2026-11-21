@@ -73,8 +73,9 @@ const FilePreviewPanel = ({
     const [textError, setTextError] = useState(false);
     const [codeCopied, setCodeCopied] = useState(false);
 
-    const category = getFileCategory(file?.originalName, file?.mimetype);
-    const resolvedFileUrl = resolveAssetUrl(file?.url);
+    const att = file?.attachment || file;
+    const category = getFileCategory(att?.originalName || att?.filename, att?.mimetype);
+    const resolvedFileUrl = resolveAssetUrl(att?.url);
     const imageContainerRef = useRef(null);
 
     // 监听键盘 Esc 退出全屏或关闭面板
@@ -167,8 +168,9 @@ const FilePreviewPanel = ({
         if (!resolvedFileUrl) return;
         const link = document.createElement('a');
         link.href = resolvedFileUrl;
-        link.download = file.originalName || file.filename;
+        link.download = att?.originalName || att?.filename || 'download';
         link.target = '_blank';
+        link.rel = 'noopener noreferrer';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -203,10 +205,10 @@ const FilePreviewPanel = ({
                         {category === 'text' && <CodeOutlined />}
                         {category === 'unsupported' && <FileOutlined />}
                     </span>
-                    <Tooltip title={file.originalName}>
-                        <span className="header-filename">{file.originalName}</span>
+                    <Tooltip title={att?.originalName}>
+                        <span className="header-filename">{att?.originalName || att?.filename}</span>
                     </Tooltip>
-                    <span className="header-size">{formatBytes(file.size)}</span>
+                    <span className="header-size">{formatBytes(att?.size)}</span>
                     <span className={`header-tag ${isTemp ? 'is-temp' : 'is-perm'}`}>
                         {isTemp ? '临时' : '永久'}
                     </span>
@@ -320,7 +322,7 @@ const FilePreviewPanel = ({
                         <div className="image-canvas">
                             <img
                                 src={resolvedFileUrl}
-                                alt={file.originalName}
+                                alt={att?.originalName}
                                 className="target-image"
                                 style={{
                                     transform: `scale(${imageScale}) rotate(${imageRotate}deg)`
@@ -351,9 +353,9 @@ const FilePreviewPanel = ({
                                 <CustomerServiceOutlined />
                             </div>
                             <div className="audio-info">
-                                <span className="audio-title">{file.originalName}</span>
+                                <span className="audio-title">{att?.originalName}</span>
                                 <span className="audio-meta">
-                                    {formatBytes(file.size)} · 音频流
+                                    {formatBytes(att?.size)} · 音频流
                                 </span>
                             </div>
                             <audio
@@ -370,7 +372,7 @@ const FilePreviewPanel = ({
                     <div className="pdf-viewer-stage">
                         <iframe
                             src={resolvedFileUrl}
-                            title={file.originalName}
+                            title={att?.originalName}
                             className="target-pdf-frame"
                         />
                     </div>
@@ -381,7 +383,7 @@ const FilePreviewPanel = ({
                     <div className="text-viewer-stage">
                         <div className="text-toolbar">
                             <span className="code-lang-tag">
-                                {file.originalName.split('.').pop().toUpperCase() || 'TEXT'}
+                                {(att?.originalName || '').split('.').pop().toUpperCase() || 'TEXT'}
                             </span>
                             <Button
                                 size="small"
@@ -396,7 +398,8 @@ const FilePreviewPanel = ({
                         <div className="text-content-wrapper">
                             {textLoading ? (
                                 <div className="text-loading">
-                                    <Spin tip="正在载入文本流..." />
+                                    <Spin size="small" />
+                                    <span className="text-loading-label">正在载入文本流...</span>
                                 </div>
                             ) : textError ? (
                                 <div className="text-error">
@@ -425,15 +428,15 @@ const FilePreviewPanel = ({
                             <div className="fallback-details">
                                 <div className="detail-item">
                                     <span className="detail-label">文件名称：</span>
-                                    <span className="detail-value">{file.originalName}</span>
+                                    <span className="detail-value">{att?.originalName}</span>
                                 </div>
                                 <div className="detail-item">
                                     <span className="detail-label">文件体积：</span>
-                                    <span className="detail-value">{formatBytes(file.size)}</span>
+                                    <span className="detail-value">{formatBytes(att?.size)}</span>
                                 </div>
                                 <div className="detail-item">
                                     <span className="detail-label">MIME 类型：</span>
-                                    <span className="detail-value">{file.mimetype || 'application/octet-stream'}</span>
+                                    <span className="detail-value">{att?.mimetype || 'application/octet-stream'}</span>
                                 </div>
                             </div>
                             <div className="fallback-actions">

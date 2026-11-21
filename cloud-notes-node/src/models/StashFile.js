@@ -49,19 +49,18 @@ const stashFileSchema = new mongoose.Schema({
     url: {
         type: String,
         required: true
+    },
+    convertedNoteId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Note',
+        default: null
     }
 }, {
     timestamps: true
 });
 
-// TTL 索引：仅针对有 expireAt 值的临时文件，MongoDB 自动清理过期文档（expireAfterSeconds: 0）
-stashFileSchema.index(
-    { expireAt: 1 },
-    {
-        expireAfterSeconds: 0,
-        partialFilterExpression: { expireAt: { $type: 'date' } }
-    }
-);
+// 统一由服务端清理引擎先删磁盘再删库，禁止 MongoDB TTL 私自删记录引发孤儿文件泄漏
+stashFileSchema.index({ storageType: 1, expireAt: 1 });
 
 // 组合索引提高特定用户下的分区查询性能
 stashFileSchema.index({ userId: 1, storageType: 1, createdAt: -1 });

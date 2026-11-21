@@ -1,41 +1,20 @@
 const fs = require('fs');
 const path = require('path');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 const StashFile = require('../models/StashFile');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
-const config = require('../config');
 const { getStashDir, cleanupExpiredFiles } = require('../services/stashCleanupService');
+const {
+    fixEncoding,
+    getBaseUrl,
+    safeUnlink,
+    sanitizeRelativePath,
+    normalizeZipEntryPath,
+    buildZipDownloadHeaders
+} = require('../utils/stashHelpers');
 
-const getFileUrl = req => {
-    if (config.publicBaseUrl) {
-        return config.publicBaseUrl;
-    }
-    const protocol = req.protocol;
-    const host = req.get('host');
-    return `${protocol}://${host}`;
-};
-
-/**
- * 修复 Multer / Busboy 将 UTF-8 原始文件名错误按 Latin-1 (ISO-8859-1) 解码产生的乱码
- * 如果已经是正确 UTF-8 或标准 ASCII 则安全原样返回
- */
-const fixEncoding = str => {
-    if (!str || typeof str !== 'string') return '';
-    try {
-        const restored = Buffer.from(str, 'latin1').toString('utf8');
-        if (restored && restored !== str && !restored.includes('\uFFFD')) {
-            return restored;
-        }
-    } catch {
-        // fallback
-    }
-    return str;
-};
-
-/**
- * 上传文件到暂存区 (支持 临时文件/永久文件, 单文件/文件夹子文件)
- */
+// 上传文件到暂存区 (兼容旧版客户端 10 分钟临时暂存与永久保存)
 exports.uploadFile = asyncHandler(async (req, res) => {
     if (!req.file) {
         throw new AppError('请选择要上传的文件', 400);
@@ -49,18 +28,17 @@ exports.uploadFile = asyncHandler(async (req, res) => {
             const parsedExpireAt = new Date(req.body.batchExpireAt);
             expireAt = !isNaN(parsedExpireAt.getTime()) ? parsedExpireAt : new Date(Date.now() + 10 * 60 * 1000);
         } else {
-            expireAt = new Date(Date.now() + 10 * 60 * 1000); // 严格 10 分钟后过期
+            expireAt = new Date(Date.now() + 10 * 60 * 1000);
         }
     }
 
-    const rawRelativePath = (req.body.relativePath || '').trim();
-    const relativePath = fixEncoding(rawRelativePath).replace(/\\/g, '/').replace(/^\/+/, '');
-    let folderName = fixEncoding((req.body.folderName || '').trim());
+    const relativePath = sanitizeRelativePath(req.body.relativePath);
+    let folderName = sanitizeRelativePath(req.body.folderName).split('/')[0] || '';
     if (!folderName && relativePath.includes('/')) {
         folderName = relativePath.split('/')[0];
     }
 
-    const baseUrl = getFileUrl(req);
+    const baseUrl = getBaseUrl(req);
     const relativeUrl = `/uploads/stash/${req.file.filename}`;
     const fileUrl = `${baseUrl}${relativeUrl}`;
 
@@ -99,15 +77,16 @@ exports.uploadFile = asyncHandler(async (req, res) => {
     });
 });
 
-/**
- * 获取用户的文件暂存列表
- */
+// 获取用户的文件暂存列表
 exports.listFiles = asyncHandler(async (req, res) => {
-    // 列表查询前先触发一次惰性清理，保证返回的列表 100% 无过期脏数据
     await cleanupExpiredFiles();
 
-    const { type } = req.query; // 'temp' | 'permanent' | undefined (all)
-    const query = { userId: req.user._id };
+    const { type } = req.query;
+    const now = new Date();
+    const query = {
+        userId: req.user._id,
+        $or: [{ storageType: 'permanent' }, { expireAt: { $gt: now } }]
+    };
 
     if (type && ['temp', 'permanent'].includes(type)) {
         query.storageType = type;
@@ -115,13 +94,12 @@ exports.listFiles = asyncHandler(async (req, res) => {
 
     const files = await StashFile.find(query).sort({ createdAt: -1 }).lean();
 
-    const now = Date.now();
+    const nowMs = now.getTime();
     const formattedFiles = files.map(file => {
         const repairedName = fixEncoding(file.originalName);
         const repairedRelPath = fixEncoding(file.relativePath);
         const repairedFolder = fixEncoding(file.folderName);
 
-        // 如果检测到原先入库的数据存在 latin1 乱码，平滑更新数据库纠偏
         if (
             repairedName !== file.originalName ||
             repairedRelPath !== file.relativePath ||
@@ -140,7 +118,7 @@ exports.listFiles = asyncHandler(async (req, res) => {
         }
 
         const remainingSeconds = file.storageType === 'temp' && file.expireAt
-            ? Math.max(0, Math.floor((new Date(file.expireAt).getTime() - now) / 1000))
+            ? Math.max(0, Math.floor((new Date(file.expireAt).getTime() - nowMs) / 1000))
             : null;
 
         return {
@@ -152,9 +130,8 @@ exports.listFiles = asyncHandler(async (req, res) => {
         };
     });
 
-    // 统计双分区数量与总占用
     const [tempCount, permanentCount] = await Promise.all([
-        StashFile.countDocuments({ userId: req.user._id, storageType: 'temp' }),
+        StashFile.countDocuments({ userId: req.user._id, storageType: 'temp', expireAt: { $gt: now } }),
         StashFile.countDocuments({ userId: req.user._id, storageType: 'permanent' })
     ]);
 
@@ -169,9 +146,7 @@ exports.listFiles = asyncHandler(async (req, res) => {
     });
 });
 
-/**
- * 临时文件转为永久文件
- */
+// 临时文件转为永久文件
 exports.promoteToPermanent = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
@@ -202,9 +177,7 @@ exports.promoteToPermanent = asyncHandler(async (req, res) => {
     });
 });
 
-/**
- * 手动删除暂存文件（联动物理磁盘彻底删除）
- */
+// 手动删除暂存文件（联动物理磁盘彻底删除）
 exports.deleteFile = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
@@ -213,17 +186,8 @@ exports.deleteFile = asyncHandler(async (req, res) => {
         throw new AppError('指定的文件不存在', 404);
     }
 
-    // 物理删除磁盘文件
     const stashDir = getStashDir();
-    const filePath = path.join(stashDir, file.filename);
-    try {
-        if (fs.existsSync(filePath)) {
-            await fs.promises.unlink(filePath);
-        }
-    } catch (err) {
-        console.error(`删除物理暂存文件异常 (${file.filename}):`, err.message);
-    }
-
+    await safeUnlink(path.join(stashDir, path.basename(file.filename)));
     await StashFile.deleteOne({ _id: id });
 
     res.status(200).json({
@@ -233,9 +197,7 @@ exports.deleteFile = asyncHandler(async (req, res) => {
     });
 });
 
-/**
- * 下载暂存文件（支持保持原始文件名 Content-Disposition 响应）
- */
+// 下载暂存文件
 exports.downloadFile = asyncHandler(async (req, res) => {
     const { id } = req.params;
 
@@ -245,7 +207,7 @@ exports.downloadFile = asyncHandler(async (req, res) => {
     }
 
     const stashDir = getStashDir();
-    const filePath = path.join(stashDir, file.filename);
+    const filePath = path.join(stashDir, path.basename(file.filename));
 
     if (!fs.existsSync(filePath)) {
         throw new AppError('服务器物理文件不存在或已被自动清理', 404);
@@ -254,9 +216,7 @@ exports.downloadFile = asyncHandler(async (req, res) => {
     res.download(filePath, fixEncoding(file.originalName));
 });
 
-/**
- * 临时文件夹一键转为永久保存
- */
+// 临时文件夹一键转为永久保存
 exports.promoteFolder = asyncHandler(async (req, res) => {
     const rawFolderName = req.body?.folderName;
     const folderName = fixEncoding(rawFolderName);
@@ -293,9 +253,7 @@ exports.promoteFolder = asyncHandler(async (req, res) => {
     });
 });
 
-/**
- * 彻底删除整个文件夹及其内部所有实体文件
- */
+// 彻底删除整个文件夹及其内部所有实体文件
 exports.deleteFolder = asyncHandler(async (req, res) => {
     const rawFolderName = req.body?.folderName || req.query?.folderName;
     const folderName = fixEncoding(rawFolderName);
@@ -323,14 +281,7 @@ exports.deleteFolder = asyncHandler(async (req, res) => {
 
     const stashDir = getStashDir();
     for (const file of files) {
-        const filePath = path.join(stashDir, file.filename);
-        try {
-            if (fs.existsSync(filePath)) {
-                await fs.promises.unlink(filePath);
-            }
-        } catch (err) {
-            console.error(`删除目录物理文件失败 (${file.filename}):`, err.message);
-        }
+        await safeUnlink(path.join(stashDir, path.basename(file.filename)));
     }
 
     await StashFile.deleteMany({ _id: { $in: files.map(f => f._id) } });
@@ -342,9 +293,7 @@ exports.deleteFolder = asyncHandler(async (req, res) => {
     });
 });
 
-/**
- * 整文件夹打包流式下载（ZIP压缩实时推流，不占多余磁盘）
- */
+// 整文件夹打包流式下载（修复 archiver@8 ZipArchive 实例化）
 exports.downloadFolder = asyncHandler(async (req, res) => {
     const rawFolderName = req.query.folderName;
     const folderName = fixEncoding(rawFolderName);
@@ -370,13 +319,11 @@ exports.downloadFolder = asyncHandler(async (req, res) => {
     }
 
     const stashDir = getStashDir();
-    const archive = archiver('zip', {
+    const archive = new ZipArchive({
         zlib: { level: 6 }
     });
 
-    const safeName = encodeURIComponent(folderName);
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"; filename*=UTF-8''${safeName}.zip`);
+    buildZipDownloadHeaders(res, folderName);
 
     archive.on('error', err => {
         console.error('[DownloadFolder] ZIP 打包流异常:', err);
@@ -387,16 +334,20 @@ exports.downloadFolder = asyncHandler(async (req, res) => {
 
     archive.pipe(res);
 
+    const usedEntryNames = new Set();
     for (const file of files) {
-        const filePath = path.join(stashDir, file.filename);
+        const filePath = path.join(stashDir, path.basename(file.filename));
         if (fs.existsSync(filePath)) {
             const safeOriginal = fixEncoding(file.originalName);
             const safeRelative = fixEncoding(file.relativePath);
-            const entryName = safeRelative || `${folderName}/${safeOriginal}`;
+            let entryName = normalizeZipEntryPath(safeRelative || `${folderName}/${safeOriginal}`, safeOriginal);
+            if (usedEntryNames.has(entryName)) {
+                entryName = `${file._id}-${entryName}`;
+            }
+            usedEntryNames.add(entryName);
             archive.file(filePath, { name: entryName });
         }
     }
 
     await archive.finalize();
 });
-

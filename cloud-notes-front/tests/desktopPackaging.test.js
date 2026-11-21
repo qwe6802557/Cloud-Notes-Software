@@ -322,7 +322,9 @@ test('Stitch desktop styles and BMP pixels contain no banned pure black or neon 
     path.join(FRONT_DIR, 'src', 'components', 'Layout', 'DesktopTitleBar', 'index.less'),
     path.join(FRONT_DIR, 'src', 'components', 'Layout', 'DesktopUpdateModal', 'index.less'),
     path.join(FRONT_DIR, 'src', 'pages', 'Login', 'index.less'),
-    path.join(FRONT_DIR, 'src', 'pages', 'Register', 'index.less')
+    path.join(FRONT_DIR, 'src', 'pages', 'Register', 'index.less'),
+    path.join(FRONT_DIR, 'src', 'components', 'FileStashBoard', 'index.less'),
+    path.join(FRONT_DIR, 'src', 'components', 'FileStashBoard', 'FilePreviewPanel', 'index.less')
   ];
   for (const file of checkedFiles) {
     const raw = fs.readFileSync(file, 'utf8');
@@ -414,4 +416,50 @@ test('corsHelpers rewrites file:// / null request Origin and overrides ACAO resp
   const mainSource = fs.readFileSync(path.join(FRONT_DIR, 'electron', 'main.js'), 'utf8');
   assert.match(mainSource, /onBeforeSendHeaders/);
   assert.match(mainSource, /onHeadersReceived/);
+});
+
+test('Electron main and preload expose Ctrl+Alt+M quick memo shortcut and clean listener teardown', () => {
+  const mainSource = fs.readFileSync(path.join(FRONT_DIR, 'electron', 'main.js'), 'utf8');
+  assert.match(mainSource, /CommandOrControl\+Alt\+M/);
+  assert.match(mainSource, /shortcut:open-memo/);
+  assert.match(mainSource, /打开随心记 \(Ctrl\+Alt\+M\)/);
+
+  const preloadSource = fs.readFileSync(path.join(FRONT_DIR, 'electron', 'preload.js'), 'utf8');
+  const exposed = {};
+  const listeners = new Map();
+  const mockElectron = {
+    contextBridge: {
+      exposeInMainWorld: (key, api) => {
+        exposed[key] = api;
+      }
+    },
+    ipcRenderer: {
+      invoke: async () => null,
+      send: () => {},
+      on: (ch, fn) => {
+        if (!listeners.has(ch)) listeners.set(ch, new Set());
+        listeners.get(ch).add(fn);
+      },
+      removeListener: (ch, fn) => {
+        listeners.get(ch)?.delete(fn);
+      }
+    }
+  };
+
+  const sandbox = {
+    require: (id) => (id === 'electron' ? mockElectron : require(id)),
+    process: { platform: 'win32', versions: { chrome: '130', electron: '33.4' } }
+  };
+  vm.runInNewContext(preloadSource, sandbox);
+
+  assert.equal(typeof exposed.electronAPI?.tray?.onOpenMemo, 'function');
+  let triggered = 0;
+  const unsubscribe = exposed.electronAPI.tray.onOpenMemo(() => {
+    triggered += 1;
+  });
+  assert.equal(listeners.get('shortcut:open-memo')?.size, 1);
+  for (const fn of listeners.get('shortcut:open-memo')) fn();
+  assert.equal(triggered, 1);
+  unsubscribe();
+  assert.equal(listeners.get('shortcut:open-memo')?.size, 0);
 });

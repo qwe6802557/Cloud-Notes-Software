@@ -34,8 +34,14 @@ const uploadLimiter = createLimiter({
     message: '图片上传过于频繁，请稍后再试'
 });
 
+const quickNotesUploadLimiter = createLimiter({
+    ...config.rateLimit.quickNotesUpload,
+    message: '随心记文件上传过于频繁，请稍后再试'
+});
+
 module.exports = {
     loginLimiter,
     verifyCodeLimiter,
-    uploadLimiter
+    uploadLimiter,
+    quickNotesUploadLimiter
 };

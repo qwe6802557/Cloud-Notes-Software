@@ -1,116 +1,64 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Button, Empty, Progress, Segmented, Tooltip, message } from 'antd';
 import {
-    Segmented,
-    Button,
-    message,
-    Progress,
-    Empty,
-    Popconfirm,
-    Tooltip,
-    Spin
-} from 'antd';
-import {
-    ReloadOutlined,
-    DownloadOutlined,
-    CopyOutlined,
-    SaveOutlined,
-    DeleteOutlined,
-    FileImageOutlined,
-    FileTextOutlined,
-    FilePdfOutlined,
-    FileExcelOutlined,
-    FileWordOutlined,
-    FileZipOutlined,
-    PlaySquareOutlined,
-    CodeOutlined,
-    FileOutlined,
     CloudUploadOutlined,
-    FolderFilled,
-    FolderOpenFilled,
-    HomeOutlined,
-    ArrowLeftOutlined,
-    FolderAddOutlined,
+    CopyOutlined,
+    DeleteOutlined,
+    DownloadOutlined,
+    ExportOutlined,
+    EyeOutlined,
     FileAddOutlined,
-    RightOutlined,
-    EyeOutlined
+    FolderOutlined,
+    PlusCircleOutlined,
+    ReloadOutlined,
+    SaveOutlined,
+    SendOutlined,
+    UnorderedListOutlined,
+    VerticalAlignBottomOutlined
 } from '@ant-design/icons';
 import {
-    getStashFiles,
-    uploadStashFile,
-    promoteStashFile,
-    deleteStashFile,
-    promoteStashFolder,
-    deleteStashFolder,
-    downloadStashFolder
-} from '@/api/stash';
-import FilePreviewPanel from './FilePreviewPanel';
+    createQuickTextMemo,
+    deleteQuickMemo,
+    deleteQuickMemoFolder,
+    deltaSyncQuickNotes,
+    downloadQuickMemoFolder,
+    extendQuickMemo,
+    getQuickNotes,
+    promoteQuickMemo,
+    promoteQuickMemoFolder,
+    uploadQuickMemoFile
+} from '@/api/quickNotes';
+import ContextMenu from '@/components/ContextMenu';
 import { resolveAssetUrl } from '@/utils/env';
+import {
+    computeQuickMemoCounts,
+    computeServerClockOffset,
+    createPendingAttachment,
+    DEFAULT_TEMP_TTL_MINUTES,
+    extractSafeUrls,
+    formatBytes,
+    generateClientId,
+    getMemoId,
+    isMemoVisualImage,
+    MAX_TEXT_MEMO_BYTES,
+    mergeQuickMemoDelta,
+    parseSafeHttpUrl,
+    validateQuickMemoBatch
+} from '@/utils/quickMemoHelper';
+import FilePreviewPanel from './FilePreviewPanel';
+import QuickMemoCard from './QuickMemoCard';
+import QuickMemoComposer from './QuickMemoComposer';
+import ConvertToNoteModal from './ConvertToNoteModal';
+import FolderExplorerView from './FolderExplorerView';
 import './index.less';
 
-const formatBytes = (bytes, decimals = 1) => {
-    if (!bytes || bytes === 0) return '0 B';
-    const k = 1024;
-    const dm = decimals < 0 ? 0 : decimals;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-};
+const POLL_INTERVAL_MS = 5000;
 
-const formatCountdown = totalSeconds => {
-    if (!totalSeconds || totalSeconds <= 0) return '00:00';
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
-    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-};
-
-const formatUploadDate = dateStr => {
-    if (!dateStr) return '';
-    const d = new Date(dateStr);
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-};
-
-const getFileTypeMeta = (filename = '', mimetype = '') => {
-    const ext = filename.split('.').pop().toLowerCase();
-
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext) || mimetype.startsWith('image/')) {
-        return { icon: <FileImageOutlined />, className: 'type-image' };
-    }
-    if (ext === 'pdf' || mimetype.includes('pdf')) {
-        return { icon: <FilePdfOutlined />, className: 'type-doc' };
-    }
-    if (['doc', 'docx'].includes(ext) || mimetype.includes('word')) {
-        return { icon: <FileWordOutlined />, className: 'type-doc' };
-    }
-    if (['xls', 'xlsx', 'csv'].includes(ext) || mimetype.includes('sheet') || mimetype.includes('excel')) {
-        return { icon: <FileExcelOutlined />, className: 'type-doc' };
-    }
-    if (['txt', 'md', 'markdown'].includes(ext) || mimetype.startsWith('text/')) {
-        return { icon: <FileTextOutlined />, className: 'type-doc' };
-    }
-    if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(ext) || mimetype.includes('zip') || mimetype.includes('compressed')) {
-        return { icon: <FileZipOutlined />, className: 'type-archive' };
-    }
-    if (['mp4', 'mov', 'avi', 'mkv', 'webm', 'mp3', 'wav', 'flac'].includes(ext) || mimetype.startsWith('video/') || mimetype.startsWith('audio/')) {
-        return { icon: <PlaySquareOutlined />, className: 'type-video' };
-    }
-    if (['js', 'jsx', 'ts', 'tsx', 'html', 'css', 'json', 'py', 'java', 'c', 'cpp', 'go', 'rs', 'sql', 'sh'].includes(ext)) {
-        return { icon: <CodeOutlined />, className: 'type-code' };
-    }
-    return { icon: <FileOutlined />, className: 'type-other' };
-};
-
-/**
- * 递归读取 FileSystemDirectoryReader 下的所有条目（兼容 Chrome 分批返回）
- */
 const readAllDirectoryEntries = async directoryReader => {
     const entries = [];
-    const readBatch = () => {
-        return new Promise((resolve, reject) => {
-            directoryReader.readEntries(resolve, reject);
-        });
-    };
-
+    const readBatch = () => new Promise((resolve, reject) => {
+        directoryReader.readEntries(resolve, reject);
+    });
     let batch = await readBatch();
     while (batch && batch.length > 0) {
         entries.push(...batch);
@@ -119,9 +67,6 @@ const readAllDirectoryEntries = async directoryReader => {
     return entries;
 };
 
-/**
- * 递归遍历 FileSystemEntry
- */
 const traverseEntry = async (entry, pathPrefix = '') => {
     const result = [];
     if (entry.isFile) {
@@ -144,15 +89,12 @@ const traverseEntry = async (entry, pathPrefix = '') => {
     return result;
 };
 
-/**
- * 解析用户拖拽的所有条目（智能递归解构文件夹与文件）
- */
 const parseDropItems = async dataTransfer => {
     const items = dataTransfer.items;
     const filesToUpload = [];
 
     if (items && items.length > 0 && items[0].webkitGetAsEntry) {
-        for (let i = 0; i < items.length; i++) {
+        for (let i = 0; i < items.length; i += 1) {
             const item = items[i];
             if (item.kind === 'file') {
                 const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
@@ -163,7 +105,7 @@ const parseDropItems = async dataTransfer => {
             }
         }
     } else if (dataTransfer.files && dataTransfer.files.length > 0) {
-        for (let i = 0; i < dataTransfer.files.length; i++) {
+        for (let i = 0; i < dataTransfer.files.length; i += 1) {
             const f = dataTransfer.files[i];
             filesToUpload.push({
                 file: f,
@@ -176,139 +118,420 @@ const parseDropItems = async dataTransfer => {
     return filesToUpload;
 };
 
-const FileStashBoard = () => {
-    const [currentTab, setCurrentTab] = useState('temp'); // 'temp' | 'permanent'
-    const [files, setFiles] = useState([]);
-    const [tempCount, setTempCount] = useState(0);
-    const [permanentCount, setPermanentCount] = useState(0);
+const copyToClipboard = async (value, successMsg = '已复制') => {
+    if (!value) return;
+    try {
+        if (navigator?.clipboard?.writeText) {
+            await navigator.clipboard.writeText(value);
+        } else {
+            const textarea = document.createElement('textarea');
+            textarea.value = value;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+        }
+        message.success(successMsg);
+    } catch {
+        message.error('复制失败，请检查剪贴板权限');
+    }
+};
+
+export default function FileStashBoard({
+    active = true,
+    activeNotebookId = null,
+    focusTrigger = 0,
+    onNoteCreated,
+    onOpenNote
+}) {
+    const [items, setItems] = useState([]);
+    const counts = useMemo(() => computeQuickMemoCounts(items), [items]);
+    const [quota, setQuota] = useState({ permanentUsedBytes: 0, permanentLimitBytes: 2 * 1024 * 1024 * 1024 });
+    const [clockOffsetMs, setClockOffsetMs] = useState(0);
     const [loading, setLoading] = useState(false);
 
-    // 虚拟目录导航层级状态
-    const [currentPath, setCurrentPath] = useState(''); // '' 表示根目录，'Folder' 或 'Folder/Sub' 表示下钻路径
+    const [storageFilter, setStorageFilter] = useState('all'); // 'all' | 'temp' | 'permanent'
+    const [kindFilter, setKindFilter] = useState('all'); // 'all' | 'text_link' | 'image' | 'file'
+    const [viewMode, setViewMode] = useState('timeline'); // 'timeline' | 'folder'
+    const [currentPath, setCurrentPath] = useState('');
 
-    // 上传状态
+    // 输入与待发附件胶囊状态
+    const [composerStorageType, setComposerStorageType] = useState('temp');
+    const [composerText, setComposerText] = useState('');
+    const [pendingAttachments, setPendingAttachments] = useState([]);
+    const [sending, setSending] = useState(false);
+
+    // 批量上传进度
     const [uploading, setUploading] = useState(false);
     const [uploadPercent, setUploadPercent] = useState(0);
     const [uploadingFileName, setUploadingFileName] = useState('');
     const [uploadCompletedCount, setUploadCompletedCount] = useState(0);
     const [uploadTotalCount, setUploadTotalCount] = useState(0);
 
-    // 拖拽高亮状态
+    // 全容器拖拽状态
     const [isDragOver, setIsDragOver] = useState(false);
+    const dragCounterRef = useRef(0);
 
-    // 文件即时预览状态与平滑过渡缓存
-    const [previewFile, setPreviewFile] = useState(null);
-    const [renderedPreviewFile, setRenderedPreviewFile] = useState(null);
+    // 右侧即时预览与平滑卸载缓存
+    const [previewItem, setPreviewItem] = useState(null);
+    const [renderedPreviewItem, setRenderedPreviewItem] = useState(null);
     const [isFullScreen, setIsFullScreen] = useState(false);
 
+    // 转存为笔记弹窗与右键菜单
+    const [convertTarget, setConvertTarget] = useState(null);
+    const [contextMenu, setContextMenu] = useState({ open: false, x: 0, y: 0, item: null });
+    const [hasNewBelow, setHasNewBelow] = useState(false);
+
+    const fileInputRef = useRef(null);
+    const folderInputRef = useRef(null);
+    const composerInputRef = useRef(null);
+    const feedScrollRef = useRef(null);
+    const boardRootRef = useRef(null);
+    const cursorRef = useRef({ since: null, cursorId: null });
+    const isSyncingRef = useRef(false);
+    const objectUrlsRef = useRef(new Set());
+    const initialLoadedRef = useRef(false);
+    const knownItemIdsRef = useRef(new Set());
+
     useEffect(() => {
-        if (previewFile) {
-            setRenderedPreviewFile(previewFile);
+        knownItemIdsRef.current = new Set(items.map(getMemoId));
+    }, [items]);
+
+    const isNearBottom = useCallback(() => {
+        const el = feedScrollRef.current;
+        if (!el) return true;
+        return el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+    }, []);
+
+    const scrollToBottom = useCallback((behavior = 'smooth') => {
+        requestAnimationFrame(() => {
+            const el = feedScrollRef.current;
+            if (!el) return;
+            el.scrollTo({ top: el.scrollHeight, behavior });
+            setHasNewBelow(false);
+        });
+    }, []);
+
+    useEffect(() => {
+        if (previewItem) {
+            setRenderedPreviewItem(previewItem);
         } else {
             setIsFullScreen(false);
             const timer = setTimeout(() => {
-                setRenderedPreviewFile(null);
+                setRenderedPreviewItem(null);
             }, 320);
             return () => clearTimeout(timer);
         }
-    }, [previewFile]);
+        return undefined;
+    }, [previewItem]);
 
-    const activePreviewFile = previewFile || renderedPreviewFile;
-
-    // 原生隐藏 input 引用
-    const fileInputRef = useRef(null);
-    const folderInputRef = useRef(null);
-
-    // 切换 tab 时重置当前路径与预览
     useEffect(() => {
+        const urls = objectUrlsRef.current;
+        return () => {
+            urls.forEach(url => URL.revokeObjectURL(url));
+            urls.clear();
+        };
+    }, []);
+
+    const revokeAttachmentUrl = useCallback(att => {
+        if (att?.previewUrl && objectUrlsRef.current.has(att.previewUrl)) {
+            URL.revokeObjectURL(att.previewUrl);
+            objectUrlsRef.current.delete(att.previewUrl);
+        }
+    }, []);
+
+    const activePreviewItem = previewItem || renderedPreviewItem;
+    const previewItemId = previewItem ? getMemoId(previewItem) : null;
+
+    // 切换分栏过滤时联动默认存储倾向（切全部保持现有选择）
+    const handleStorageFilterChange = val => {
+        setStorageFilter(val);
+        if (val === 'temp' || val === 'permanent') {
+            setComposerStorageType(val);
+        }
         setCurrentPath('');
-        setPreviewFile(null);
-    }, [currentTab]);
+    };
 
-    // 拉取暂存文件列表
-    const fetchFiles = useCallback(async () => {
+    const fetchFullList = useCallback(async ({ silent = false, scrollBottom = false } = {}) => {
+        if (isSyncingRef.current) return;
+        isSyncingRef.current = true;
+        if (!silent) setLoading(true);
+
         try {
-            setLoading(true);
-            const res = await getStashFiles(currentTab);
-            setFiles(res?.files || []);
-            setTempCount(res?.tempCount ?? 0);
-            setPermanentCount(res?.permanentCount ?? 0);
-        } catch {
-            message.error('加载暂存文件失败');
-        } finally {
-            setLoading(false);
-        }
-    }, [currentTab]);
-
-    useEffect(() => {
-        fetchFiles();
-    }, [fetchFiles]);
-
-    // 10 分钟倒计时秒级驱动引擎
-    useEffect(() => {
-        if (currentTab !== 'temp') return;
-
-        const interval = setInterval(() => {
-            setFiles(prevFiles => {
-                let hasExpired = false;
-                const nextFiles = prevFiles
-                    .map(file => {
-                        if (file.storageType !== 'temp') return file;
-                        const nextSec = (file.remainingSeconds ?? 0) - 1;
-                        if (nextSec <= 0) {
-                            hasExpired = true;
-                            return null;
-                        }
-                        return { ...file, remainingSeconds: nextSec };
-                    })
-                    .filter(Boolean);
-
-                if (hasExpired) {
-                    setTempCount(nextFiles.length);
-                }
-                return nextFiles;
-            });
-        }, 1000);
-
-        return () => clearInterval(interval);
-    }, [currentTab]);
-
-    // 核心批量上传队列处理引擎 (3 并发控制 + 进度汇聚)
-    const runUploadQueue = async (itemsList, storageType) => {
-        if (!itemsList || itemsList.length === 0) return;
-
-        // 容量与单文件校验
-        const MAX_SINGLE_FILE_SIZE = 100 * 1024 * 1024; // 100MB
-        const MAX_TOTAL_BATCH_SIZE = 500 * 1024 * 1024; // 500MB
-
-        let totalSize = 0;
-        for (const item of itemsList) {
-            if (item.file.size > MAX_SINGLE_FILE_SIZE) {
-                message.error(`文件【${item.file.name}】超出单文件 100MB 限制（当前: ${formatBytes(item.file.size)}）`);
-                return;
+            const res = await getQuickNotes({ limit: 500 }, { skipErrorToast: silent });
+            const list = Array.isArray(res?.items) ? res.items : [];
+            setItems(list);
+            if (res?.quota) setQuota(res.quota);
+            if (res?.serverTime) {
+                setClockOffsetMs(computeServerClockOffset(res.serverTime));
             }
-            totalSize += item.file.size;
-        }
+            if (res?.nextCursor) {
+                cursorRef.current = res.nextCursor;
+            } else if (res?.serverTime) {
+                cursorRef.current = { since: res.serverTime, cursorId: null };
+            }
+            initialLoadedRef.current = true;
 
-        if (totalSize > MAX_TOTAL_BATCH_SIZE) {
-            message.error(`批量上传总容量超出 500MB 上限（当前: ${formatBytes(totalSize)}），请分批上传`);
+            if (scrollBottom) {
+                scrollToBottom('auto');
+            }
+        } catch {
+            if (!silent) {
+                message.error('加载随心记列表失败');
+            }
+        } finally {
+            isSyncingRef.current = false;
+            if (!silent) setLoading(false);
+        }
+    }, [scrollToBottom]);
+
+    const runDeltaSync = useCallback(async () => {
+        if (!active || document.hidden || isSyncingRef.current) return;
+        if (!cursorRef.current?.since) {
+            await fetchFullList({ silent: true, scrollBottom: !initialLoadedRef.current });
             return;
         }
 
+        isSyncingRef.current = true;
+        const wasNearBottom = isNearBottom();
+        let nextSince = cursorRef.current.since;
+        let nextCursorId = cursorRef.current.cursorId;
+        let hasMore = true;
+        let pageCount = 0;
+        const deltaPages = [];
+        let latestRes = null;
+
+        try {
+            while (hasMore && pageCount < 10) {
+                pageCount += 1;
+                const res = await deltaSyncQuickNotes({
+                    since: nextSince,
+                    cursorId: nextCursorId || undefined,
+                    limit: 200
+                }, { skipErrorToast: true });
+
+                latestRes = res;
+                if (res?.items?.length > 0 || Array.isArray(res?.legacyItems)) {
+                    deltaPages.push(res);
+                }
+
+                const cursorObj = res?.nextCursor;
+                const candidateSince = cursorObj?.since || res?.serverTime || nextSince;
+                const candidateId = cursorObj?.cursorId || null;
+                const stuck = candidateSince === nextSince && candidateId === nextCursorId;
+
+                nextSince = candidateSince;
+                nextCursorId = candidateId;
+                hasMore = Boolean(res?.hasMore && !stuck);
+            }
+
+            const addedAny = deltaPages.some(
+                p =>
+                    (Array.isArray(p?.items) && p.items.some(it => !it.isDeleted && !knownItemIdsRef.current.has(getMemoId(it)))) ||
+                    (Array.isArray(p?.legacyItems) && p.legacyItems.some(it => !it.isDeleted && !knownItemIdsRef.current.has(getMemoId(it))))
+            );
+            if (deltaPages.length > 0) {
+                setItems(prev => {
+                    let merged = prev;
+                    for (const page of deltaPages) {
+                        merged = mergeQuickMemoDelta(merged, page);
+                    }
+                    return merged;
+                });
+            }
+
+            if (latestRes?.quota) setQuota(latestRes.quota);
+            if (latestRes?.serverTime) {
+                setClockOffsetMs(computeServerClockOffset(latestRes.serverTime));
+            }
+
+            if (latestRes) {
+                cursorRef.current = {
+                    since: nextSince,
+                    cursorId: nextCursorId
+                };
+            }
+
+            // 同步刷新当前右侧预览项状态（转永久/已删除）
+            if (deltaPages.length > 0) {
+                const flatDeltaItems = deltaPages.flatMap(p => p?.items || []);
+                setPreviewItem(curr => {
+                    if (!curr) return null;
+                    const currId = getMemoId(curr);
+                    const updated = flatDeltaItems.find(it => getMemoId(it) === currId);
+                    if (!updated) return curr;
+                    return updated.isDeleted ? null : updated;
+                });
+            }
+
+            if (addedAny) {
+                if (wasNearBottom) {
+                    scrollToBottom('smooth');
+                } else {
+                    setHasNewBelow(true);
+                }
+            }
+        } catch {
+            // 静默增量失败不打断用户当前输入
+        } finally {
+            isSyncingRef.current = false;
+        }
+    }, [active, fetchFullList, isNearBottom, scrollToBottom]);
+
+    // 初次挂载加载全量
+    useEffect(() => {
+        fetchFullList({ scrollBottom: true });
+    }, [fetchFullList]);
+
+    // 激活态且页面可见时启用 5s 增量轮询；失活/后台即刻清理，聚焦即拉
+    useEffect(() => {
+        if (!active) return undefined;
+
+        let pollTimer = null;
+        const startPolling = () => {
+            if (pollTimer) clearInterval(pollTimer);
+            if (!document.hidden) {
+                pollTimer = setInterval(runDeltaSync, POLL_INTERVAL_MS);
+            }
+        };
+
+        const handleVisibilityOrFocus = () => {
+            if (document.hidden) {
+                if (pollTimer) {
+                    clearInterval(pollTimer);
+                    pollTimer = null;
+                }
+            } else {
+                runDeltaSync();
+                startPolling();
+            }
+        };
+
+        runDeltaSync();
+        startPolling();
+        window.addEventListener('focus', handleVisibilityOrFocus);
+        document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+        return () => {
+            if (pollTimer) clearInterval(pollTimer);
+            window.removeEventListener('focus', handleVisibilityOrFocus);
+            document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+        };
+    }, [active, runDeltaSync]);
+
+    // 响应快捷入口唤起聚焦输入框
+    useEffect(() => {
+        if (active && focusTrigger > 0) {
+            setTimeout(() => {
+                composerInputRef.current?.focus();
+            }, 60);
+        }
+    }, [active, focusTrigger]);
+
+    // 暂存待发送附件胶囊（Ctrl+V 截图/文件）
+    const stageAttachments = useCallback((rawEntries, { fromClipboard = false } = {}) => {
+        if (!rawEntries || rawEntries.length === 0) return;
+
+        const created = rawEntries.map(entry => {
+            const file = entry?.file || entry;
+            const isImg = Boolean(
+                (file?.type && file.type.startsWith('image/')) ||
+                /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file?.name || '')
+            );
+            let previewUrl = null;
+            if (isImg && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+                previewUrl = URL.createObjectURL(file);
+                objectUrlsRef.current.add(previewUrl);
+            }
+            return createPendingAttachment(file, {
+                fromClipboard,
+                previewUrl,
+                relativePath: entry?.relativePath,
+                folderName: entry?.folderName
+            });
+        });
+
+        setPendingAttachments(prev => {
+            const combined = [...prev, ...created];
+            const check = validateQuickMemoBatch(combined);
+            if (!check.ok) {
+                created.forEach(revokeAttachmentUrl);
+                message.error(check.error);
+                return prev;
+            }
+            return combined;
+        });
+
+        setTimeout(() => composerInputRef.current?.focus(), 30);
+    }, [revokeAttachmentUrl]);
+
+    // 面板内任意位置按 Ctrl+V 粘贴图片/文件捕获为待发胶囊
+    useEffect(() => {
+        if (!active) return undefined;
+
+        const handleGlobalPaste = e => {
+            const target = e.target;
+            if (target === composerInputRef.current) return;
+            if (target?.closest?.('.ant-modal, input, textarea, [contenteditable="true"]')) return;
+
+            const clipItems = Array.from(e.clipboardData?.items || []);
+            const files = clipItems
+                .filter(it => it.kind === 'file')
+                .map(it => it.getAsFile())
+                .filter(Boolean);
+
+            if (files.length > 0) {
+                e.preventDefault();
+                stageAttachments(files, { fromClipboard: true });
+            }
+        };
+
+        const rootEl = boardRootRef.current;
+        if (!rootEl) return undefined;
+        window.addEventListener('paste', handleGlobalPaste);
+        return () => window.removeEventListener('paste', handleGlobalPaste);
+    }, [active, stageAttachments]);
+
+    const handleRemoveAttachment = useCallback(uid => {
+        setPendingAttachments(prev => {
+            const target = prev.find(it => it.uid === uid);
+            if (target) revokeAttachmentUrl(target);
+            return prev.filter(it => it.uid !== uid);
+        });
+    }, [revokeAttachmentUrl]);
+
+    const handleClearAttachments = useCallback(() => {
+        setPendingAttachments(prev => {
+            prev.forEach(revokeAttachmentUrl);
+            return [];
+        });
+    }, [revokeAttachmentUrl]);
+
+    // 批量文件上传执行器（3 并发 + 20m TTL / 永久）
+    const runUploadQueue = useCallback(async (uploadItems, storageType, captionText = '') => {
+        if (!uploadItems || uploadItems.length === 0) return;
+
+        const check = validateQuickMemoBatch(uploadItems);
+        if (!check.ok) {
+            message.error(check.error);
+            return;
+        }
+
+        const totalSize = check.totalSize;
         setUploading(true);
-        setUploadTotalCount(itemsList.length);
+        setUploadTotalCount(uploadItems.length);
         setUploadCompletedCount(0);
         setUploadPercent(0);
 
-        // 统一整批文件夹的 10 分钟到期时间
         const batchExpireAt = storageType === 'temp'
-            ? new Date(Date.now() + 10 * 60 * 1000).toISOString()
+            ? new Date(Date.now() + DEFAULT_TEMP_TTL_MINUTES * 60 * 1000).toISOString()
             : null;
 
         const CONCURRENCY = 3;
         let currentIndex = 0;
-        const finishedRef = { current: 0 };
+        let finishedCount = 0;
         const fileLoadedMap = new Map();
+        const uploadedMemos = [];
 
         const handleProgress = (fileIdx, progressEvent) => {
             fileLoadedMap.set(fileIdx, progressEvent.loaded || 0);
@@ -318,46 +541,47 @@ const FileStashBoard = () => {
             });
             const pct = totalSize > 0
                 ? Math.round((totalLoaded * 100) / totalSize)
-                : Math.round(((finishedRef.current) * 100) / itemsList.length);
+                : Math.round((finishedCount * 100) / uploadItems.length);
             setUploadPercent(Math.min(99, pct));
         };
 
         const worker = async () => {
-            while (currentIndex < itemsList.length) {
-                const index = currentIndex++;
-                const item = itemsList[index];
-                const displayPath = item.relativePath || item.file.name;
+            while (currentIndex < uploadItems.length) {
+                const index = currentIndex;
+                currentIndex += 1;
+                const entry = uploadItems[index];
+                const file = entry.file || entry;
+                const displayPath = entry.relativePath || entry.name || file.name;
                 setUploadingFileName(displayPath);
 
                 const formData = new FormData();
-                formData.append('file', item.file);
-                formData.append('originalName', item.file.name);
+                formData.append('file', file);
+                formData.append('originalName', entry.name || file.name);
                 formData.append('storageType', storageType);
-                if (item.relativePath) {
-                    formData.append('relativePath', item.relativePath);
-                }
-                if (item.folderName) {
-                    formData.append('folderName', item.folderName);
-                }
-                if (batchExpireAt) {
-                    formData.append('batchExpireAt', batchExpireAt);
+                formData.append('ttlMinutes', String(DEFAULT_TEMP_TTL_MINUTES));
+                formData.append('clientId', generateClientId('qmf'));
+                if (entry.relativePath) formData.append('relativePath', entry.relativePath);
+                if (entry.folderName) formData.append('folderName', entry.folderName);
+                if (batchExpireAt) formData.append('batchExpireAt', batchExpireAt);
+                if (captionText && uploadItems.length === 1 && index === 0) {
+                    formData.append('content', captionText);
                 }
 
                 try {
-                    await uploadStashFile(formData, e => handleProgress(index, e));
-                    finishedRef.current += 1;
-                    setUploadCompletedCount(finishedRef.current);
-                } catch (err) {
-                    console.error(`上传失败: ${displayPath}`, err);
+                    const created = await uploadQuickMemoFile(formData, e => handleProgress(index, e));
+                    if (created) uploadedMemos.push(created);
+                    finishedCount += 1;
+                    setUploadCompletedCount(finishedCount);
+                } catch {
+                    // 单文件错误提示已由 request 拦截器处理
                 }
             }
         };
 
         const workers = [];
-        for (let i = 0; i < Math.min(CONCURRENCY, itemsList.length); i++) {
+        for (let i = 0; i < Math.min(CONCURRENCY, uploadItems.length); i += 1) {
             workers.push(worker());
         }
-
         await Promise.all(workers);
 
         setUploadPercent(100);
@@ -365,25 +589,126 @@ const FileStashBoard = () => {
             setUploading(false);
             setUploadPercent(0);
             setUploadingFileName('');
-        }, 500);
+        }, 400);
 
-        if (itemsList.length === 1) {
-            message.success(
-                storageType === 'temp'
-                    ? `【${itemsList[0].file.name}】已暂存（10分钟后自动删除）`
-                    : `【${itemsList[0].file.name}】已永久保存`
-            );
-        } else {
-            message.success(`批量上传完成：成功上传 ${finishedRef.current}/${itemsList.length} 个文件`);
+        if (uploadedMemos.length > 0) {
+            setItems(prev => mergeQuickMemoDelta(prev, { items: uploadedMemos }));
+            scrollToBottom('smooth');
+            fetchFullList({ silent: true });
+
+            if (uploadItems.length === 1) {
+                message.success(
+                    storageType === 'temp'
+                        ? `已发送至临时随心记（${DEFAULT_TEMP_TTL_MINUTES}分钟后自动销毁）`
+                        : '已发送并永久保存'
+                );
+            } else {
+                message.success(`批量发送完成：成功 ${uploadedMemos.length}/${uploadItems.length} 个文件`);
+            }
+        }
+    }, [fetchFullList, scrollToBottom]);
+
+    // 提交文本/链接或待发附件胶囊
+    const handleSend = useCallback(async () => {
+        if (sending || uploading) return;
+        const trimmed = composerText.trim();
+        const hasText = Boolean(trimmed);
+        const hasAttachments = pendingAttachments.length > 0;
+        if (!hasText && !hasAttachments) return;
+
+        if (hasText && new Blob([composerText]).size > MAX_TEXT_MEMO_BYTES) {
+            message.warning('单条文本内容不能超过 50KB');
+            return;
         }
 
-        fetchFiles();
+        if (hasAttachments) {
+            const batchSnapshot = [...pendingAttachments];
+            const captionForSingle = batchSnapshot.length === 1 && hasText ? composerText : '';
+            const separateText = batchSnapshot.length > 1 && hasText ? composerText : '';
+
+            setPendingAttachments([]);
+            setComposerText('');
+
+            if (separateText) {
+                try {
+                    const createdText = await createQuickTextMemo({
+                        content: separateText,
+                        storageType: composerStorageType,
+                        ttlMinutes: DEFAULT_TEMP_TTL_MINUTES,
+                        clientId: generateClientId('qmt')
+                    });
+                    if (createdText) {
+                        setItems(prev => mergeQuickMemoDelta(prev, { items: [createdText] }));
+                    }
+                } catch {
+                    // error toasted by interceptor
+                }
+            }
+
+            await runUploadQueue(batchSnapshot, composerStorageType, captionForSingle);
+            batchSnapshot.forEach(revokeAttachmentUrl);
+            return;
+        }
+
+        setSending(true);
+        try {
+            const created = await createQuickTextMemo({
+                content: composerText,
+                storageType: composerStorageType,
+                ttlMinutes: DEFAULT_TEMP_TTL_MINUTES,
+                clientId: generateClientId('qmt')
+            });
+            setComposerText('');
+            if (created) {
+                setItems(prev => mergeQuickMemoDelta(prev, { items: [created] }));
+                scrollToBottom('smooth');
+            }
+            fetchFullList({ silent: true });
+        } catch {
+            // error toasted by interceptor
+        } finally {
+            setSending(false);
+        }
+    }, [
+        composerStorageType,
+        composerText,
+        fetchFullList,
+        pendingAttachments,
+        revokeAttachmentUrl,
+        runUploadQueue,
+        scrollToBottom,
+        sending,
+        uploading
+    ]);
+
+    // 容器级拖拽（全区域覆盖遮罩，直接触发批量上传）
+    const handleContainerDragEnter = e => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        dragCounterRef.current += 1;
+        setIsDragOver(true);
     };
 
-    // 拖拽放下处理
-    const handleNativeDrop = async e => {
+    const handleContainerDragOver = e => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+    };
+
+    const handleContainerDragLeave = e => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
+        e.preventDefault();
+        dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+        if (dragCounterRef.current === 0) {
+            setIsDragOver(false);
+        }
+    };
+
+    const handleContainerDrop = async e => {
+        if (!e.dataTransfer?.types?.includes('Files')) return;
         e.preventDefault();
         e.stopPropagation();
+        dragCounterRef.current = 0;
         setIsDragOver(false);
 
         if (uploading) {
@@ -392,53 +717,46 @@ const FileStashBoard = () => {
         }
 
         try {
-            const items = await parseDropItems(e.dataTransfer);
-            if (!items || items.length === 0) {
-                message.warning('未检测到可上传的文件或文件夹内容');
+            const dropped = await parseDropItems(e.dataTransfer);
+            if (!dropped || dropped.length === 0) {
+                message.warning('未检测到可上传的文件或文件夹');
                 return;
             }
-
-            // 如果当前在某个子目录下，且拖入的是散文件（无顶级文件夹），将其归入当前子目录
-            if (currentPath) {
-                items.forEach(it => {
-                    if (!it.relativePath.startsWith(currentPath + '/')) {
+            if (viewMode === 'folder' && currentPath) {
+                dropped.forEach(it => {
+                    if (!it.relativePath.startsWith(`${currentPath}/`)) {
                         it.relativePath = `${currentPath}/${it.relativePath}`;
                         it.folderName = currentPath.split('/')[0];
                     }
                 });
             }
-
-            await runUploadQueue(items, currentTab);
-        } catch (err) {
-            console.error('解析拖拽文件夹失败:', err);
-            message.error('解析文件夹失败，请重试');
+            await runUploadQueue(dropped, composerStorageType);
+        } catch {
+            message.error('解析拖拽内容失败，请重试');
         }
     };
 
-    // 文件选择框变更
     const handleFileInputChange = async e => {
         const selectedFiles = Array.from(e.target.files || []);
         e.target.value = '';
         if (selectedFiles.length === 0) return;
 
-        const items = selectedFiles.map(file => ({
+        const uploadItems = selectedFiles.map(file => ({
             file,
-            relativePath: currentPath ? `${currentPath}/${file.name}` : file.name,
-            folderName: currentPath ? currentPath.split('/')[0] : ''
+            relativePath: viewMode === 'folder' && currentPath ? `${currentPath}/${file.name}` : file.name,
+            folderName: viewMode === 'folder' && currentPath ? currentPath.split('/')[0] : ''
         }));
-
-        await runUploadQueue(items, currentTab);
+        await runUploadQueue(uploadItems, composerStorageType);
     };
 
-    // 文件夹选择框变更
     const handleFolderInputChange = async e => {
         const selectedFiles = Array.from(e.target.files || []);
         e.target.value = '';
         if (selectedFiles.length === 0) return;
 
-        const items = selectedFiles.map(file => {
+        const uploadItems = selectedFiles.map(file => {
             const rawRel = file.webkitRelativePath || file.name;
-            const fullRel = currentPath ? `${currentPath}/${rawRel}` : rawRel;
+            const fullRel = viewMode === 'folder' && currentPath ? `${currentPath}/${rawRel}` : rawRel;
             const topFolder = fullRel.includes('/') ? fullRel.split('/')[0] : '';
             return {
                 file,
@@ -446,103 +764,92 @@ const FileStashBoard = () => {
                 folderName: topFolder
             };
         });
-
-        await runUploadQueue(items, currentTab);
+        await runUploadQueue(uploadItems, composerStorageType);
     };
 
-    // 复制直链
-    const handleCopyUrl = file => {
-        const targetUrl = resolveAssetUrl(file.url);
-        if (!targetUrl) return;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(targetUrl).then(() => {
-                message.success('文件直链已复制，可在手机浏览器或任意客户端直接打开');
-            }).catch(() => {
-                fallbackCopy(targetUrl);
-            });
-        } else {
-            fallbackCopy(targetUrl);
-        }
-    };
+    // 单项生命周期与操作回调
+    const handleItemExpired = useCallback(expiredId => {
+        setItems(prev => prev.filter(it => getMemoId(it) !== expiredId));
+        setPreviewItem(curr => (curr && getMemoId(curr) === expiredId ? null : curr));
+    }, []);
 
-    const fallbackCopy = text => {
-        const textArea = document.createElement('textarea');
-        textArea.value = text;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        message.success('文件直链已复制');
-    };
+    const handleTogglePreview = useCallback(item => {
+        const id = getMemoId(item);
+        setPreviewItem(curr => (curr && getMemoId(curr) === id ? null : item));
+    }, []);
 
-    // 下载单文件
-    const handleDownloadFile = file => {
-        const targetUrl = resolveAssetUrl(file.url);
+    const handleDownloadItem = useCallback(item => {
+        const att = item?.attachment;
+        const targetUrl = resolveAssetUrl(att?.url);
         if (!targetUrl) return;
         const link = document.createElement('a');
         link.href = targetUrl;
-        link.download = file.originalName || file.filename;
+        link.download = att?.originalName || att?.filename || 'download';
         link.target = '_blank';
+        link.rel = 'noopener noreferrer';
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-    };
+    }, []);
 
-    // 切换文件预览状态
-    const handleTogglePreview = file => {
-        const fileId = file._id || file.id;
-        const currentPreviewId = previewFile?._id || previewFile?.id;
-        if (currentPreviewId === fileId) {
-            setPreviewFile(null);
-        } else {
-            setPreviewFile(file);
+    const handleOpenSafeLink = useCallback(rawUrl => {
+        const parsed = parseSafeHttpUrl(rawUrl);
+        if (!parsed) {
+            message.warning('仅支持打开 http/https 安全外链');
+            return;
         }
-    };
+        window.open(parsed.url, '_blank', 'noopener,noreferrer');
+    }, []);
 
-    // 单文件转永久
-    const handlePromoteFile = async file => {
+    const handlePromoteItem = useCallback(async item => {
+        const id = getMemoId(item);
         try {
-            await promoteStashFile(file._id || file.id);
-            message.success(`【${file.originalName}】已转为永久保存文件`);
-            if (previewFile && ((previewFile._id || previewFile.id) === (file._id || file.id))) {
-                setPreviewFile(prev => (prev ? { ...prev, storageType: 'permanent' } : null));
+            const updated = await promoteQuickMemo(id);
+            message.success('已转为永久保留');
+            if (updated) {
+                setItems(prev => mergeQuickMemoDelta(prev, { items: [updated] }));
+                setPreviewItem(curr => (curr && getMemoId(curr) === id ? updated : curr));
             }
-            fetchFiles();
+            fetchFullList({ silent: true });
         } catch {
-            message.error('转为永久保存失败');
+            message.error('转为永久失败');
         }
-    };
+    }, [fetchFullList]);
 
-    // 删除单文件
-    const handleDeleteFile = async file => {
+    const handleExtendItem = useCallback(async item => {
+        const id = getMemoId(item);
         try {
-            await deleteStashFile(file._id || file.id);
-            message.success('暂存文件已删除');
-            if (previewFile && ((previewFile._id || previewFile.id) === (file._id || file.id))) {
-                setPreviewFile(null);
-            }
-            setFiles(prev => prev.filter(f => (f._id || f.id) !== (file._id || file.id)));
-            if (currentTab === 'temp') {
-                setTempCount(prev => Math.max(0, prev - 1));
-            } else {
-                setPermanentCount(prev => Math.max(0, prev - 1));
+            const updated = await extendQuickMemo(id);
+            message.success('已延长临时有效期 20 分钟');
+            if (updated) {
+                setItems(prev => mergeQuickMemoDelta(prev, { items: [updated] }));
+                setPreviewItem(curr => (curr && getMemoId(curr) === id ? updated : curr));
             }
         } catch {
-            message.error('删除文件失败');
+            message.error('延长有效期失败');
         }
-    };
+    }, []);
 
-    // 文件夹整包打包下载 (流式 ZIP)
-    const handleDownloadFolder = async folder => {
-        const hide = message.loading(`正在打包下载文件夹【${folder.name}】...`, 0);
+    const handleDeleteItem = useCallback(async item => {
+        const id = getMemoId(item);
         try {
-            const res = await downloadStashFolder(folder.topLevelFolder, currentTab);
+            await deleteQuickMemo(id);
+            message.success('已删除');
+            setItems(prev => prev.filter(it => getMemoId(it) !== id));
+            setPreviewItem(curr => (curr && getMemoId(curr) === id ? null : curr));
+        } catch {
+            message.error('删除失败');
+        }
+    }, []);
+
+    const handleDownloadFolder = useCallback(async folder => {
+        const hide = message.loading(`正在打包下载文件夹「${folder.name}」...`, 0);
+        try {
+            const res = await downloadQuickMemoFolder(folder.topLevelFolder, folder.storageType);
             hide();
-
             const blob = res?.data instanceof Blob
                 ? res.data
                 : (res instanceof Blob ? res : new Blob([res]));
-
             const blobUrl = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = blobUrl;
@@ -551,590 +858,457 @@ const FileStashBoard = () => {
             a.click();
             document.body.removeChild(a);
             window.URL.revokeObjectURL(blobUrl);
-            message.success(`文件夹【${folder.name}】打包下载已启动`);
-        } catch (err) {
+            message.success(`文件夹「${folder.name}」打包下载已启动`);
+        } catch {
             hide();
             message.error('打包下载文件夹失败，请稍后重试');
         }
-    };
+    }, []);
 
-    // 文件夹整目录转永久
-    const handlePromoteFolder = async folder => {
+    const handlePromoteFolder = useCallback(async folder => {
         try {
-            await promoteStashFolder(folder.topLevelFolder);
-            message.success(`文件夹【${folder.name}】及内部所有文件已全部转为永久保存`);
-            fetchFiles();
+            await promoteQuickMemoFolder(folder.topLevelFolder);
+            message.success(`文件夹「${folder.name}」已全部转为永久保留`);
+            fetchFullList({ silent: true });
         } catch {
-            message.error('转为永久保存失败');
+            message.error('整目录转永久失败');
         }
-    };
+    }, [fetchFullList]);
 
-    // 文件夹整目录彻底删除
-    const handleDeleteFolder = async folder => {
+    const handleDeleteFolder = useCallback(async folder => {
         try {
-            await deleteStashFolder(folder.topLevelFolder, currentTab);
-            message.success(`文件夹【${folder.name}】已彻底删除`);
-            fetchFiles();
+            await deleteQuickMemoFolder(folder.topLevelFolder, folder.storageType);
+            message.success(`文件夹「${folder.name}」已彻底删除`);
+            fetchFullList({ silent: true });
         } catch {
             message.error('删除文件夹失败');
         }
-    };
+    }, [fetchFullList]);
 
-    // 目录导航与回退
-    const handleEnterFolder = folder => {
-        setCurrentPath(folder.fullPath);
-    };
+    const handleItemContextMenu = useCallback((e, item) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({ open: true, x: e.clientX, y: e.clientY, item });
+    }, []);
 
-    const handleGoBack = () => {
-        if (!currentPath) return;
-        const parts = currentPath.split('/');
-        parts.pop();
-        setCurrentPath(parts.join('/'));
-    };
+    const contextMenuItems = useMemo(() => {
+        const item = contextMenu.item;
+        if (!item) return [];
+        const isTemp = item.storageType === 'temp';
+        const att = item.attachment;
+        const safeLinks = Array.isArray(item.links) && item.links.length > 0
+            ? item.links
+            : extractSafeUrls(item.content || '');
+        const primaryLink = safeLinks[0]?.url ? parseSafeHttpUrl(safeLinks[0].url)?.url : null;
+        const resolvedUrl = att?.url ? resolveAssetUrl(att.url) : '';
 
-    const handleBreadcrumbClick = targetPath => {
-        setCurrentPath(targetPath);
-    };
-
-    // 根据 currentPath 虚拟结构化当前视图中的目录与文件
-    const viewData = useMemo(() => {
-        const prefix = currentPath ? `${currentPath}/` : '';
-        const folderMap = new Map();
-        const directFiles = [];
-
-        files.forEach(file => {
-            let relPath = (file.relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
-            if (!relPath) {
-                if (file.folderName) {
-                    relPath = `${file.folderName}/${file.originalName}`;
-                } else {
-                    relPath = file.originalName || file.filename;
+        return [
+            ...(att ? [
+                {
+                    key: 'preview',
+                    icon: <EyeOutlined />,
+                    label: '快速预览',
+                    onClick: () => handleTogglePreview(item)
+                },
+                {
+                    key: 'download',
+                    icon: <DownloadOutlined />,
+                    label: '下载文件',
+                    onClick: () => handleDownloadItem(item)
+                },
+                {
+                    key: 'copy-url',
+                    icon: <CopyOutlined />,
+                    label: '复制附件直链',
+                    onClick: () => copyToClipboard(resolvedUrl, '附件直链已复制')
                 }
-            }
-
-            if (prefix) {
-                if (!relPath.startsWith(prefix)) {
-                    return;
+            ] : [
+                {
+                    key: 'copy-text',
+                    icon: <CopyOutlined />,
+                    label: '复制文本内容',
+                    onClick: () => copyToClipboard(item.content || '', '正文已复制')
+                },
+                ...(primaryLink ? [
+                    {
+                        key: 'open-link',
+                        icon: <ExportOutlined />,
+                        label: '在浏览器打开链接',
+                        onClick: () => handleOpenSafeLink(primaryLink)
+                    }
+                ] : [])
+            ]),
+            { type: 'divider' },
+            ...(isTemp ? [
+                {
+                    key: 'extend',
+                    icon: <PlusCircleOutlined />,
+                    label: '续期 +20 分钟',
+                    onClick: () => handleExtendItem(item)
+                },
+                {
+                    key: 'promote',
+                    icon: <SaveOutlined />,
+                    label: '转为永久保留',
+                    onClick: () => handlePromoteItem(item)
                 }
-                relPath = relPath.slice(prefix.length);
+            ] : []),
+            {
+                key: 'to-note',
+                icon: <FileAddOutlined />,
+                label: '一键转存为笔记',
+                onClick: () => setConvertTarget(item)
+            },
+            { type: 'divider' },
+            {
+                key: 'delete',
+                icon: <DeleteOutlined />,
+                danger: true,
+                label: '彻底删除',
+                onClick: () => handleDeleteItem(item)
             }
+        ];
+    }, [
+        contextMenu.item,
+        handleDeleteItem,
+        handleDownloadItem,
+        handleExtendItem,
+        handleOpenSafeLink,
+        handlePromoteItem,
+        handleTogglePreview
+    ]);
 
-            if (relPath.includes('/')) {
-                const subFolderName = relPath.split('/')[0];
-                const fullSubFolderPath = currentPath ? `${currentPath}/${subFolderName}` : subFolderName;
-
-                if (!folderMap.has(subFolderName)) {
-                    folderMap.set(subFolderName, {
-                        name: subFolderName,
-                        fullPath: fullSubFolderPath,
-                        topLevelFolder: fullSubFolderPath.split('/')[0],
-                        files: []
-                    });
-                }
-                folderMap.get(subFolderName).files.push(file);
-            } else {
-                directFiles.push(file);
+    const filteredItems = useMemo(() => {
+        return items.filter(item => {
+            if (storageFilter !== 'all' && item.storageType !== storageFilter) {
+                return false;
             }
+            if (kindFilter === 'text_link') {
+                return !item.attachment && (item.kind === 'text' || item.kind === 'link');
+            }
+            if (kindFilter === 'image') {
+                return isMemoVisualImage(item);
+            }
+            if (kindFilter === 'file') {
+                return Boolean(item.attachment) && !isMemoVisualImage(item);
+            }
+            return true;
         });
+    }, [items, storageFilter, kindFilter]);
 
-        const folders = Array.from(folderMap.values()).map(f => {
-            const totalSize = f.files.reduce((acc, cur) => acc + (cur.size || 0), 0);
-            const minRemaining = f.files.reduce((acc, cur) => {
-                if (cur.remainingSeconds == null) return acc;
-                return acc == null ? cur.remainingSeconds : Math.min(acc, cur.remainingSeconds);
-            }, null);
-            const maxCreatedAt = f.files.reduce((acc, cur) => {
-                if (!cur.createdAt) return acc;
-                return !acc || new Date(cur.createdAt) > new Date(acc) ? cur.createdAt : acc;
-            }, null);
-
-            return {
-                isFolder: true,
-                name: f.name,
-                fullPath: f.fullPath,
-                topLevelFolder: f.topLevelFolder,
-                fileCount: f.files.length,
-                totalSize,
-                remainingSeconds: minRemaining,
-                createdAt: maxCreatedAt,
-                files: f.files
-            };
+    const folderItems = useMemo(() => {
+        return items.filter(item => {
+            if (!item.attachment) return false;
+            if (storageFilter !== 'all' && item.storageType !== storageFilter) return false;
+            return true;
         });
-
-        return {
-            folders,
-            files: directFiles
-        };
-    }, [files, currentPath]);
-
-    // 面包屑分段
-    const breadcrumbSegments = useMemo(() => {
-        if (!currentPath) return [];
-        const parts = currentPath.split('/');
-        return parts.map((part, index) => ({
-            name: part,
-            path: parts.slice(0, index + 1).join('/')
-        }));
-    }, [currentPath]);
+    }, [items, storageFilter]);
 
     return (
-        <div className="file-stash-board">
-            <div className={`stash-main-pane ${previewFile ? 'with-preview' : ''}`}>
-                {/* 隐藏原生输入控件 */}
-            <input
-                type="file"
-                ref={fileInputRef}
-                style={{ display: 'none' }}
-                multiple
-                onChange={handleFileInputChange}
-            />
-            <input
-                type="file"
-                ref={folderInputRef}
-                style={{ display: 'none' }}
-                webkitdirectory=""
-                directory=""
-                multiple
-                onChange={handleFolderInputChange}
-            />
-
-            {/* 顶栏标题区 */}
-            <div className="stash-header">
-                <div className="header-left">
-                    <h2 className="stash-title">
-                        <CloudUploadOutlined className="title-icon" />
-                        文件暂存
-                    </h2>
-                    <div className="stash-subtitle">
-                        跨端即时互传中转站 · 支持完整多级文件夹 · 单文件 100MB · 文件夹上限 500MB
-                    </div>
-                </div>
-                <div className="header-right">
-                    <Button
-                        icon={<ReloadOutlined spin={loading} />}
-                        onClick={fetchFiles}
-                        className="refresh-btn"
-                    >
-                        刷新
-                    </Button>
-                </div>
-            </div>
-
-            {/* 分区切换行 */}
-            <div className="stash-tabs-row">
-                <Segmented
-                    value={currentTab}
-                    onChange={setCurrentTab}
-                    options={[
-                        {
-                            value: 'temp',
-                            label: (
-                                <span className="tab-label">
-                                    临时文件 (10分钟)
-                                    <span className="badge-count is-temp">{tempCount}</span>
-                                </span>
-                            )
-                        },
-                        {
-                            value: 'permanent',
-                            label: (
-                                <span className="tab-label">
-                                    永久文件
-                                    <span className="badge-count">{permanentCount}</span>
-                                </span>
-                            )
-                        }
-                    ]}
+        <div
+            ref={boardRootRef}
+            className="file-stash-board"
+            onDragEnter={handleContainerDragEnter}
+            onDragOver={handleContainerDragOver}
+            onDragLeave={handleContainerDragLeave}
+            onDrop={handleContainerDrop}
+        >
+            <div className={`stash-main-pane ${previewItem ? 'with-preview' : ''}`}>
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    style={{ display: 'none' }}
+                    multiple
+                    onChange={handleFileInputChange}
                 />
-                <div className="storage-hint">
-                    {currentTab === 'temp'
-                        ? '⏱️ 临时文件与文件夹仅保留 10 分钟，到期自动物理销毁'
-                        : '💾 永久文件与文件夹长期保存，支持跨端无限制下载与流式打包'}
-                </div>
-            </div>
+                <input
+                    type="file"
+                    ref={folderInputRef}
+                    style={{ display: 'none' }}
+                    webkitdirectory=""
+                    directory=""
+                    multiple
+                    onChange={handleFolderInputChange}
+                />
 
-            {/* 拖拽上传与双模式入口区域 */}
-            <div className="upload-section">
-                <div
-                    className={`custom-dropzone ${isDragOver ? 'is-drag-over' : ''} ${uploading ? 'is-uploading' : ''}`}
-                    onDragOver={e => {
-                        e.preventDefault();
-                        setIsDragOver(true);
-                    }}
-                    onDragEnter={e => {
-                        e.preventDefault();
-                        setIsDragOver(true);
-                    }}
-                    onDragLeave={e => {
-                        e.preventDefault();
-                        setIsDragOver(false);
-                    }}
-                    onDrop={handleNativeDrop}
-                >
-                    <div className="dropzone-content">
-                        <div className="dropzone-icon-wrap">
-                            <CloudUploadOutlined className="drop-icon" />
+                {isDragOver && (
+                    <div className="memo-drop-overlay">
+                        <div className="drop-overlay-card">
+                            <div className="drop-overlay-icon">
+                                <CloudUploadOutlined />
+                            </div>
+                            <div className="drop-overlay-title">释放以发送至随心记</div>
+                            <div className="drop-overlay-sub">
+                                支持多文件、图片与完整文件夹 · 当前模式：
+                                <span className={composerStorageType === 'temp' ? 'is-temp' : 'is-perm'}>
+                                    {composerStorageType === 'temp' ? '临时 (20分钟)' : '永久保留'}
+                                </span>
+                            </div>
                         </div>
-                        <p className="dropzone-title">
-                            拖拽文件或文件夹至此处上传
-                        </p>
-                        <p className="dropzone-subtitle">
-                            支持完整保留文件夹层级结构 · 存入【
-                            <span className={currentTab === 'temp' ? 'highlight-temp' : 'highlight-type'}>
-                                {currentTab === 'temp' ? '临时文件（10分钟后销毁）' : '永久文件'}
-                            </span>
-                            】
-                        </p>
+                    </div>
+                )}
 
-                        {/* 双操作入口按钮 */}
-                        <div className="dropzone-actions" onClick={e => e.stopPropagation()}>
-                            <Button
-                                type="primary"
-                                icon={<FileAddOutlined />}
-                                onClick={() => fileInputRef.current?.click()}
-                                disabled={uploading}
-                                className="action-pick-btn"
-                            >
-                                上传文件
-                            </Button>
-                            <Button
-                                icon={<FolderAddOutlined />}
-                                onClick={() => folderInputRef.current?.click()}
-                                disabled={uploading}
-                                className="action-pick-btn"
-                            >
-                                上传文件夹
-                            </Button>
+                {/* 顶栏标题与配额概览 */}
+                <div className="stash-header">
+                    <div className="header-left">
+                        <h2 className="stash-title">
+                            <SendOutlined className="title-icon" />
+                            <span>随心记</span>
+                        </h2>
+                        <div className="stash-subtitle">
+                            跨端图文链接文件随手传输 · 临时默认 20 分钟清理 · 永久配额 {formatBytes(quota?.permanentUsedBytes || 0)} / {formatBytes(quota?.permanentLimitBytes || 2 * 1024 * 1024 * 1024)}
                         </div>
+                    </div>
+                    <div className="header-right">
+                        <Tooltip title={viewMode === 'folder' ? '切回时间流视图' : '切换为文件夹目录视图'}>
+                            <Button
+                                type={viewMode === 'folder' ? 'primary' : 'default'}
+                                size="small"
+                                icon={viewMode === 'folder' ? <UnorderedListOutlined /> : <FolderOutlined />}
+                                onClick={() => setViewMode(m => (m === 'timeline' ? 'folder' : 'timeline'))}
+                            >
+                                {viewMode === 'folder' ? '时间流' : '文件夹'}
+                            </Button>
+                        </Tooltip>
+                        <Button
+                            size="small"
+                            icon={<ReloadOutlined spin={loading} />}
+                            onClick={() => fetchFullList({ scrollBottom: viewMode === 'timeline' })}
+                            className="refresh-btn"
+                        >
+                            刷新
+                        </Button>
                     </div>
                 </div>
 
-                {/* 综合上传进度条卡片 */}
+                {/* 存储分区与内容类型筛选行 */}
+                <div className="stash-tabs-row">
+                    <Segmented
+                        value={storageFilter}
+                        onChange={handleStorageFilterChange}
+                        options={[
+                            {
+                                value: 'all',
+                                label: (
+                                    <span className="tab-label">
+                                        全部
+                                        <span className="badge-count">{counts.all}</span>
+                                    </span>
+                                )
+                            },
+                            {
+                                value: 'temp',
+                                label: (
+                                    <span className="tab-label">
+                                        临时 (20分钟)
+                                        <span className="badge-count is-temp">{counts.temp}</span>
+                                    </span>
+                                )
+                            },
+                            {
+                                value: 'permanent',
+                                label: (
+                                    <span className="tab-label">
+                                        永久
+                                        <span className="badge-count is-perm">{counts.permanent}</span>
+                                    </span>
+                                )
+                            }
+                        ]}
+                    />
+
+                    {viewMode === 'timeline' && (
+                        <div className="kind-filter-pills">
+                            {[
+                                { key: 'all', label: '全部类型' },
+                                { key: 'text_link', label: '文字·链接' },
+                                { key: 'image', label: '图片' },
+                                { key: 'file', label: '文件·目录' }
+                            ].map(f => (
+                                <button
+                                    key={f.key}
+                                    type="button"
+                                    className={`kind-pill-btn ${kindFilter === f.key ? 'is-active' : ''}`}
+                                    onClick={() => setKindFilter(f.key)}
+                                >
+                                    {f.label}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* 批量上传进度条 */}
                 {uploading && (
                     <div className="upload-progress-card">
                         <div className="progress-info-col">
                             <div className="progress-status-row">
                                 <span className="status-label">
-                                    正在上传：{uploadCompletedCount} / {uploadTotalCount} 个文件
+                                    正在传输：{uploadCompletedCount} / {uploadTotalCount} 个文件
                                 </span>
                                 <span className="status-percent">{uploadPercent}%</span>
                             </div>
                             <span className="progress-filename" title={uploadingFileName}>
-                                当前传输: {uploadingFileName}
+                                {uploadingFileName}
                             </span>
                         </div>
-                        <div className="progress-bar-wrap">
-                            <Progress percent={uploadPercent} size="small" status="active" />
-                        </div>
+                        <Progress percent={uploadPercent} size="small" status="active" />
                     </div>
                 )}
-            </div>
 
-            {/* 虚拟目录面包屑与导航栏 */}
-            <div className="stash-nav-bar">
-                <div className="nav-left">
-                    {currentPath && (
-                        <Button
-                            size="small"
-                            icon={<ArrowLeftOutlined />}
-                            onClick={handleGoBack}
-                            className="back-btn"
-                        >
-                            返回上一级
-                        </Button>
-                    )}
-                    <div className="breadcrumbs-wrap">
-                        <span
-                            className={`breadcrumb-item ${!currentPath ? 'is-active' : ''}`}
-                            onClick={() => handleBreadcrumbClick('')}
-                        >
-                            <HomeOutlined className="bc-icon" />
-                            根目录
-                        </span>
-                        {breadcrumbSegments.map((seg, idx) => (
-                            <React.Fragment key={seg.path}>
-                                <RightOutlined className="bc-separator" />
-                                <span
-                                    className={`breadcrumb-item ${idx === breadcrumbSegments.length - 1 ? 'is-active' : ''}`}
-                                    onClick={() => handleBreadcrumbClick(seg.path)}
-                                >
-                                    <FolderFilled className="bc-icon folder" />
-                                    {seg.name}
-                                </span>
-                            </React.Fragment>
-                        ))}
-                    </div>
-                </div>
-                <div className="nav-right">
-                    <span className="item-stats">
-                        {viewData.folders.length > 0 && `${viewData.folders.length} 个文件夹 `}
-                        {viewData.files.length} 个文件
-                    </span>
-                </div>
-            </div>
-
-            {/* 文件与文件夹卡片展示区 */}
-            {loading && files.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '60px 0' }}>
-                    <Spin tip="正在读取暂存文件..." />
-                </div>
-            ) : viewData.folders.length > 0 || viewData.files.length > 0 ? (
-                <div className="stash-file-list">
-                    {/* 1. 文件夹列表 */}
-                    {viewData.folders.map(folder => {
-                        const isTemp = currentTab === 'temp';
-                        const remaining = folder.remainingSeconds ?? 0;
-                        const isUrgent = isTemp && remaining <= 60;
-
-                        return (
-                            <div
-                                key={folder.fullPath}
-                                className="file-card-item folder-card"
-                                onDoubleClick={() => handleEnterFolder(folder)}
-                            >
-                                <div className="file-type-icon type-folder">
-                                    <FolderFilled />
-                                </div>
-
-                                <div className="file-meta-content" onClick={() => handleEnterFolder(folder)}>
-                                    <div className="file-name-row">
-                                        <Tooltip title={`双击或点击「进入」查看目录内部（${folder.name}）`}>
-                                            <span className="file-name-text folder-name-text">
-                                                {folder.name}
-                                            </span>
-                                        </Tooltip>
-
-                                        {isTemp ? (
-                                            <span className={`countdown-badge ${isUrgent ? 'is-urgent' : ''}`}>
-                                                <span className="pulse-dot" />
-                                                剩余 {formatCountdown(remaining)}
-                                            </span>
-                                        ) : (
-                                            <span className="permanent-tag">
-                                                永久目录
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    <div className="file-details-row">
-                                        <span className="file-count-tag">{folder.fileCount} 个文件</span>
-                                        <span className="file-size">{formatBytes(folder.totalSize)}</span>
-                                        <span className="file-time">{formatUploadDate(folder.createdAt)}</span>
-                                    </div>
-                                </div>
-
-                                <div className="file-actions-cluster">
-                                    <Button
-                                        type="primary"
-                                        size="small"
-                                        ghost
-                                        icon={<FolderOpenFilled />}
-                                        onClick={() => handleEnterFolder(folder)}
-                                        className="action-icon-btn enter-btn"
-                                    >
-                                        <span className="btn-text">进入</span>
-                                    </Button>
-
-                                    <Tooltip title="一键将整文件夹打包为 ZIP 下载（保留目录层级）">
-                                        <Button
-                                            type="text"
-                                            size="small"
-                                            icon={<DownloadOutlined />}
-                                            onClick={() => handleDownloadFolder(folder)}
-                                            className="action-icon-btn"
-                                        >
-                                            <span className="btn-text">打包下载</span>
-                                        </Button>
-                                    </Tooltip>
-
-                                    {isTemp && (
-                                        <Tooltip title="将该文件夹内所有文件一键转为永久保存">
-                                            <Button
-                                                type="text"
-                                                size="small"
-                                                icon={<SaveOutlined />}
-                                                onClick={() => handlePromoteFolder(folder)}
-                                                className="action-icon-btn"
-                                            >
-                                                <span className="btn-text">转永久</span>
-                                            </Button>
-                                        </Tooltip>
-                                    )}
-
-                                    <Popconfirm
-                                        title={`确定要彻底删除整目录【${folder.name}】及其内部所有文件吗？`}
-                                        okText="彻底删除"
-                                        cancelText="取消"
-                                        okType="danger"
-                                        onConfirm={() => handleDeleteFolder(folder)}
-                                    >
-                                        <Tooltip title="彻底删除整目录">
-                                            <Button
-                                                type="text"
-                                                size="small"
-                                                icon={<DeleteOutlined />}
-                                                className="action-icon-btn btn-danger"
-                                            />
-                                        </Tooltip>
-                                    </Popconfirm>
-                                </div>
-                            </div>
-                        );
-                    })}
-
-                    {/* 2. 单文件列表 */}
-                    {viewData.files.map(file => {
-                        const fileId = file._id || file.id;
-                        const meta = getFileTypeMeta(file.originalName, file.mimetype);
-                        const isTemp = file.storageType === 'temp';
-                        const remaining = file.remainingSeconds ?? 0;
-                        const isUrgent = isTemp && remaining <= 60;
-                        const isPreviewing = previewFile && ((previewFile._id || previewFile.id) === fileId);
-
-                        return (
-                            <div key={fileId} className={`file-card-item ${isPreviewing ? 'is-previewing' : ''}`}>
-                                <div
-                                    className={`file-type-icon ${meta.className}`}
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => handleTogglePreview(file)}
-                                >
-                                    {meta.icon}
-                                </div>
-
-                                <div
-                                    className="file-meta-content"
-                                    style={{ cursor: 'pointer' }}
-                                    onClick={() => handleTogglePreview(file)}
-                                >
-                                    <div className="file-name-row">
-                                        <Tooltip title={file.originalName}>
-                                            <span className="file-name-text">
-                                                {file.originalName}
-                                            </span>
-                                        </Tooltip>
-
-                                        {isTemp ? (
-                                            <span className={`countdown-badge ${isUrgent ? 'is-urgent' : ''}`}>
-                                                <span className="pulse-dot" />
-                                                剩余 {formatCountdown(remaining)}
-                                            </span>
-                                        ) : (
-                                            <span className="permanent-tag">
-                                                永久保存
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    <div className="file-details-row">
-                                        <span className="file-size">{formatBytes(file.size)}</span>
-                                        <span className="file-time">{formatUploadDate(file.createdAt)}</span>
-                                    </div>
-                                </div>
-
-                                <div className="file-actions-cluster">
-                                    <Tooltip title={isPreviewing ? '关闭预览' : '点击快速预览'}>
-                                        <Button
-                                            type={isPreviewing ? 'primary' : 'text'}
-                                            size="small"
-                                            icon={<EyeOutlined />}
-                                            onClick={() => handleTogglePreview(file)}
-                                            className={`action-icon-btn ${isPreviewing ? 'is-active-eye' : ''}`}
-                                        >
-                                            <span className="btn-text">预览</span>
-                                        </Button>
-                                    </Tooltip>
-
-                                    <Tooltip title="直接下载">
-                                        <Button
-                                            type="text"
-                                            size="small"
-                                            icon={<DownloadOutlined />}
-                                            onClick={() => handleDownloadFile(file)}
-                                            className="action-icon-btn"
-                                        >
-                                            <span className="btn-text">下载</span>
-                                        </Button>
-                                    </Tooltip>
-
-                                    <Tooltip title="复制直链（可发到手机或浏览器打开）">
-                                        <Button
-                                            type="text"
-                                            size="small"
-                                            icon={<CopyOutlined />}
-                                            onClick={() => handleCopyUrl(file)}
-                                            className="action-icon-btn"
-                                        >
-                                            <span className="btn-text">复制链接</span>
-                                        </Button>
-                                    </Tooltip>
-
-                                    {isTemp && (
-                                        <Tooltip title="转为永久保存（不再自动删除）">
-                                            <Button
-                                                type="text"
-                                                size="small"
-                                                icon={<SaveOutlined />}
-                                                onClick={() => handlePromoteFile(file)}
-                                                className="action-icon-btn"
-                                            >
-                                                <span className="btn-text">转永久</span>
-                                            </Button>
-                                        </Tooltip>
-                                    )}
-
-                                    <Popconfirm
-                                        title="确定要彻底删除该暂存文件吗？"
-                                        okText="删除"
-                                        cancelText="取消"
-                                        okType="danger"
-                                        onConfirm={() => handleDeleteFile(file)}
-                                    >
-                                        <Tooltip title="删除文件">
-                                            <Button
-                                                type="text"
-                                                size="small"
-                                                icon={<DeleteOutlined />}
-                                                className="action-icon-btn btn-danger"
-                                            />
-                                        </Tooltip>
-                                    </Popconfirm>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            ) : (
-                <div className="stash-empty-wrapper">
-                    <Empty
-                        description={
-                            <span style={{ color: '#64748b' }}>
-                                {currentPath
-                                    ? `当前目录【${currentPath}】下暂无文件`
-                                    : `暂无${currentTab === 'temp' ? '临时' : '永久'}暂存文件或文件夹，拖拽或点击上方按钮即可上传`}
-                            </span>
+                {/* 主体内容区：时间流 or 虚拟文件夹视图 */}
+                <div
+                    ref={feedScrollRef}
+                    className="memo-feed-scroll"
+                    onScroll={() => {
+                        if (hasNewBelow && isNearBottom()) {
+                            setHasNewBelow(false);
                         }
-                    />
+                    }}
+                >
+                    {loading && items.length === 0 ? (
+                        <div className="memo-skeleton-list" aria-busy="true">
+                            {[1, 2, 3].map(n => (
+                                <div key={n} className="memo-skeleton-card">
+                                    <div className="skeleton-line short" />
+                                    <div className="skeleton-line long" />
+                                    <div className="skeleton-line medium" />
+                                </div>
+                            ))}
+                        </div>
+                    ) : viewMode === 'folder' ? (
+                        <FolderExplorerView
+                            items={folderItems}
+                            currentPath={currentPath}
+                            onPathChange={setCurrentPath}
+                            previewFileId={previewItemId}
+                            clockOffsetMs={clockOffsetMs}
+                            onExpired={handleItemExpired}
+                            onPreview={handleTogglePreview}
+                            onDownload={handleDownloadItem}
+                            onCopyLink={(url, msg) => copyToClipboard(url, msg)}
+                            onPromoteItem={handlePromoteItem}
+                            onConvertToNote={setConvertTarget}
+                            onDeleteItem={handleDeleteItem}
+                            onDownloadFolder={handleDownloadFolder}
+                            onPromoteFolder={handlePromoteFolder}
+                            onDeleteFolder={handleDeleteFolder}
+                        />
+                    ) : filteredItems.length === 0 ? (
+                        <div className="stash-empty-wrapper">
+                            <Empty
+                                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                description={
+                                    <span className="empty-desc-text">
+                                        暂无匹配的随心记内容，可在下方输入文字/链接、Ctrl+V 粘贴截图或拖拽文件发送
+                                    </span>
+                                }
+                            />
+                        </div>
+                    ) : (
+                        <div className="memo-timeline-list">
+                            {filteredItems.map(item => (
+                                <QuickMemoCard
+                                    key={getMemoId(item)}
+                                    item={item}
+                                    isPreviewing={previewItemId === getMemoId(item)}
+                                    clockOffsetMs={clockOffsetMs}
+                                    onExpired={handleItemExpired}
+                                    onPreview={handleTogglePreview}
+                                    onDownload={handleDownloadItem}
+                                    onCopyText={val => copyToClipboard(val, '内容已复制')}
+                                    onCopyLink={(val, msg) => copyToClipboard(val, msg)}
+                                    onOpenLink={handleOpenSafeLink}
+                                    onExtend={handleExtendItem}
+                                    onPromote={handlePromoteItem}
+                                    onConvertToNote={setConvertTarget}
+                                    onOpenNote={noteId => onOpenNote?.(noteId)}
+                                    onDelete={handleDeleteItem}
+                                    onOpenFolder={folderName => {
+                                        setViewMode('folder');
+                                        setCurrentPath(folderName);
+                                    }}
+                                    onContextMenu={handleItemContextMenu}
+                                />
+                            ))}
+                        </div>
+                    )}
                 </div>
-            )}
+
+                {hasNewBelow && viewMode === 'timeline' && (
+                    <button
+                        type="button"
+                        className="scroll-bottom-pill"
+                        onClick={() => scrollToBottom('smooth')}
+                    >
+                        <VerticalAlignBottomOutlined />
+                        <span>有新随心记到达</span>
+                    </button>
+                )}
+
+                {/* 吸底快捷发送输入区 */}
+                <QuickMemoComposer
+                    storageType={composerStorageType}
+                    onStorageTypeChange={setComposerStorageType}
+                    text={composerText}
+                    onTextChange={setComposerText}
+                    pendingAttachments={pendingAttachments}
+                    onRemoveAttachment={handleRemoveAttachment}
+                    onClearAttachments={handleClearAttachments}
+                    onSend={handleSend}
+                    onPickFiles={() => fileInputRef.current?.click()}
+                    onPickFolder={() => folderInputRef.current?.click()}
+                    onPasteFiles={files => stageAttachments(files, { fromClipboard: true })}
+                    uploading={uploading}
+                    sending={sending}
+                    inputRef={composerInputRef}
+                />
             </div>
 
-            {/* 右侧平滑弹性展开的文件即时预览抽屉 */}
-            <div className={`stash-preview-drawer ${previewFile ? 'is-open' : ''} ${isFullScreen ? 'is-fullscreen' : ''}`}>
-                {activePreviewFile && (
+            {/* 右侧平滑弹性展开的附件预览抽屉 */}
+            <div className={`stash-preview-drawer ${previewItem ? 'is-open' : ''} ${isFullScreen ? 'is-fullscreen' : ''}`}>
+                {activePreviewItem && (
                     <FilePreviewPanel
-                        file={activePreviewFile}
+                        file={activePreviewItem}
                         onClose={() => {
                             setIsFullScreen(false);
-                            setPreviewFile(null);
+                            setPreviewItem(null);
                         }}
                         isFullScreen={isFullScreen}
                         onToggleFullScreen={() => setIsFullScreen(prev => !prev)}
-                        onPromote={handlePromoteFile}
+                        onPromote={handlePromoteItem}
                     />
                 )}
             </div>
+
+            <ContextMenu
+                open={contextMenu.open}
+                x={contextMenu.x}
+                y={contextMenu.y}
+                onClose={() => setContextMenu(prev => ({ ...prev, open: false }))}
+                items={contextMenuItems}
+            />
+
+            <ConvertToNoteModal
+                open={Boolean(convertTarget)}
+                memo={convertTarget}
+                defaultNotebookId={activeNotebookId}
+                onClose={() => setConvertTarget(null)}
+                onConverted={(res, opts) => {
+                    const updatedMemo = res?.memo;
+                    const createdNote = res?.note;
+                    const noteId = createdNote?._id || createdNote?.id || updatedMemo?.convertedNoteId;
+                    const targetNbId = createdNote?.notebookId?._id || createdNote?.notebookId;
+
+                    if (updatedMemo) {
+                        setItems(prev => mergeQuickMemoDelta(prev, { items: [updatedMemo] }));
+                    }
+                    onNoteCreated?.(noteId, targetNbId);
+                    if (opts?.openAfterSave && noteId) {
+                        onOpenNote?.(noteId, targetNbId);
+                    }
+                }}
+            />
         </div>
     );
-};
-
-export default FileStashBoard;
+}

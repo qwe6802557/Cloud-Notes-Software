@@ -54,6 +54,11 @@ const handleJWTExpiredError = () => new AppError('令牌已过期，请重新登
 
 // 全局错误处理中间件
 module.exports = (err, req, res, next) => {
+    if (err.name === 'MulterError') {
+        err.statusCode = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+        err.isOperational = true;
+        err.message = err.code === 'LIMIT_FILE_SIZE' ? '上传文件大小超出限制' : (err.message || '文件上传失败');
+    }
     if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
         err.statusCode = 401;
         err.message = '登录状态已失效，请重新登录';

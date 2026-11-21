@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
             ipcRenderer.on('shortcut:open-command-palette', listener);
             return () => ipcRenderer.removeListener('shortcut:open-command-palette', listener);
         },
+        onOpenMemo: callback => {
+            const listener = () => callback();
+            ipcRenderer.on('shortcut:open-memo', listener);
+            return () => ipcRenderer.removeListener('shortcut:open-memo', listener);
+        },
         updateSyncStatus: statusData => ipcRenderer.send('tray:sync-status', statusData)
     },
     theme: {

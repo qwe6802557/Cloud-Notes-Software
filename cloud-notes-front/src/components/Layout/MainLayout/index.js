@@ -36,6 +36,7 @@ const MainLayout = () => {
     const [activeView, setActiveView] = useState('notes'); // 'notes' | 'stash' | 'graph'
     const [stashMounted, setStashMounted] = useState(false);
     const [graphMounted, setGraphMounted] = useState(false);
+    const [memoFocusTick, setMemoFocusTick] = useState(0);
     const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
     const [modal, contextHolder] = Modal.useModal();
     const [appInfo, setAppInfo] = useState(null);
@@ -267,6 +268,33 @@ const MainLayout = () => {
         navTreeRef.current?.triggerOpenSettings?.();
     }, []);
 
+    const handleOpenMemo = useCallback(() => {
+        setActiveView('stash');
+        setStashMounted(true);
+        setMemoFocusTick(t => t + 1);
+    }, []);
+
+    const handleOpenConvertedNote = useCallback(async (noteId, notebookId) => {
+        if (!noteId) return;
+        if (notebookId && notebookId !== selectedNotebook) {
+            if (!await confirmLeaveUnsavedNote()) {
+                return;
+            }
+            if (selectedNote) {
+                await syncManager.cancelNotePendingSync(selectedNote, { keepQueue: !editorDirty });
+            }
+            setSelectedNotebook(notebookId);
+            localStorage.setItem(LAST_NOTEBOOK_KEY, notebookId);
+            setSelectedNote(noteId);
+            setEditorDirty(false);
+            localStorage.setItem(LAST_NOTE_KEY, noteId);
+            setActiveView('notes');
+            return;
+        }
+        setActiveView('notes');
+        await handleNoteChange(noteId);
+    }, [confirmLeaveUnsavedNote, editorDirty, handleNoteChange, selectedNote, selectedNotebook]);
+
     
     // Electron 全局系统托盘热键监听与同步状态联动
     useEffect(() => {
@@ -284,6 +312,14 @@ const MainLayout = () => {
         });
         return () => unsubscribe?.();
     }, []);
+
+    useEffect(() => {
+        if (!window.electronAPI?.tray?.onOpenMemo) return;
+        const unsubscribe = window.electronAPI.tray.onOpenMemo(() => {
+            handleOpenMemo();
+        });
+        return () => unsubscribe?.();
+    }, [handleOpenMemo]);
 
     useEffect(() => {
         if (!window.electronAPI?.tray?.updateSyncStatus) return;
@@ -431,7 +467,13 @@ const MainLayout = () => {
                         }}
                     >
                         {(activeView === 'stash' || stashMounted) && (
-                            <FileStashBoard />
+                            <FileStashBoard
+                                active={activeView === 'stash'}
+                                activeNotebookId={selectedNotebook}
+                                focusTrigger={memoFocusTick}
+                                onNoteCreated={() => setSyncVersion(v => v + 1)}
+                                onOpenNote={handleOpenConvertedNote}
+                            />
                         )}
                     </div>
                     <div
@@ -467,6 +509,7 @@ const MainLayout = () => {
                 onOpenAI={handleCommandOpenAI}
                 onToggleZenMode={handleCommandToggleZenMode}
                 onOpenSettings={handleCommandOpenSettings}
+                onOpenMemo={handleOpenMemo}
             />
             <DesktopUpdateModal
                 open={updateModalOpen}

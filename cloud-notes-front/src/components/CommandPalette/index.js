@@ -8,7 +8,8 @@ import {
     PlusOutlined,
     DesktopOutlined,
     SunOutlined,
-    MoonOutlined
+    MoonOutlined,
+    SendOutlined
 } from '@ant-design/icons';
 import { message } from 'antd';
 import themeManager from '@/utils/themeManager';
@@ -79,7 +80,8 @@ const CommandPalette = ({
     onCreateNote,
     onOpenAI,
     onToggleZenMode,
-    onOpenSettings
+    onOpenSettings,
+    onOpenMemo
 }) => {
     const [searchText, setSearchText] = useState('');
     const [recentNotes, setRecentNotes] = useState([]);
@@ -133,6 +135,17 @@ const CommandPalette = ({
             }
         },
         {
+            id: 'cmd-open-memo',
+            type: 'command',
+            title: '打开随心记',
+            icon: <SendOutlined style={{ color: '#1890ff' }} />,
+            category: '快捷操作',
+            action: () => {
+                onOpenMemo?.();
+                onClose?.();
+            }
+        },
+        {
             id: 'cmd-settings',
             type: 'command',
             title: '个人偏好与系统设置',
@@ -179,7 +192,7 @@ const CommandPalette = ({
                 onClose?.();
             }
         }
-    ], [onCreateNote, onClose, onOpenAI, onToggleZenMode, onOpenSettings]);
+    ], [onCreateNote, onClose, onOpenAI, onToggleZenMode, onOpenSettings, onOpenMemo]);
 
     const fetchRecent = useCallback(async () => {
         try {

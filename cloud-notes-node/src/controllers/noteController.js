@@ -1,4 +1,3 @@
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
@@ -12,12 +11,7 @@ const { indexSingleNote, clearNoteIndex } = require('../services/ragIndexService
 const config = require('../config');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
-
-// 计算笔记内容 SHA-256 摘要，加密笔记仅对密文计算
-const computeNoteContentHash = ({ title = '', content = '', isEncrypted = false, encryptedData = null }) => {
-    const body = isEncrypted ? (encryptedData || '') : (content || '');
-    return crypto.createHash('sha256').update(`${title || ''}\n${body}`).digest('hex');
-};
+const { computeNoteContentHash } = require('../utils/noteHash');
 
 const CONTENT_MUTATION_KEYS = new Set(['title', 'content', 'rawContent', 'isEncrypted', 'encryptedData']);
 

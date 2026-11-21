@@ -100,10 +100,10 @@ export default function TabLayout() {
       <Tabs.Screen
         name="stash"
         options={{
-          title: '文件暂存',
-          tabBarLabel: '暂存',
+          title: '随心记',
+          tabBarLabel: '随心记',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="cloud-upload-outline" size={22} color={color} />
+            <Ionicons name="paper-plane-outline" size={22} color={color} />
           ),
         }}
       />

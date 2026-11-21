@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,38 +27,97 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 import { StashFile } from '../api/stashApi';
+import { QuickMemoItem, resolveQuickMemoUrl } from '../api/quickNotesApi';
+import {
+  computeRemainingSeconds,
+  formatBytes,
+  formatCountdown,
+  isSafeHttpUrl,
+} from '../utils/quickNoteHelper';
+
+export type PreviewableFile = StashFile | QuickMemoItem;
 
 export interface FilePreviewModalProps {
   visible: boolean;
-  file: StashFile | null;
+  file: PreviewableFile | null;
+  serverOffsetMs?: number;
   onClose: () => void;
-  onPromote?: (file: StashFile) => void;
+  onPromote?: (file: PreviewableFile) => void;
+  onConvertToNote?: (file: PreviewableFile) => void;
+}
+
+interface NormalizedPreviewMeta {
+  originalName: string;
+  size: number;
+  mimetype: string;
+  url: string;
+  storageType: 'temp' | 'permanent';
+  expireAt: string | null;
+  remainingSeconds: number | null;
+  convertedNoteId: string | null;
 }
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-/**
- * 格式化字节体积
- */
-const formatBytes = (bytes: number = 0, decimals = 1) => {
-  if (!bytes || bytes === 0) return '0 B';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-};
+function normalizePreviewMeta(file: PreviewableFile): NormalizedPreviewMeta {
+  if ('attachment' in file) {
+    const att = file.attachment;
+    return {
+      originalName: att?.originalName || att?.filename || '未命名文件',
+      size: att?.size || 0,
+      mimetype: att?.mimetype || 'application/octet-stream',
+      url: resolveQuickMemoUrl(att?.url),
+      storageType: file.storageType,
+      expireAt: file.expireAt,
+      remainingSeconds: file.remainingSeconds,
+      convertedNoteId: file.convertedNoteId,
+    };
+  }
+  return {
+    originalName: file.originalName || file.filename || '未命名文件',
+    size: file.size || 0,
+    mimetype: file.mimetype || 'application/octet-stream',
+    url: resolveQuickMemoUrl(file.url),
+    storageType: file.storageType,
+    expireAt: file.expireAt,
+    remainingSeconds: file.remainingSeconds,
+    convertedNoteId: null,
+  };
+}
 
 /**
  * 判断文件预览门类
  */
-const getFileCategory = (filename: string = '', mimetype: string = '') => {
+const getFileCategory = (filename = '', mimetype = '') => {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext) || mimetype.startsWith('image/')) {
+  if (
+    ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp'].includes(ext) ||
+    mimetype.startsWith('image/')
+  ) {
     return 'image';
   }
   if (
-    ['txt', 'md', 'json', 'js', 'ts', 'tsx', 'py', 'html', 'css', 'less', 'java', 'c', 'cpp', 'sql', 'sh', 'yaml', 'yml', 'xml', 'log'].includes(ext) ||
+    [
+      'txt',
+      'md',
+      'json',
+      'js',
+      'ts',
+      'tsx',
+      'py',
+      'html',
+      'css',
+      'less',
+      'java',
+      'c',
+      'cpp',
+      'sql',
+      'sh',
+      'yaml',
+      'yml',
+      'xml',
+      'log',
+    ].includes(ext) ||
     mimetype.startsWith('text/')
   ) {
     return 'text';
@@ -89,7 +148,6 @@ function ZoomableImage({ uri }: { uri: string }) {
   const translateY = useSharedValue(0);
   const savedTranslateY = useSharedValue(0);
 
-  // 双指捏合手势
   const pinchGesture = Gesture.Pinch()
     .onUpdate(e => {
       scale.value = Math.max(0.8, Math.min(savedScale.value * e.scale, 5));
@@ -107,7 +165,6 @@ function ZoomableImage({ uri }: { uri: string }) {
       }
     });
 
-  // 拖拽平移手势
   const panGesture = Gesture.Pan()
     .averageTouches(true)
     .onUpdate(e => {
@@ -121,7 +178,6 @@ function ZoomableImage({ uri }: { uri: string }) {
       savedTranslateY.value = translateY.value;
     });
 
-  // 双击快速缩放
   const doubleTapGesture = Gesture.Tap()
     .numberOfTaps(2)
     .onEnd(() => {
@@ -138,7 +194,10 @@ function ZoomableImage({ uri }: { uri: string }) {
       }
     });
 
-  const composedGesture = Gesture.Race(doubleTapGesture, Gesture.Simultaneous(pinchGesture, panGesture));
+  const composedGesture = Gesture.Race(
+    doubleTapGesture,
+    Gesture.Simultaneous(pinchGesture, panGesture)
+  );
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [
@@ -171,7 +230,7 @@ function ZoomableImage({ uri }: { uri: string }) {
 
       {loading && !hasError && (
         <View style={styles.centerOverlay} pointerEvents="none">
-          <ActivityIndicator size="large" color="#1890ff" />
+          <ActivityIndicator size="large" color="#38bdf8" />
           <Text style={styles.loadingText}>正在载入原图...</Text>
         </View>
       )}
@@ -189,30 +248,32 @@ function ZoomableImage({ uri }: { uri: string }) {
 export default function FilePreviewModal({
   visible,
   file,
+  serverOffsetMs = 0,
   onClose,
   onPromote,
+  onConvertToNote,
 }: FilePreviewModalProps) {
   const insets = useSafeAreaInsets();
-  const [textContent, setTextContent] = useState('');
-  const [textLoading, setTextLoading] = useState(false);
-  const [textError, setTextError] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [textState, setTextState] = useState<{
+    url: string;
+    content: string;
+    error: boolean;
+  }>({ url: '', content: '', error: false });
 
-  const category = file ? getFileCategory(file.originalName, file.mimetype) : 'unsupported';
-  const isTemp = file?.storageType === 'temp';
+  const meta = file ? normalizePreviewMeta(file) : null;
+  const category = meta ? getFileCategory(meta.originalName, meta.mimetype) : 'unsupported';
+  const isTemp = meta?.storageType === 'temp';
+  const targetUrl = meta?.url || '';
+  const shouldLoadText = Boolean(visible && targetUrl && category === 'text');
+  const textLoading = shouldLoadText && textState.url !== targetUrl;
+  const textError = shouldLoadText && textState.url === targetUrl && textState.error;
+  const textContent = shouldLoadText && textState.url === targetUrl ? textState.content : '';
 
-  // 异步获取代码与纯文本内容
   useEffect(() => {
-    if (!visible || !file?.url || category !== 'text') {
-      setTextContent('');
-      return;
-    }
+    if (!shouldLoadText) return;
 
     let isMounted = true;
-    setTextLoading(true);
-    setTextError(false);
-
-    fetch(file.url)
+    fetch(targetUrl)
       .then(res => {
         if (!res.ok) throw new Error('网络异常');
         return res.text();
@@ -220,38 +281,33 @@ export default function FilePreviewModal({
       .then(text => {
         if (!isMounted) return;
         const MAX_CHARS = 100000;
-        if (text.length > MAX_CHARS) {
-          setTextContent(text.slice(0, MAX_CHARS) + '\n\n/* --- 文件过长，已截断显示前 10 万字符 --- */');
-        } else {
-          setTextContent(text);
-        }
+        const trimmed =
+          text.length > MAX_CHARS
+            ? `${text.slice(0, MAX_CHARS)}\n\n/* --- 文件过长，已截断显示前 10 万字符 --- */`
+            : text;
+        setTextState({ url: targetUrl, content: trimmed, error: false });
       })
       .catch(() => {
-        if (isMounted) setTextError(true);
-      })
-      .finally(() => {
-        if (isMounted) setTextLoading(false);
+        if (isMounted) {
+          setTextState({ url: targetUrl, content: '', error: true });
+        }
       });
 
     return () => {
       isMounted = false;
     };
-  }, [visible, file?.url, category]);
+  }, [shouldLoadText, targetUrl]);
 
-  // 复制直链
   const handleCopyUrl = async () => {
-    if (!file?.url) return;
+    if (!meta?.url) return;
     try {
-      await Clipboard.setStringAsync(file.url);
-      setCopied(true);
+      await Clipboard.setStringAsync(meta.url);
       Alert.alert('复制成功', '文件直链已复制到剪贴板');
-      setTimeout(() => setCopied(false), 2000);
     } catch {
-      Alert.alert('文件链接', file.url);
+      Alert.alert('文件链接', meta.url);
     }
   };
 
-  // 复制代码文本
   const handleCopyText = async () => {
     if (!textContent) return;
     try {
@@ -262,22 +318,23 @@ export default function FilePreviewModal({
     }
   };
 
-  // 打开直链/下载
   const handleOpenExternally = () => {
-    if (!file?.url) return;
-    Linking.openURL(file.url).catch(() => {
+    if (!meta?.url || !isSafeHttpUrl(meta.url)) {
+      Alert.alert('提示', '无效的文件下载链接');
+      return;
+    }
+    Linking.openURL(meta.url).catch(() => {
       Alert.alert('打开失败', '无法打开此文件链接');
     });
   };
 
-  // 升级为永久保存
-  const handlePromoteFile = () => {
-    if (file && onPromote) {
-      onPromote(file);
-    }
-  };
+  if (!file || !meta) return null;
 
-  if (!file) return null;
+  const remaining = isTemp
+    ? computeRemainingSeconds(meta.expireAt, serverOffsetMs) ?? meta.remainingSeconds
+    : null;
+  const tempBadgeLabel =
+    remaining !== null ? `临时 · 剩余 ${formatCountdown(remaining)}` : '临时保存';
 
   return (
     <Modal
@@ -291,18 +348,18 @@ export default function FilePreviewModal({
         {/* 顶部沉浸工具条 */}
         <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
           <TouchableOpacity style={styles.iconBtn} onPress={onClose} activeOpacity={0.7}>
-            <Ionicons name="close" size={24} color="#ffffff" />
+            <Ionicons name="close" size={22} color="#f8fafc" />
           </TouchableOpacity>
 
           <View style={styles.titleCol}>
             <Text style={styles.titleText} numberOfLines={1} ellipsizeMode="middle">
-              {file.originalName}
+              {meta.originalName}
             </Text>
             <View style={styles.metaRow}>
-              <Text style={styles.metaText}>{formatBytes(file.size)}</Text>
+              <Text style={styles.metaText}>{formatBytes(meta.size)}</Text>
               <View style={[styles.statusPill, isTemp ? styles.tempPill : styles.permPill]}>
                 <Text style={[styles.statusText, isTemp ? styles.tempText : styles.permText]}>
-                  {isTemp ? '临时' : '永久'}
+                  {isTemp ? tempBadgeLabel : '永久'}
                 </Text>
               </View>
             </View>
@@ -310,32 +367,36 @@ export default function FilePreviewModal({
 
           <View style={styles.headerRightCluster}>
             <TouchableOpacity style={styles.iconBtn} onPress={handleCopyUrl} activeOpacity={0.7}>
-              <Ionicons name="copy-outline" size={20} color="#ffffff" />
+              <Ionicons name="copy-outline" size={19} color="#f8fafc" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.iconBtn} onPress={handleOpenExternally} activeOpacity={0.7}>
-              <Ionicons name="cloud-download-outline" size={21} color="#ffffff" />
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={handleOpenExternally}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="cloud-download-outline" size={20} color="#f8fafc" />
             </TouchableOpacity>
           </View>
         </View>
 
         {/* 主视口区域 */}
         <View style={styles.viewport}>
-          {category === 'image' && <ZoomableImage uri={file.url} />}
+          {category === 'image' && <ZoomableImage uri={meta.url} />}
 
           {category === 'text' && (
             <View style={styles.textStage}>
               <View style={styles.textSubHeader}>
                 <Text style={styles.codeExtTag}>
-                  {file.originalName.split('.').pop()?.toUpperCase() || 'TXT'}
+                  {meta.originalName.split('.').pop()?.toUpperCase() || 'TXT'}
                 </Text>
                 <TouchableOpacity style={styles.copyTextBtn} onPress={handleCopyText}>
                   <Ionicons name="copy-outline" size={14} color="#38bdf8" />
-                  <Text style={styles.copyTextBtnText}>复制代码</Text>
+                  <Text style={styles.copyTextBtnText}>复制文本</Text>
                 </TouchableOpacity>
               </View>
               {textLoading ? (
                 <View style={styles.centerOverlay}>
-                  <ActivityIndicator size="large" color="#1890ff" />
+                  <ActivityIndicator size="large" color="#38bdf8" />
                   <Text style={styles.loadingText}>正在载入文本...</Text>
                 </View>
               ) : textError ? (
@@ -369,31 +430,31 @@ export default function FilePreviewModal({
                         ? 'document-text-outline'
                         : 'document-outline'
                     }
-                    size={48}
+                    size={44}
                     color="#38bdf8"
                   />
                 </View>
                 <Text style={styles.infoCardTitle} numberOfLines={2}>
-                  {file.originalName}
+                  {meta.originalName}
                 </Text>
                 <Text style={styles.infoCardSub}>
                   {category === 'video'
-                    ? '视频文件 · 点击下方按钮唤起系统播放器'
+                    ? '视频文件 · 可调用系统播放器打开'
                     : category === 'audio'
-                    ? '音频文件 · 点击下方按钮唤起系统播放器'
+                    ? '音频文件 · 可调用系统播放器打开'
                     : category === 'pdf'
-                    ? 'PDF 文档 · 点击下方按钮直接查看'
-                    : '二进制专有格式 · 支持直接下载到手机本地'}
+                    ? 'PDF 文档 · 可调用系统查看器打开'
+                    : '二进制文件 · 支持直接下载到本地'}
                 </Text>
 
                 <View style={styles.infoCardTable}>
                   <View style={styles.tableRow}>
                     <Text style={styles.tableKey}>文件体积</Text>
-                    <Text style={styles.tableVal}>{formatBytes(file.size)}</Text>
+                    <Text style={styles.tableVal}>{formatBytes(meta.size)}</Text>
                   </View>
                   <View style={styles.tableRow}>
-                    <Text style={styles.tableKey}>存储模式</Text>
-                    <Text style={styles.tableVal}>{isTemp ? '临时保存 (10分钟)' : '永久保存'}</Text>
+                    <Text style={styles.tableKey}>保留状态</Text>
+                    <Text style={styles.tableVal}>{isTemp ? tempBadgeLabel : '永久保留'}</Text>
                   </View>
                 </View>
 
@@ -413,23 +474,40 @@ export default function FilePreviewModal({
         {/* 底部悬浮动作条 */}
         <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <TouchableOpacity style={styles.bottomActionBtn} onPress={handleCopyUrl} activeOpacity={0.75}>
-            <Ionicons name="copy-outline" size={16} color="#ffffff" />
+            <Ionicons name="copy-outline" size={16} color="#f8fafc" />
             <Text style={styles.bottomActionText}>复制直链</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.bottomActionBtn} onPress={handleOpenExternally} activeOpacity={0.75}>
-            <Ionicons name="download-outline" size={16} color="#ffffff" />
-            <Text style={styles.bottomActionText}>打开 / 下载</Text>
+          <TouchableOpacity
+            style={styles.bottomActionBtn}
+            onPress={handleOpenExternally}
+            activeOpacity={0.75}
+          >
+            <Ionicons name="download-outline" size={16} color="#f8fafc" />
+            <Text style={styles.bottomActionText}>下载</Text>
           </TouchableOpacity>
 
           {isTemp && onPromote && (
             <TouchableOpacity
               style={[styles.bottomActionBtn, styles.promoteBtn]}
-              onPress={handlePromoteFile}
+              onPress={() => onPromote(file)}
               activeOpacity={0.75}
             >
-              <Ionicons name="bookmark-outline" size={16} color="#f59e0b" />
-              <Text style={[styles.bottomActionText, { color: '#f59e0b' }]}>转永久</Text>
+              <Ionicons name="bookmark-outline" size={16} color="#d97706" />
+              <Text style={[styles.bottomActionText, { color: '#fbbf24' }]}>转永久</Text>
+            </TouchableOpacity>
+          )}
+
+          {onConvertToNote && (
+            <TouchableOpacity
+              style={[styles.bottomActionBtn, styles.convertBtn]}
+              onPress={() => onConvertToNote(file)}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="document-text-outline" size={16} color="#38bdf8" />
+              <Text style={[styles.bottomActionText, { color: '#38bdf8' }]}>
+                {meta.convertedNoteId ? '再存笔记' : '转存笔记'}
+              </Text>
             </TouchableOpacity>
           )}
         </View>
@@ -441,7 +519,7 @@ export default function FilePreviewModal({
 const styles = StyleSheet.create({
   modalRoot: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    backgroundColor: 'rgba(15, 23, 42, 0.97)',
   },
   topBar: {
     paddingHorizontal: 16,
@@ -449,27 +527,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
+    backgroundColor: 'rgba(15, 23, 42, 0.9)',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: 'rgba(255, 255, 255, 0.1)',
     zIndex: 10,
   },
   iconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
   },
   titleCol: {
     flex: 1,
-    marginHorizontal: 12,
+    marginHorizontal: 10,
   },
   titleText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#f8fafc',
   },
   metaRow: {
     flexDirection: 'row',
@@ -488,20 +566,21 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   tempPill: {
-    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    backgroundColor: 'rgba(217, 119, 6, 0.22)',
   },
   permPill: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    backgroundColor: 'rgba(5, 150, 105, 0.22)',
   },
   statusText: {
     fontSize: 10,
     fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
   },
   tempText: {
-    color: '#f59e0b',
+    color: '#fbbf24',
   },
   permText: {
-    color: '#10b981',
+    color: '#34d399',
   },
   headerRightCluster: {
     flexDirection: 'row',
@@ -565,8 +644,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     backgroundColor: 'rgba(56, 189, 248, 0.15)',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    minHeight: 36,
     borderRadius: 12,
   },
   copyTextBtnText: {
@@ -594,7 +673,7 @@ const styles = StyleSheet.create({
   },
   infoCard: {
     width: '100%',
-    backgroundColor: 'rgba(30, 41, 59, 0.85)',
+    backgroundColor: 'rgba(30, 41, 59, 0.9)',
     borderRadius: 16,
     padding: 24,
     alignItems: 'center',
@@ -602,9 +681,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   infoCardIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 76,
+    height: 76,
+    borderRadius: 38,
     backgroundColor: 'rgba(56, 189, 248, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -613,7 +692,7 @@ const styles = StyleSheet.create({
   infoCardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#ffffff',
+    color: '#f8fafc',
     textAlign: 'center',
     marginBottom: 8,
   },
@@ -626,8 +705,8 @@ const styles = StyleSheet.create({
   },
   infoCardTable: {
     width: '100%',
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
-    borderRadius: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    borderRadius: 10,
     padding: 12,
     marginBottom: 20,
     gap: 8,
@@ -639,7 +718,7 @@ const styles = StyleSheet.create({
   },
   tableKey: {
     fontSize: 12,
-    color: '#64748b',
+    color: '#94a3b8',
   },
   tableVal: {
     fontSize: 12,
@@ -652,8 +731,8 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: '#1890ff',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 22,
+    minHeight: 46,
+    borderRadius: 23,
   },
   cardPrimaryBtnText: {
     color: '#ffffff',
@@ -662,12 +741,13 @@ const styles = StyleSheet.create({
   },
   bottomBar: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    paddingHorizontal: 16,
+    gap: 10,
+    paddingHorizontal: 14,
     paddingTop: 12,
-    backgroundColor: 'rgba(15, 23, 42, 0.9)',
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: 'rgba(255, 255, 255, 0.1)',
   },
@@ -676,15 +756,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    minHeight: 44,
+    borderRadius: 22,
   },
   promoteBtn: {
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    backgroundColor: 'rgba(217, 119, 6, 0.18)',
+  },
+  convertBtn: {
+    backgroundColor: 'rgba(56, 189, 248, 0.16)',
   },
   bottomActionText: {
-    color: '#ffffff',
+    color: '#f8fafc',
     fontSize: 13,
     fontWeight: '600',
   },

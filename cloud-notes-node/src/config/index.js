@@ -148,7 +148,16 @@ module.exports = {
         upload: {
             windowMs: parsePositiveInt(process.env.UPLOAD_RATE_LIMIT_WINDOW_MS, 60 * 1000),
             max: parsePositiveInt(process.env.UPLOAD_RATE_LIMIT_MAX, 20)
+        },
+        quickNotesUpload: {
+            windowMs: parsePositiveInt(process.env.QUICK_NOTES_UPLOAD_RATE_LIMIT_WINDOW_MS, 60 * 1000),
+            max: parsePositiveInt(process.env.QUICK_NOTES_UPLOAD_RATE_LIMIT_MAX, 120)
         }
+    },
+    quickNotes: {
+        defaultTtlMinutes: parsePositiveInt(process.env.QUICK_NOTES_DEFAULT_TTL_MINUTES, 20),
+        maxTextLength: parsePositiveInt(process.env.QUICK_NOTES_MAX_TEXT_LENGTH, 50 * 1024),
+        permanentQuotaBytes: parsePositiveInt(process.env.QUICK_NOTES_PERMANENT_QUOTA_BYTES, 2 * 1024 * 1024 * 1024)
     },
     email: {
         accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID || '',

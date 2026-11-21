@@ -34,7 +34,7 @@ import {
     RollbackOutlined,
     LeftOutlined,
     RightOutlined,
-    CloudUploadOutlined,
+    SendOutlined,
     ApartmentOutlined,
     LockOutlined,
     LockFilled,
@@ -68,7 +68,7 @@ const SYSTEM_VIEWS = [
     { key: 'recent', label: '最近文档', icon: <ClockCircleOutlined /> },
     { key: 'starred', label: '收藏文档', icon: <StarOutlined /> },
     { key: 'graph', label: '知识网络', icon: <ApartmentOutlined /> },
-    { key: 'stash', label: '文件暂存', icon: <CloudUploadOutlined /> },
+    { key: 'stash', label: '随心记', icon: <SendOutlined /> },
     { key: 'trash', label: '回收站', icon: <DeleteOutlined /> }
 ];
 
@@ -1780,13 +1780,13 @@ const NavTree = forwardRef(({
                                     fontSize: 24,
                                     margin: '0 auto 14px'
                                 }}>
-                                    <CloudUploadOutlined />
+                                    <SendOutlined />
                                 </div>
                                 <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', marginBottom: 8 }}>
-                                    文件暂存看板已开启
+                                    随心记已开启
                                 </div>
                                 <div style={{ fontSize: 12, lineHeight: 1.6, color: '#64748b' }}>
-                                    右侧主工作区已进入暂存中转站，支持临时文件（10分钟自动销毁）与永久文件跨端即时互传。
+                                    跨端随手记与文件传输站，支持文字、安全链接、图片及完整目录（临时 20 分钟自动清理 / 永久保留）。
                                 </div>
                             </div>
                         ) : viewType === 'graph' ? (

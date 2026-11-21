@@ -275,6 +275,13 @@ const updateTrayMenu = () => {
                 mainWindow?.webContents.send('shortcut:open-command-palette');
             }
         },
+        {
+            label: '打开随心记 (Ctrl+Alt+M)',
+            click: () => {
+                showMainWindow();
+                mainWindow?.webContents.send('shortcut:open-memo');
+            }
+        },
         { type: 'separator' },
         {
             label: statusText,
@@ -317,24 +324,33 @@ const createTray = () => {
 /**
  * 全局快捷键注册与容错防冲突
  */
-const registerGlobalShortcuts = () => {
+const registerShortcutSafely = (accelerator, handler) => {
     try {
-        globalShortcut.register('CommandOrControl+Alt+N', () => {
-            showMainWindow();
-            mainWindow?.webContents.send('shortcut:quick-new-note');
-        });
-
-        globalShortcut.register('CommandOrControl+Alt+F', () => {
-            showMainWindow();
-            mainWindow?.webContents.send('shortcut:open-command-palette');
-        });
-
-        globalShortcut.register('CommandOrControl+Alt+C', () => {
-            toggleMainWindow();
-        });
+        globalShortcut.register(accelerator, handler);
     } catch (err) {
-        console.error('Failed to register global shortcuts:', err);
+        console.error(`Failed to register global shortcut ${accelerator}:`, err);
     }
+};
+
+const registerGlobalShortcuts = () => {
+    registerShortcutSafely('CommandOrControl+Alt+N', () => {
+        showMainWindow();
+        mainWindow?.webContents.send('shortcut:quick-new-note');
+    });
+
+    registerShortcutSafely('CommandOrControl+Alt+F', () => {
+        showMainWindow();
+        mainWindow?.webContents.send('shortcut:open-command-palette');
+    });
+
+    registerShortcutSafely('CommandOrControl+Alt+M', () => {
+        showMainWindow();
+        mainWindow?.webContents.send('shortcut:open-memo');
+    });
+
+    registerShortcutSafely('CommandOrControl+Alt+C', () => {
+        toggleMainWindow();
+    });
 };
 
 function createWindow() {

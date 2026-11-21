@@ -202,6 +202,18 @@ const schemas = {
                 'any.required': '邮箱不能为空',
                 'string.empty': '邮箱不能为空'
             })
+    }),
+
+    // 随心记文本/链接创建验证
+    quickNoteText: Joi.object({
+        content: Joi.string().required()
+            .messages({
+                'any.required': '发送内容不能为空',
+                'string.empty': '发送内容不能为空'
+            }),
+        storageType: Joi.string().valid('temp', 'permanent').default('temp'),
+        ttlMinutes: Joi.number().integer().min(1).max(10080).optional(),
+        clientId: Joi.string().trim().max(128).allow(null, '').optional()
     })
 };
 

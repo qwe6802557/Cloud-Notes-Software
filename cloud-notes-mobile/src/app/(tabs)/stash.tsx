@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
+  AppState,
   FlatList,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   RefreshControl,
@@ -13,396 +14,497 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Linking from 'expo-linking';
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
-import * as stashApi from '../../api/stashApi';
-import { StashFile } from '../../api/stashApi';
-import FilePreviewModal from '../../components/FilePreviewModal';
+import * as quickNotesApi from '../../api/quickNotesApi';
+import {
+  QuickMemoCounts,
+  QuickMemoCursor,
+  QuickMemoItem,
+  QuickMemoQuota,
+  QuickMemoStorageType,
+  resolveQuickMemoUrl,
+} from '../../api/quickNotesApi';
+import ActionContextSheet, {
+  ActionSheetItem,
+  confirmAction,
+  triggerHaptic,
+} from '../../components/ActionContextSheet';
+import FilePreviewModal, { PreviewableFile } from '../../components/FilePreviewModal';
+import QuickMemoCard, { CountdownBadge } from '../../components/QuickMemoCard';
+import QuickNoteConvertModal from '../../components/QuickNoteConvertModal';
+import TextPromptModal from '../../components/TextPromptModal';
+import { useTheme } from '../../hooks/use-theme';
+import { useColorScheme } from '../../hooks/use-color-scheme';
+import { showNotice } from '../../utils/noteContextActions';
+import {
+  QuickKindFilter,
+  QuickScopeTab,
+  QuickVirtualFolder,
+  buildQuickFolderTree,
+  computeServerClockOffset,
+  createQuickClientId,
+  filterQuickMemos,
+  formatBytes,
+  getUtf8ByteLength,
+  isSafeHttpUrl,
+  mergeQuickMemoDelta,
+  sortQuickMemosAscending,
+} from '../../utils/quickNoteHelper';
 
-const formatBytes = (bytes: number, decimals = 1) => {
-  if (!bytes || bytes === 0) return '0 B';
-  const k = 1024;
-  const dm = decimals < 0 ? 0 : decimals;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
-};
+const MONO_FONT = Platform.OS === 'ios' ? 'Menlo' : 'monospace';
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+const MAX_TEXT_BYTES = 50 * 1024;
 
-const formatCountdown = (totalSeconds: number | null) => {
-  if (!totalSeconds || totalSeconds <= 0) return '00:00';
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-};
+const KIND_FILTERS: { key: QuickKindFilter; label: string }[] = [
+  { key: 'all', label: '全部类型' },
+  { key: 'text_link', label: '文本·链接' },
+  { key: 'image', label: '图片' },
+  { key: 'file', label: '文件' },
+];
 
-const getFileIcon = (filename: string = '', mimetype: string = '') => {
-  const ext = filename.split('.').pop()?.toLowerCase() || '';
+export default function QuickMemoScreen() {
+  const router = useRouter();
+  const theme = useTheme();
+  const isDark = useColorScheme() === 'dark';
+  const accentColor = isDark ? '#38bdf8' : '#1890ff';
 
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext) || mimetype.startsWith('image/')) {
-    return { name: 'image-outline' as const, color: '#2563eb', bg: '#eff6ff' };
-  }
-  if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'md'].includes(ext) || mimetype.includes('pdf') || mimetype.includes('document')) {
-    return { name: 'document-text-outline' as const, color: '#ea580c', bg: '#fff7ed' };
-  }
-  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext) || mimetype.includes('zip') || mimetype.includes('compressed')) {
-    return { name: 'archive-outline' as const, color: '#9333ea', bg: '#faf5ff' };
-  }
-  if (['mp4', 'mov', 'avi', 'mp3', 'wav'].includes(ext) || mimetype.startsWith('video/') || mimetype.startsWith('audio/')) {
-    return { name: 'videocam-outline' as const, color: '#dc2626', bg: '#fef2f2' };
-  }
-  if (['js', 'ts', 'tsx', 'py', 'json', 'html', 'css'].includes(ext)) {
-    return { name: 'code-slash-outline' as const, color: '#16a34a', bg: '#f0fdf4' };
-  }
-  return { name: 'document-outline' as const, color: '#64748b', bg: '#f1f5f9' };
-};
+  const [items, setItems] = useState<QuickMemoItem[]>([]);
+  const [counts, setCounts] = useState<QuickMemoCounts>({ all: 0, temp: 0, permanent: 0 });
+  const [quota, setQuota] = useState<QuickMemoQuota>({
+    permanentUsedBytes: 0,
+    permanentLimitBytes: 2 * 1024 * 1024 * 1024,
+  });
+  const [serverOffsetMs, setServerOffsetMs] = useState(0);
 
-interface VirtualFolder {
-  name: string;
-  fullPath: string;
-  topLevelFolder: string;
-  files: StashFile[];
-  totalSize: number;
-  minRemaining: number | null;
-}
+  const [scopeTab, setScopeTab] = useState<QuickScopeTab>('all');
+  const [kindFilter, setKindFilter] = useState<QuickKindFilter>('all');
+  const [viewMode, setViewMode] = useState<'stream' | 'folder'>('stream');
+  const [currentPath, setCurrentPath] = useState('');
+  const [activeFolderScope, setActiveFolderScope] = useState<QuickMemoStorageType | null>(null);
 
-export default function StashScreen() {
-  const [currentTab, setCurrentTab] = useState<'temp' | 'permanent'>('temp');
-  const [files, setFiles] = useState<StashFile[]>([]);
-  const [tempCount, setTempCount] = useState(0);
-  const [permanentCount, setPermanentCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [showPickerSheet, setShowPickerSheet] = useState(false);
+  const [isSending, setIsSending] = useState(false);
 
-  // 文件沉浸式全屏预览状态
-  const [previewFile, setPreviewFile] = useState<StashFile | null>(null);
+  const [composerText, setComposerText] = useState('');
+  const [sendStorageType, setSendStorageType] = useState<QuickMemoStorageType>('temp');
 
-  // 虚拟目录导航层级状态：'' 表示根目录
-  const [currentPath, setCurrentPath] = useState('');
+  const [isScreenFocused, setIsScreenFocused] = useState(false);
+  const [isAppActive, setIsAppActive] = useState(AppState.currentState === 'active');
 
-  // 原生移动端文件夹名称输入弹窗
+  const [showAttachSheet, setShowAttachSheet] = useState(false);
   const [showFolderNameModal, setShowFolderNameModal] = useState(false);
-  const [folderNameInput, setFolderNameInput] = useState('');
-
-  // 批量上传进度状态
   const [isBatchUploading, setIsBatchUploading] = useState(false);
   const [batchCurrentIndex, setBatchCurrentIndex] = useState(0);
   const [batchTotalCount, setBatchTotalCount] = useState(0);
-  const [currentUploadingFileName, setCurrentUploadingFileName] = useState('');
+  const [currentUploadingName, setCurrentUploadingName] = useState('');
 
-  // Web 端隐藏的文件夹 input 引用
+  const [previewItem, setPreviewItem] = useState<QuickMemoItem | null>(null);
+  const [convertTarget, setConvertTarget] = useState<QuickMemoItem | null>(null);
+  const [contextSheet, setContextSheet] = useState<{
+    title: string;
+    subtitle: string;
+    items: ActionSheetItem[];
+  } | null>(null);
+
+  const flatListRef = useRef<FlatList<QuickMemoItem>>(null);
+  const composerInputRef = useRef<TextInput>(null);
   const webFolderInputRef = useRef<any>(null);
-
-  // 切换 tab 时重置当前路径与预览状态
-  useEffect(() => {
-    setCurrentPath('');
-    setPreviewFile(null);
-  }, [currentTab]);
-
-  // SWR 保活控制器：初次挂载展示菊花，后续切 Tab 聚焦就地复用内存态与目录层级
   const hasLoadedOnceRef = useRef(false);
-  const lastFetchTimeRef = useRef(0);
+  const cursorRef = useRef<QuickMemoCursor>(null);
+  const serverOffsetRef = useRef(0);
+  const isSyncingDeltaRef = useRef(false);
+  const shouldScrollToBottomRef = useRef(true);
+  const isNearBottomRef = useRef(true);
 
-  // 拉取暂存文件列表 (SWR 就地保活模型：保留已展开视图与滚动位置)
-  const loadFiles = useCallback(async (isRefresh = false) => {
-    const isFirstLoad = !hasLoadedOnceRef.current;
-    const now = Date.now();
-
-    // SWR 限流：已有缓存数据、非手动下拉刷新且 30 秒内聚焦不重复发起请求
-    if (!isRefresh && !isFirstLoad && now - lastFetchTimeRef.current < 30000) {
-      return;
+  useEffect(() => {
+    if (Platform.OS === 'web' && webFolderInputRef.current) {
+      webFolderInputRef.current.setAttribute('webkitdirectory', '');
+      webFolderInputRef.current.setAttribute('directory', '');
     }
+  }, []);
 
+  const loadFullList = useCallback(async (isRefresh = false) => {
     try {
       if (isRefresh) {
         setIsRefreshing(true);
-      } else if (isFirstLoad) {
+      } else if (!hasLoadedOnceRef.current) {
         setIsLoading(true);
       }
 
-      const res = await stashApi.getStashFiles(currentTab);
+      const res = await quickNotesApi.getQuickNotes({ limit: 200 });
       if (res.code === 200 && res.data) {
-        setFiles(res.data.files || []);
-        setTempCount(res.data.tempCount ?? 0);
-        setPermanentCount(res.data.permanentCount ?? 0);
-        lastFetchTimeRef.current = Date.now();
+        const offset = computeServerClockOffset(res.data.serverTime);
+        serverOffsetRef.current = offset;
+        setServerOffsetMs(offset);
+        setItems(sortQuickMemosAscending(res.data.items || []));
+        if (res.data.counts) setCounts(res.data.counts);
+        if (res.data.quota) setQuota(res.data.quota);
+        cursorRef.current =
+          res.data.nextCursor ||
+          (res.data.serverTime ? { since: res.data.serverTime, cursorId: '' } : null);
+        if (!hasLoadedOnceRef.current) {
+          shouldScrollToBottomRef.current = true;
+        }
       }
-    } catch (e: any) {
-      console.warn('Fetch stash files failed:', e.message);
+    } catch (err: any) {
+      console.warn('Load quick notes failed:', err?.message);
     } finally {
       hasLoadedOnceRef.current = true;
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [currentTab]);
+  }, []);
 
+  const runDeltaSync = useCallback(async () => {
+    if (isSyncingDeltaRef.current) return;
+    if (!cursorRef.current?.since) {
+      await loadFullList(false);
+      return;
+    }
+
+    isSyncingDeltaRef.current = true;
+    try {
+      let currentCursor: QuickMemoCursor = cursorRef.current;
+      let hasMore = true;
+      let pageGuard = 0;
+
+      while (hasMore && pageGuard < 5 && currentCursor?.since) {
+        pageGuard += 1;
+        const res = await quickNotesApi.deltaQuickNotes({
+          since: currentCursor.since,
+          cursorId: currentCursor.cursorId,
+          limit: 200,
+        });
+        if (res.code !== 200 || !res.data) break;
+
+        const data = res.data;
+        const offset = computeServerClockOffset(data.serverTime);
+        serverOffsetRef.current = offset;
+        setServerOffsetMs(offset);
+
+        const hasDeltaItems = Boolean(data.items && data.items.length > 0);
+        const hasLegacyPayload = Boolean(data.legacyItems && data.legacyItems.length > 0);
+        if (isNearBottomRef.current && hasDeltaItems) {
+          shouldScrollToBottomRef.current = true;
+        }
+        setItems(prev => {
+          const hadLegacyBefore = prev.some(it => it.legacySource === 'stash');
+          const hasExpiredLocal = prev.some(
+            it =>
+              it.storageType === 'temp' &&
+              it.expireAt &&
+              new Date(it.expireAt).getTime() <= Date.now() + offset
+          );
+          if (!hasDeltaItems && !hasLegacyPayload && !hadLegacyBefore && !hasExpiredLocal) {
+            return prev;
+          }
+          return mergeQuickMemoDelta(
+            prev,
+            { items: data.items, legacyItems: data.legacyItems },
+            offset
+          );
+        });
+
+        if (data.counts) setCounts(data.counts);
+        if (data.quota) setQuota(data.quota);
+        if (data.nextCursor) {
+          currentCursor = data.nextCursor;
+          cursorRef.current = data.nextCursor;
+        }
+        hasMore = Boolean(data.hasMore);
+      }
+    } catch (err: any) {
+      console.warn('Delta quick notes failed:', err?.message);
+    } finally {
+      isSyncingDeltaRef.current = false;
+    }
+  }, [loadFullList]);
+
+  // 仅在页面聚焦且 App 处于前台 active 时启停 5 秒增量同步
   useFocusEffect(
     useCallback(() => {
-      loadFiles();
-    }, [loadFiles])
+      setIsScreenFocused(true);
+      setIsAppActive(AppState.currentState === 'active');
+
+      if (!hasLoadedOnceRef.current) {
+        void loadFullList(false);
+      } else {
+        void runDeltaSync();
+      }
+
+      const appStateSub = AppState.addEventListener('change', nextState => {
+        const active = nextState === 'active';
+        setIsAppActive(active);
+        if (active) {
+          void runDeltaSync();
+        }
+      });
+
+      const pollTimer = setInterval(() => {
+        if (AppState.currentState === 'active') {
+          void runDeltaSync();
+        }
+      }, 5000);
+
+      return () => {
+        setIsScreenFocused(false);
+        clearInterval(pollTimer);
+        appStateSub.remove();
+      };
+    }, [loadFullList, runDeltaSync])
   );
 
-  // 10 分钟倒计时秒级递减驱动
-  useEffect(() => {
-    if (currentTab !== 'temp') return;
+  const isTimerActive = isScreenFocused && isAppActive;
 
-    const interval = setInterval(() => {
-      setFiles(prev => {
-        let hasExpired = false;
-        const next = prev
-          .map(f => {
-            if (f.storageType !== 'temp') return f;
-            const nextSec = (f.remainingSeconds ?? 0) - 1;
-            if (nextSec <= 0) {
-              hasExpired = true;
-              return null;
-            }
-            return { ...f, remainingSeconds: nextSec };
-          })
-          .filter(Boolean) as StashFile[];
+  const filteredStreamItems = useMemo(
+    () => filterQuickMemos(items, scopeTab, kindFilter, serverOffsetMs),
+    [items, scopeTab, kindFilter, serverOffsetMs]
+  );
 
-        if (hasExpired) {
-          setTempCount(next.length);
-        }
-        return next;
-      });
-    }, 1000);
+  const folderTree = useMemo(() => {
+    const scoped = filterQuickMemos(items, scopeTab, 'all', serverOffsetMs);
+    return buildQuickFolderTree(
+      scoped,
+      currentPath,
+      serverOffsetMs,
+      undefined,
+      currentPath ? activeFolderScope : null
+    );
+  }, [items, scopeTab, currentPath, serverOffsetMs, activeFolderScope]);
 
-    return () => clearInterval(interval);
-  }, [currentTab]);
+  const breadcrumbSegments = useMemo(
+    () => (currentPath ? currentPath.split('/') : []),
+    [currentPath]
+  );
 
-  // 计算当前层级的虚拟目录与文件
-  const viewData = useMemo(() => {
-    const prefix = currentPath ? `${currentPath}/` : '';
-    const folderMap = new Map<string, VirtualFolder>();
-    const directFiles: StashFile[] = [];
+  const handleScopeChange = (nextScope: QuickScopeTab) => {
+    setScopeTab(nextScope);
+    setCurrentPath('');
+    setActiveFolderScope(null);
+  };
 
-    files.forEach(file => {
-      let relPath = (file.relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
-      if (!relPath) {
-        if (file.folderName) {
-          relPath = `${file.folderName}/${file.originalName}`;
-        } else {
-          relPath = file.originalName || file.filename;
-        }
-      }
-
-      if (prefix) {
-        if (!relPath.startsWith(prefix)) {
-          return;
-        }
-        relPath = relPath.slice(prefix.length);
-      }
-
-      if (relPath.includes('/')) {
-        const subFolderName = relPath.split('/')[0];
-        const fullSubFolderPath = currentPath ? `${currentPath}/${subFolderName}` : subFolderName;
-
-        if (!folderMap.has(subFolderName)) {
-          folderMap.set(subFolderName, {
-            name: subFolderName,
-            fullPath: fullSubFolderPath,
-            topLevelFolder: fullSubFolderPath.split('/')[0],
-            files: [],
-            totalSize: 0,
-            minRemaining: null,
-          });
-        }
-        const folder = folderMap.get(subFolderName)!;
-        folder.files.push(file);
-        folder.totalSize += file.size || 0;
-        if (file.remainingSeconds != null) {
-          folder.minRemaining =
-            folder.minRemaining == null
-              ? file.remainingSeconds
-              : Math.min(folder.minRemaining, file.remainingSeconds);
-        }
-      } else {
-        directFiles.push(file);
-      }
+  const handleToggleViewMode = () => {
+    setViewMode(prev => {
+      const next = prev === 'stream' ? 'folder' : 'stream';
+      setCurrentPath('');
+      setActiveFolderScope(null);
+      return next;
     });
+  };
 
-    return {
-      folders: Array.from(folderMap.values()),
-      files: directFiles,
-    };
-  }, [files, currentPath]);
+  const scrollStreamToEnd = useCallback((animated = true) => {
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated });
+    }, 60);
+  }, []);
 
-  // 批量文件上传执行队列
+  const handleSendText = async () => {
+    const trimmed = composerText.trim();
+    if (!trimmed || isSending) return;
+    const utf8Bytes = getUtf8ByteLength(trimmed);
+    if (utf8Bytes > MAX_TEXT_BYTES) {
+      showNotice(
+        '内容过长',
+        `单条文本随心记不能超过 50KB（当前 ${formatBytes(utf8Bytes)}）`
+      );
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      const res = await quickNotesApi.createQuickText({
+        content: trimmed,
+        storageType: sendStorageType,
+        ttlMinutes: sendStorageType === 'temp' ? 20 : undefined,
+        clientId: createQuickClientId('txt'),
+      });
+      if ((res.code === 200 || res.code === 201) && res.data) {
+        shouldScrollToBottomRef.current = true;
+        setComposerText('');
+        setItems(prev => mergeQuickMemoDelta(prev, { items: [res.data] }, serverOffsetRef.current));
+        void runDeltaSync();
+        scrollStreamToEnd(true);
+      } else {
+        throw new Error(res.message || '发送失败');
+      }
+    } catch (err: any) {
+      showNotice('发送失败', err?.message || '网络异常，请稍后重试');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // 仅在用户主动点击剪贴板按钮时读取剪贴板，避免系统被动弹框干扰
+  const handlePasteClipboard = async () => {
+    try {
+      const clipText = await Clipboard.getStringAsync();
+      const cleaned = (clipText || '').trim();
+      if (!cleaned) {
+        showNotice('剪贴板为空', '请先复制文字或链接后再粘贴');
+        return;
+      }
+      setComposerText(prev => (prev ? `${prev}\n${cleaned}` : cleaned));
+      composerInputRef.current?.focus();
+    } catch {
+      showNotice('读取失败', '无法读取当前剪贴板内容');
+    }
+  };
+
   const uploadBatchFiles = async (
-    items: Array<{
+    batch: {
       uri: string;
       name: string;
       type: string;
       size?: number;
       file?: any;
-      relativePath: string;
+      relativePath?: string;
       folderName?: string;
-    }>
+    }[]
   ) => {
-    if (items.length === 0) return;
+    if (batch.length === 0) return;
+    const oversized = batch.find(f => f.size && f.size > MAX_UPLOAD_BYTES);
+    if (oversized) {
+      showNotice('文件过大', `「${oversized.name}」超过 100MB 限制`);
+      return;
+    }
 
     setIsBatchUploading(true);
-    setBatchTotalCount(items.length);
+    setBatchTotalCount(batch.length);
     setBatchCurrentIndex(0);
 
     const batchExpireAt =
-      currentTab === 'temp'
-        ? new Date(Date.now() + 10 * 60 * 1000).toISOString()
+      sendStorageType === 'temp'
+        ? new Date(Date.now() + 20 * 60 * 1000).toISOString()
         : undefined;
 
     let successCount = 0;
     let failCount = 0;
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
+    for (let i = 0; i < batch.length; i += 1) {
+      const fileItem = batch[i];
       setBatchCurrentIndex(i + 1);
-      setCurrentUploadingFileName(item.name);
-
+      setCurrentUploadingName(fileItem.name);
       try {
-        await stashApi.uploadStashFile(
+        await quickNotesApi.uploadQuickFile(
           {
-            uri: item.uri,
-            name: item.name,
-            type: item.type,
-            file: item.file,
-            relativePath: item.relativePath,
-            folderName: item.folderName,
+            uri: fileItem.uri,
+            name: fileItem.name,
+            type: fileItem.type,
+            file: fileItem.file,
+            relativePath: fileItem.relativePath,
+            folderName: fileItem.folderName,
+            originalName: fileItem.name,
           },
-          currentTab,
-          batchExpireAt
+          {
+            storageType: sendStorageType,
+            ttlMinutes: sendStorageType === 'temp' ? 20 : undefined,
+            batchExpireAt,
+            clientId: createQuickClientId('file'),
+          }
         );
-        successCount++;
+        successCount += 1;
       } catch (err: any) {
-        console.error(`上传失败: ${item.name}`, err);
-        failCount++;
+        console.warn(`Upload failed (${fileItem.name}):`, err?.message);
+        failCount += 1;
       }
     }
 
     setIsBatchUploading(false);
-    loadFiles(true);
+    shouldScrollToBottomRef.current = true;
+    await runDeltaSync();
+    scrollStreamToEnd(true);
 
     if (failCount > 0) {
-      Alert.alert('批量上传结果', `成功上传 ${successCount} 个文件，${failCount} 个失败`);
-    } else {
-      Alert.alert('上传完成', `成功上传全部 ${successCount} 个文件至【${currentTab === 'temp' ? '临时' : '永久'}】区`);
+      showNotice('批量上传完成', `成功 ${successCount} 个，失败 ${failCount} 个`);
     }
   };
 
-  // 从相册选取单文件
   const handlePickFromLibrary = async () => {
-    setShowPickerSheet(false);
+    setShowAttachSheet(false);
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
         allowsEditing: false,
         quality: 1,
       });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        const MAX_SIZE = 100 * 1024 * 1024;
-        if (asset.fileSize && asset.fileSize > MAX_SIZE) {
-          Alert.alert('上传失败', '文件超过 100MB 限制');
-          return;
-        }
-
-        setIsUploading(true);
-        const fileName = asset.fileName || `stash_${Date.now()}.jpg`;
-        const relPath = currentPath ? `${currentPath}/${fileName}` : fileName;
-
-        await stashApi.uploadStashFile(
-          {
-            uri: asset.uri,
-            name: fileName,
-            type: asset.mimeType || 'image/jpeg',
-            file: (asset as any).file,
-            relativePath: relPath,
-            folderName: currentPath ? currentPath.split('/')[0] : undefined,
-          },
-          currentTab
-        );
-        Alert.alert('提示', currentTab === 'temp' ? '临时文件已暂存（10分钟后自动销毁）' : '文件已永久保存');
-        loadFiles(true);
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      if (asset.fileSize && asset.fileSize > MAX_UPLOAD_BYTES) {
+        showNotice('上传失败', '文件超过 100MB 限制');
+        return;
       }
-    } catch (e: any) {
-      Alert.alert('上传失败', e.message || '网络异常，请重试');
-    } finally {
-      setIsUploading(false);
+      const fileName = asset.fileName || `memo_${Date.now()}.jpg`;
+      const relPath = currentPath ? `${currentPath}/${fileName}` : undefined;
+      await uploadBatchFiles([
+        {
+          uri: asset.uri,
+          name: fileName,
+          type: asset.mimeType || 'image/jpeg',
+          size: asset.fileSize,
+          file: (asset as any).file,
+          relativePath: relPath,
+          folderName: currentPath ? currentPath.split('/')[0] : undefined,
+        },
+      ]);
+    } catch (err: any) {
+      showNotice('上传失败', err?.message || '选取媒体失败');
     }
   };
 
-  // 从手机系统文件选取单文件
   const handlePickFromDocuments = async () => {
-    setShowPickerSheet(false);
+    setShowAttachSheet(false);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: '*/*',
         copyToCacheDirectory: true,
       });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0];
-        const MAX_SIZE = 100 * 1024 * 1024;
-        if (asset.size && asset.size > MAX_SIZE) {
-          Alert.alert('上传失败', '文件超过 100MB 限制');
-          return;
-        }
-
-        setIsUploading(true);
-        const relPath = currentPath ? `${currentPath}/${asset.name}` : asset.name;
-
-        await stashApi.uploadStashFile(
-          {
-            uri: asset.uri,
-            name: asset.name,
-            type: asset.mimeType || 'application/octet-stream',
-            file: (asset as any).file,
-            relativePath: relPath,
-            folderName: currentPath ? currentPath.split('/')[0] : undefined,
-          },
-          currentTab
-        );
-        Alert.alert('提示', currentTab === 'temp' ? '临时文件已暂存（10分钟后自动销毁）' : '文件已永久保存');
-        loadFiles(true);
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+      if (asset.size && asset.size > MAX_UPLOAD_BYTES) {
+        showNotice('上传失败', '文件超过 100MB 限制');
+        return;
       }
-    } catch (e: any) {
-      Alert.alert('上传失败', e.message || '选择或上传文件失败');
-    } finally {
-      setIsUploading(false);
+      const relPath = currentPath ? `${currentPath}/${asset.name}` : undefined;
+      await uploadBatchFiles([
+        {
+          uri: asset.uri,
+          name: asset.name,
+          type: asset.mimeType || 'application/octet-stream',
+          size: asset.size,
+          file: (asset as any).file,
+          relativePath: relPath,
+          folderName: currentPath ? currentPath.split('/')[0] : undefined,
+        },
+      ]);
+    } catch (err: any) {
+      showNotice('上传失败', err?.message || '选取文件失败');
     }
   };
 
-  // 文件夹上传触发入口
   const handlePickFolder = () => {
-    setShowPickerSheet(false);
+    setShowAttachSheet(false);
     if (Platform.OS === 'web') {
-      // Web 端触发原生目录选择
-      if (webFolderInputRef.current) {
-        webFolderInputRef.current.click();
-      }
+      webFolderInputRef.current?.click();
     } else {
-      // 移动原生端弹出文件夹名称确认弹窗
-      setFolderNameInput(currentPath ? '' : `资料包_${new Date().getMonth() + 1}${new Date().getDate()}`);
       setShowFolderNameModal(true);
     }
   };
 
-  // Web 端文件夹选择监听处理
   const handleWebFolderInputChange = async (e: any) => {
     const selectedFiles = Array.from(e.target.files || []) as File[];
     e.target.value = '';
     if (selectedFiles.length === 0) return;
 
-    const items = selectedFiles.map(file => {
+    const batch = selectedFiles.map(file => {
       const rawRel = (file as any).webkitRelativePath || file.name;
       const fullRel = currentPath ? `${currentPath}/${rawRel}` : rawRel;
-      const topFolder = fullRel.includes('/') ? fullRel.split('/')[0] : '';
+      const topFolder = fullRel.includes('/') ? fullRel.split('/')[0] : undefined;
       return {
         uri: '',
         name: file.name,
@@ -414,629 +516,974 @@ export default function StashScreen() {
       };
     });
 
-    await uploadBatchFiles(items);
+    await uploadBatchFiles(batch);
   };
 
-  // 移动端选取多文件打包为指定文件夹
-  const handleNativeFolderConfirm = async () => {
-    const targetFolder = folderNameInput.trim() || `文件夹_${Date.now()}`;
-    setShowFolderNameModal(false);
-
+  const handleNativeFolderConfirm = async (folderName: string) => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: '*/*',
         copyToCacheDirectory: true,
         multiple: true,
       });
+      if (result.canceled || !result.assets?.length) return;
 
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const items = result.assets.map(asset => {
-          const fullRel = currentPath
-            ? `${currentPath}/${targetFolder}/${asset.name}`
-            : `${targetFolder}/${asset.name}`;
-          const topFolder = fullRel.split('/')[0];
+      const batch = result.assets.map(asset => {
+        const fullRel = currentPath
+          ? `${currentPath}/${folderName}/${asset.name}`
+          : `${folderName}/${asset.name}`;
+        return {
+          uri: asset.uri,
+          name: asset.name,
+          type: asset.mimeType || 'application/octet-stream',
+          size: asset.size,
+          file: (asset as any).file,
+          relativePath: fullRel,
+          folderName: fullRel.split('/')[0],
+        };
+      });
 
-          return {
-            uri: asset.uri,
-            name: asset.name,
-            type: asset.mimeType || 'application/octet-stream',
-            size: asset.size,
-            file: (asset as any).file,
-            relativePath: fullRel,
-            folderName: topFolder,
-          };
-        });
-
-        await uploadBatchFiles(items);
-      }
-    } catch (e: any) {
-      Alert.alert('文件夹选择失败', e.message || '选取文件异常');
+      await uploadBatchFiles(batch);
+    } catch (err: any) {
+      showNotice('选取失败', err?.message || '文件夹选取异常');
     }
   };
 
-  // 复制直链
-  const handleCopyUrl = async (file: StashFile) => {
-    if (!file.url) return;
+  const handleCopyItem = async (item: QuickMemoItem) => {
+    const targetText =
+      item.kind === 'image' || item.kind === 'file'
+        ? resolveQuickMemoUrl(item.attachment?.url)
+        : item.kind === 'link'
+        ? item.links?.[0]?.url || item.content
+        : item.content;
+    if (!targetText) return;
     try {
-      await Clipboard.setStringAsync(file.url);
-      Alert.alert('复制成功', '文件直链已存入剪贴板，可粘贴发送或在浏览器中打开');
+      await Clipboard.setStringAsync(targetText);
+      showNotice('已复制', item.attachment ? '文件直链已存入剪贴板' : '内容已存入剪贴板');
     } catch {
-      Alert.alert('文件直链', file.url);
+      showNotice('复制内容', targetText);
     }
   };
 
-  // 下载或直接打开单文件
-  const handleOpenUrl = (file: StashFile) => {
-    if (file.url) {
-      Linking.openURL(file.url).catch(() => {
-        Alert.alert('打开失败', '无法打开此文件链接');
+  const handleOpenSafeLink = (url?: string) => {
+    if (!isSafeHttpUrl(url)) {
+      showNotice('链接受限', '仅支持打开安全的 http/https 链接');
+      return;
+    }
+    Linking.openURL(url!).catch(() => {
+      showNotice('打开失败', '无法调起系统浏览器');
+    });
+  };
+
+  const handlePromoteItem = async (item: QuickMemoItem) => {
+    const id = item._id || item.id;
+    try {
+      const res = await quickNotesApi.promoteQuickMemo(id);
+      if (res.code === 200 && res.data) {
+        setItems(prev => mergeQuickMemoDelta(prev, { items: [res.data] }, serverOffsetRef.current));
+        if (previewItem && (previewItem._id || previewItem.id) === id) {
+          setPreviewItem(res.data);
+        }
+        void runDeltaSync();
+      } else {
+        throw new Error(res.message);
+      }
+    } catch (err: any) {
+      showNotice('操作失败', err?.message || '转为永久失败');
+    }
+  };
+
+  const handleExtendItem = async (item: QuickMemoItem) => {
+    const id = item._id || item.id;
+    try {
+      const res = await quickNotesApi.extendQuickMemo(id);
+      if (res.code === 200 && res.data) {
+        setItems(prev => mergeQuickMemoDelta(prev, { items: [res.data] }, serverOffsetRef.current));
+        void runDeltaSync();
+      } else {
+        throw new Error(res.message);
+      }
+    } catch (err: any) {
+      showNotice('操作失败', err?.message || '续期失败');
+    }
+  };
+
+  const handleDeleteItem = async (item: QuickMemoItem) => {
+    const id = item._id || item.id;
+    try {
+      await quickNotesApi.deleteQuickMemo(id);
+      setItems(prev => prev.filter(x => (x._id || x.id) !== id));
+      if (previewItem && (previewItem._id || previewItem.id) === id) {
+        setPreviewItem(null);
+      }
+      void runDeltaSync();
+    } catch (err: any) {
+      showNotice('删除失败', err?.message || '网络异常');
+    }
+  };
+
+  const handlePressItem = (item: QuickMemoItem) => {
+    if (item.kind === 'image' || item.kind === 'file') {
+      setPreviewItem(item);
+      return;
+    }
+    if (item.kind === 'link') {
+      const targetUrl = item.links?.[0]?.url || item.content;
+      if (isSafeHttpUrl(targetUrl)) {
+        handleOpenSafeLink(targetUrl);
+      } else {
+        void handleCopyItem(item);
+      }
+      return;
+    }
+    void handleCopyItem(item);
+  };
+
+  const handleLongPressItem = (item: QuickMemoItem) => {
+    triggerHaptic('light');
+    const isTemp = item.storageType === 'temp';
+    const hasFile = Boolean(item.attachment?.url);
+    const primaryUrl = item.links?.[0]?.url || (item.kind === 'link' ? item.content : '');
+
+    const sheetItems: ActionSheetItem[] = [
+      {
+        key: 'copy',
+        label: hasFile ? '复制文件直链' : item.kind === 'link' ? '复制链接' : '复制正文',
+        icon: 'copy-outline',
+        onPress: () => void handleCopyItem(item),
+      },
+    ];
+
+    if (isSafeHttpUrl(primaryUrl)) {
+      sheetItems.push({
+        key: 'open-link',
+        label: '在浏览器打开链接',
+        icon: 'open-outline',
+        onPress: () => handleOpenSafeLink(primaryUrl),
       });
     }
-  };
 
-  // 单文件临时转永久
-  const handlePromote = async (file: StashFile) => {
-    try {
-      await stashApi.promoteStashFile(file._id || file.id || '');
-      Alert.alert('成功', `【${file.originalName}】已升级为永久文件`);
-      if (previewFile && ((previewFile._id || previewFile.id) === (file._id || file.id))) {
-        setPreviewFile(prev => (prev ? { ...prev, storageType: 'permanent' } : null));
-      }
-      loadFiles(true);
-    } catch (e: any) {
-      Alert.alert('操作失败', e.message || '转为永久保存失败');
+    if (hasFile) {
+      sheetItems.push({
+        key: 'download',
+        label: '预览 / 下载文件',
+        icon: 'download-outline',
+        onPress: () => setPreviewItem(item),
+      });
     }
+
+    if (isTemp) {
+      sheetItems.push(
+        {
+          key: 'extend',
+          label: '续期 +20 分钟',
+          icon: 'time-outline',
+          color: '#d97706',
+          onPress: () => void handleExtendItem(item),
+        },
+        {
+          key: 'promote',
+          label: '转为永久保留',
+          icon: 'bookmark-outline',
+          color: '#059669',
+          onPress: () => void handlePromoteItem(item),
+        }
+      );
+    }
+
+    sheetItems.push({
+      key: 'to-note',
+      label: item.convertedNoteId ? '再次转存为笔记' : '转存为正式笔记',
+      icon: 'document-text-outline',
+      color: accentColor,
+      onPress: () => setConvertTarget(item),
+    });
+
+    if (item.convertedNoteId) {
+      sheetItems.push({
+        key: 'open-note',
+        label: '查看已转存笔记',
+        icon: 'arrow-forward-circle-outline',
+        onPress: () =>
+          router.push({ pathname: '/note/[id]', params: { id: item.convertedNoteId! } }),
+      });
+    }
+
+    sheetItems.push({
+      key: 'delete',
+      label: '删除此条记录',
+      icon: 'trash-outline',
+      danger: true,
+      dividerBefore: true,
+      onPress: () => {
+        confirmAction('确认删除', '确定要删除这条随心记吗？', () => handleDeleteItem(item));
+      },
+    });
+
+    const sheetTitle =
+      item.attachment?.originalName ||
+      (item.content.length > 26 ? `${item.content.slice(0, 26)}...` : item.content) ||
+      '随心记操作';
+
+    setContextSheet({
+      title: sheetTitle,
+      subtitle: isTemp ? '临时 20 分钟保留' : '永久保留',
+      items: sheetItems,
+    });
   };
 
-  // 删除单文件
-  const handleDelete = (file: StashFile) => {
-    Alert.alert('确认删除', `确定要彻底删除文件【${file.originalName}】吗？`, [
-      { text: '取消', style: 'cancel' },
+  const handleFolderLongPress = (folder: QuickVirtualFolder) => {
+    triggerHaptic('light');
+    const storageScope = folder.storageType;
+    const hasTemp = storageScope === 'temp';
+
+    const sheetItems: ActionSheetItem[] = [
       {
-        text: '彻底删除',
-        style: 'destructive',
+        key: 'enter',
+        label: '进入文件夹',
+        icon: 'folder-open-outline',
+        onPress: () => {
+          setCurrentPath(folder.fullPath);
+          setActiveFolderScope(folder.storageType);
+        },
+      },
+      {
+        key: 'zip',
+        label: '打包下载 ZIP',
+        icon: 'archive-outline',
         onPress: async () => {
           try {
-            await stashApi.deleteStashFile(file._id || file.id || '');
-            if (previewFile && ((previewFile._id || previewFile.id) === (file._id || file.id))) {
-              setPreviewFile(null);
-            }
-            loadFiles(true);
-          } catch (e: any) {
-            Alert.alert('删除失败', e.message || '网络异常');
+            const url = await quickNotesApi.getQuickFolderDownloadUrl(
+              folder.topLevelFolder,
+              storageScope
+            );
+            Linking.openURL(url).catch(() => showNotice('下载失败', '无法打开打包下载链接'));
+          } catch (err: any) {
+            showNotice('下载失败', err?.message || '获取下载链接失败');
           }
         },
       },
-    ]);
-  };
+    ];
 
-  // 进入虚拟目录
-  const handleEnterFolder = (folder: VirtualFolder) => {
-    setCurrentPath(folder.fullPath);
-  };
-
-  // 回退上一级
-  const handleGoBack = () => {
-    if (!currentPath) return;
-    const parts = currentPath.split('/');
-    parts.pop();
-    setCurrentPath(parts.join('/'));
-  };
-
-  // 文件夹打包整包下载 (ZIP)
-  const handleDownloadFolder = async (folder: VirtualFolder) => {
-    try {
-      const downloadUrl = await stashApi.getFolderDownloadUrl(folder.topLevelFolder, currentTab);
-      Linking.openURL(downloadUrl).catch(() => {
-        Alert.alert('下载失败', '无法唤起浏览器下载打包文件');
-      });
-    } catch (err: any) {
-      Alert.alert('打包下载异常', err.message || '下载请求失败');
-    }
-  };
-
-  // 文件夹整包转永久
-  const handlePromoteFolder = async (folder: VirtualFolder) => {
-    try {
-      await stashApi.promoteStashFolder(folder.topLevelFolder);
-      Alert.alert('成功', `文件夹【${folder.name}】及内部所有文件已全部转为永久保存`);
-      loadFiles(true);
-    } catch (e: any) {
-      Alert.alert('操作失败', e.message || '文件夹转为永久保存失败');
-    }
-  };
-
-  // 彻底删除整个文件夹
-  const handleDeleteFolder = (folder: VirtualFolder) => {
-    Alert.alert(
-      '确认删除文件夹',
-      `确定要彻底删除文件夹【${folder.name}】及其内部所有 ${folder.files.length} 个文件吗？此操作不可撤回。`,
-      [
-        { text: '取消', style: 'cancel' },
-        {
-          text: '彻底删除',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await stashApi.deleteStashFolder(folder.topLevelFolder, currentTab);
-              Alert.alert('已删除', `文件夹【${folder.name}】已成功清理`);
-              loadFiles(true);
-            } catch (e: any) {
-              Alert.alert('删除失败', e.message || '网络异常');
-            }
-          },
+    if (hasTemp) {
+      sheetItems.push({
+        key: 'promote-folder',
+        label: '整包转为永久',
+        icon: 'bookmark-outline',
+        color: '#059669',
+        onPress: async () => {
+          try {
+            await quickNotesApi.promoteQuickFolder(folder.topLevelFolder);
+            await runDeltaSync();
+          } catch (err: any) {
+            showNotice('操作失败', err?.message || '整包转永久失败');
+          }
         },
-      ]
-    );
+      });
+    }
+
+    sheetItems.push({
+      key: 'delete-folder',
+      label: '删除文件夹',
+      icon: 'trash-outline',
+      danger: true,
+      dividerBefore: true,
+      onPress: () => {
+        confirmAction(
+          '确认删除文件夹',
+          `确定要彻底删除文件夹「${folder.name}」内 ${folder.items.length} 个文件吗？`,
+          async () => {
+            try {
+              await quickNotesApi.deleteQuickFolder(folder.topLevelFolder, storageScope);
+              await loadFullList(true);
+            } catch (err: any) {
+              showNotice('删除失败', err?.message || '网络异常');
+            }
+          }
+        );
+      },
+    });
+
+    setContextSheet({
+      title: folder.name,
+      subtitle: `${folder.items.length} 个文件 · ${formatBytes(folder.totalSize)}`,
+      items: sheetItems,
+    });
   };
 
-  // 渲染虚拟文件夹卡片
-  const renderFolderCard = (folder: VirtualFolder) => {
-    const isTemp = currentTab === 'temp';
-    const remaining = folder.minRemaining ?? 0;
-    const isUrgent = isTemp && remaining > 0 && remaining <= 60;
-
-    return (
-      <View key={`folder_${folder.fullPath}`} style={[styles.card, styles.folderCard]}>
-        <TouchableOpacity
-          style={styles.cardHeaderRow}
-          onPress={() => handleEnterFolder(folder)}
-          activeOpacity={0.7}
+  const renderSkeleton = () => (
+    <View style={styles.skeletonWrap}>
+      {[1, 2, 3, 4].map(idx => (
+        <View
+          key={idx}
+          style={[
+            styles.skeletonCard,
+            { backgroundColor: theme.card, borderColor: theme.border },
+          ]}
         >
-          <View style={[styles.iconBox, styles.folderIconBox]}>
-            <Ionicons name="folder" size={24} color="#d97706" />
-          </View>
-          <View style={styles.cardMetaCol}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-              <Text style={styles.folderCardTitle} numberOfLines={1}>
-                {folder.name}
-              </Text>
-              <Ionicons name="chevron-forward" size={16} color="#94a3b8" />
-            </View>
-            <View style={styles.cardSubRow}>
-              <Text style={styles.cardSize}>
-                {folder.files.length} 个文件 · {formatBytes(folder.totalSize)}
-              </Text>
-              {isTemp ? (
-                <View style={[styles.badgePill, isUrgent && styles.badgeUrgent]}>
-                  <View style={[styles.badgeDot, isUrgent && styles.badgeDotUrgent]} />
-                  <Text style={[styles.badgeText, isUrgent && styles.badgeTextUrgent]}>
-                    剩余 {formatCountdown(remaining)}
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.permanentPill}>
-                  <Text style={styles.permanentText}>永久文件夹</Text>
-                </View>
-              )}
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        {/* 文件夹操作快捷栏 */}
-        <View style={styles.cardActionRow}>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => handleEnterFolder(folder)}>
-            <Ionicons name="open-outline" size={15} color="#2563eb" />
-            <Text style={[styles.actionBtnText, { color: '#2563eb' }]}>进入查看</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.actionBtn} onPress={() => handleDownloadFolder(folder)}>
-            <Ionicons name="archive-outline" size={15} color="#7c3aed" />
-            <Text style={[styles.actionBtnText, { color: '#7c3aed' }]}>打包 ZIP</Text>
-          </TouchableOpacity>
-
-          {isTemp && (
-            <TouchableOpacity style={styles.actionBtn} onPress={() => handlePromoteFolder(folder)}>
-              <Ionicons name="bookmark-outline" size={15} color="#d97706" />
-              <Text style={[styles.actionBtnText, { color: '#d97706' }]}>整包转永久</Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.deleteBtn]}
-            onPress={() => handleDeleteFolder(folder)}
-          >
-            <Ionicons name="trash-outline" size={15} color="#dc2626" />
-          </TouchableOpacity>
+          <View style={[styles.skeletonLineLg, { backgroundColor: theme.backgroundElement }]} />
+          <View style={[styles.skeletonLineMd, { backgroundColor: theme.backgroundElement }]} />
+          <View style={[styles.skeletonLineSm, { backgroundColor: theme.backgroundElement }]} />
         </View>
-      </View>
-    );
-  };
+      ))}
+    </View>
+  );
 
-  // 渲染单文件卡片
-  const renderFileCard = (item: StashFile) => {
-    const meta = getFileIcon(item.originalName, item.mimetype);
-    const isTemp = item.storageType === 'temp';
-    const remaining = item.remainingSeconds ?? 0;
-    const isUrgent = isTemp && remaining <= 60;
+  const scopeButtons: { key: QuickScopeTab; label: string; count: number }[] = [
+    { key: 'all', label: '全部', count: counts.all },
+    { key: 'temp', label: '临时 20m', count: counts.temp },
+    { key: 'permanent', label: '永久', count: counts.permanent },
+  ];
 
-    return (
-      <View key={item._id || item.id} style={styles.card}>
-        <TouchableOpacity
-          style={styles.cardHeaderRow}
-          onPress={() => setPreviewFile(item)}
-          activeOpacity={0.7}
-        >
-          <View style={[styles.iconBox, { backgroundColor: meta.bg }]}>
-            <Ionicons name={meta.name} size={22} color={meta.color} />
-          </View>
-          <View style={styles.cardMetaCol}>
-            <Text style={styles.cardTitle} numberOfLines={1} ellipsizeMode="middle">
-              {item.originalName}
-            </Text>
-            <View style={styles.cardSubRow}>
-              <Text style={styles.cardSize}>{formatBytes(item.size)}</Text>
-              {isTemp ? (
-                <View style={[styles.badgePill, isUrgent && styles.badgeUrgent]}>
-                  <View style={[styles.badgeDot, isUrgent && styles.badgeDotUrgent]} />
-                  <Text style={[styles.badgeText, isUrgent && styles.badgeTextUrgent]}>
-                    剩余 {formatCountdown(remaining)}
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.permanentPill}>
-                  <Text style={styles.permanentText}>永久保存</Text>
-                </View>
-              )}
-            </View>
-          </View>
-          <View style={[styles.actionBtn, styles.headerPreviewBtn]}>
-            <Ionicons name="eye-outline" size={15} color="#1890ff" />
-            <Text style={[styles.actionBtnText, { color: '#1890ff' }]}>预览</Text>
-          </View>
-        </TouchableOpacity>
-
-        {/* 底部操作行 */}
-        <View style={styles.cardActionRow}>
-          <TouchableOpacity style={styles.actionBtn} onPress={() => handleOpenUrl(item)}>
-            <Ionicons name="download-outline" size={15} color="#2563eb" />
-            <Text style={[styles.actionBtnText, { color: '#2563eb' }]}>打开/下载</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={styles.actionBtn} onPress={() => handleCopyUrl(item)}>
-            <Ionicons name="copy-outline" size={15} color="#475569" />
-            <Text style={styles.actionBtnText}>复制直链</Text>
-          </TouchableOpacity>
-
-          {isTemp && (
-            <TouchableOpacity style={styles.actionBtn} onPress={() => handlePromote(item)}>
-              <Ionicons name="bookmark-outline" size={15} color="#d97706" />
-              <Text style={[styles.actionBtnText, { color: '#d97706' }]}>转永久</Text>
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={[styles.actionBtn, styles.deleteBtn]}
-            onPress={() => handleDelete(item)}
-          >
-            <Ionicons name="trash-outline" size={15} color="#dc2626" />
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
-  // 面包屑导航片段
-  const breadcrumbSegments = useMemo(() => {
-    if (!currentPath) return [];
-    return currentPath.split('/');
-  }, [currentPath]);
-
-  const isEmpty = viewData.folders.length === 0 && viewData.files.length === 0;
+  const hasTypedText = composerText.trim().length > 0;
+  const defaultFolderLabel = currentPath
+    ? ''
+    : `资料包_${new Date().getMonth() + 1}${new Date().getDate()}`;
 
   return (
-    <View style={styles.container}>
-      {/* Web 端隐藏文件夹上传 input */}
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: theme.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 88 : 0}
+    >
       {Platform.OS === 'web' && (
         <input
           ref={webFolderInputRef}
           type="file"
-          // @ts-ignore
-          webkitdirectory=""
-          // @ts-ignore
-          directory=""
           multiple
           style={{ display: 'none' }}
           onChange={handleWebFolderInputChange}
         />
       )}
 
-      {/* 顶部双分区切换 */}
-      <View style={styles.segmentContainer}>
-        <TouchableOpacity
-          style={[styles.segmentBtn, currentTab === 'temp' && styles.segmentBtnActive]}
-          onPress={() => setCurrentTab('temp')}
-        >
-          <Text style={[styles.segmentText, currentTab === 'temp' && styles.segmentTextActive]}>
-            临时文件 (10分钟)
-          </Text>
-          <View style={[styles.countBadge, currentTab === 'temp' && styles.countBadgeActive]}>
-            <Text style={[styles.countText, currentTab === 'temp' && styles.countTextActive]}>
-              {tempCount}
-            </Text>
-          </View>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.segmentBtn, currentTab === 'permanent' && styles.segmentBtnActive]}
-          onPress={() => setCurrentTab('permanent')}
-        >
-          <Text style={[styles.segmentText, currentTab === 'permanent' && styles.segmentTextActive]}>
-            永久文件
-          </Text>
-          <View style={[styles.countBadge, currentTab === 'permanent' && styles.countBadgeActive]}>
-            <Text style={[styles.countText, currentTab === 'permanent' && styles.countTextActive]}>
-              {permanentCount}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      </View>
-
-      {/* 规则说明条 */}
-      <View style={styles.hintBar}>
-        <Ionicons
-          name={currentTab === 'temp' ? 'time-outline' : 'cloud-done-outline'}
-          size={14}
-          color="#64748b"
-        />
-        <Text style={styles.hintText}>
-          {currentTab === 'temp'
-            ? '临时文件在上传 10 分钟后自动彻底销毁，支持转为永久'
-            : '永久文件安全存储，支持跨端无限制下载与查看'}
-        </Text>
-      </View>
-
-      {/* 目录层级导航与面包屑栏 */}
-      <View style={styles.breadcrumbBar}>
-        {Boolean(currentPath) && (
-          <TouchableOpacity style={styles.backBtn} onPress={handleGoBack} activeOpacity={0.7}>
-            <Ionicons name="arrow-back" size={16} color="#2563eb" />
-            <Text style={styles.backBtnText}>上一级</Text>
-          </TouchableOpacity>
-        )}
-
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.breadcrumbContent}
-        >
-          <TouchableOpacity onPress={() => setCurrentPath('')} activeOpacity={0.7}>
-            <Text style={[styles.breadcrumbText, !currentPath && styles.breadcrumbTextActive]}>
-              全部文件
-            </Text>
-          </TouchableOpacity>
-
-          {breadcrumbSegments.map((segment, index) => {
-            const isLast = index === breadcrumbSegments.length - 1;
-            const target = breadcrumbSegments.slice(0, index + 1).join('/');
-
-            return (
-              <React.Fragment key={target}>
-                <Ionicons name="chevron-forward" size={13} color="#94a3b8" style={{ marginHorizontal: 4 }} />
-                <TouchableOpacity
-                  onPress={() => !isLast && setCurrentPath(target)}
-                  activeOpacity={isLast ? 1 : 0.7}
+      {/* 顶部分区切换 */}
+      <View
+        style={[
+          styles.segmentContainer,
+          { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+        ]}
+      >
+        {scopeButtons.map(btn => {
+          const active = scopeTab === btn.key;
+          return (
+            <TouchableOpacity
+              key={btn.key}
+              style={[
+                styles.segmentBtn,
+                active && [styles.segmentBtnActive, { backgroundColor: theme.card }],
+              ]}
+              onPress={() => handleScopeChange(btn.key)}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.segmentText,
+                  { color: active ? theme.text : theme.textSecondary },
+                  active && styles.segmentTextActive,
+                ]}
+              >
+                {btn.label}
+              </Text>
+              <View
+                style={[
+                  styles.countBadge,
+                  {
+                    backgroundColor: active
+                      ? isDark
+                        ? 'rgba(56, 189, 248, 0.16)'
+                        : '#eff6ff'
+                      : theme.background,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.countText,
+                    { color: active ? accentColor : theme.textSecondary },
+                  ]}
                 >
-                  <Text style={[styles.breadcrumbText, isLast && styles.breadcrumbTextActive]}>
-                    {segment}
+                  {btn.count}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* 类型过滤 / 文件夹模式切换条 */}
+      <View style={styles.toolbarRow}>
+        {viewMode === 'stream' ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScroll}
+          >
+            {KIND_FILTERS.map(f => {
+              const active = kindFilter === f.key;
+              return (
+                <TouchableOpacity
+                  key={f.key}
+                  style={[
+                    styles.filterChip,
+                    {
+                      backgroundColor: active
+                        ? isDark
+                          ? 'rgba(56, 189, 248, 0.16)'
+                          : '#eff6ff'
+                        : theme.card,
+                      borderColor: active ? accentColor : theme.border,
+                    },
+                  ]}
+                  onPress={() => setKindFilter(f.key)}
+                  activeOpacity={0.75}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      { color: active ? accentColor : theme.textSecondary },
+                    ]}
+                  >
+                    {f.label}
                   </Text>
                 </TouchableOpacity>
-              </React.Fragment>
-            );
-          })}
-        </ScrollView>
+              );
+            })}
+          </ScrollView>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScroll}
+          >
+            {Boolean(currentPath) && (
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  { backgroundColor: theme.card, borderColor: theme.border },
+                ]}
+                onPress={() => {
+                  const parts = currentPath.split('/');
+                  parts.pop();
+                  const nextPath = parts.join('/');
+                  setCurrentPath(nextPath);
+                  if (!nextPath) setActiveFolderScope(null);
+                }}
+              >
+                <Ionicons name="arrow-back" size={14} color={accentColor} />
+                <Text style={[styles.filterChipText, { color: accentColor }]}>上一级</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={[styles.filterChip, { backgroundColor: theme.card, borderColor: theme.border }]}
+              onPress={() => {
+                setCurrentPath('');
+                setActiveFolderScope(null);
+              }}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  { color: !currentPath ? theme.text : theme.textSecondary },
+                ]}
+              >
+                全部目录
+              </Text>
+            </TouchableOpacity>
+            {breadcrumbSegments.map((seg, idx) => {
+              const target = breadcrumbSegments.slice(0, idx + 1).join('/');
+              const isLast = idx === breadcrumbSegments.length - 1;
+              return (
+                <TouchableOpacity
+                  key={target}
+                  style={[styles.filterChip, { backgroundColor: theme.card, borderColor: theme.border }]}
+                  onPress={() => !isLast && setCurrentPath(target)}
+                >
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      { color: isLast ? theme.text : theme.textSecondary },
+                    ]}
+                  >
+                    {seg}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
+
+        <TouchableOpacity
+          style={[
+            styles.modeToggleBtn,
+            {
+              backgroundColor:
+                viewMode === 'folder'
+                  ? isDark
+                    ? 'rgba(56, 189, 248, 0.16)'
+                    : '#eff6ff'
+                  : theme.card,
+              borderColor: viewMode === 'folder' ? accentColor : theme.border,
+            },
+          ]}
+          onPress={handleToggleViewMode}
+          activeOpacity={0.75}
+        >
+          <Ionicons
+            name={viewMode === 'folder' ? 'chatbubble-ellipses-outline' : 'folder-outline'}
+            size={15}
+            color={viewMode === 'folder' ? accentColor : theme.textSecondary}
+          />
+          <Text
+            style={[
+              styles.modeToggleText,
+              { color: viewMode === 'folder' ? accentColor : theme.textSecondary },
+            ]}
+          >
+            {viewMode === 'folder' ? '对话流' : '文件夹'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      {/* 文件及文件夹列表 */}
-      {isLoading ? (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#1890ff" />
-          <Text style={styles.loadingText}>加载暂存列表中...</Text>
+      {/* 容量信息轻量提示 */}
+      {quota.permanentUsedBytes > 0 && (
+        <View style={styles.quotaBar}>
+          <Text style={[styles.quotaText, { color: theme.textSecondary }]}>
+            永久配额 {formatBytes(quota.permanentUsedBytes)} /{' '}
+            {formatBytes(quota.permanentLimitBytes)}
+          </Text>
         </View>
+      )}
+
+      {/* 主体内容区 */}
+      {isLoading ? (
+        renderSkeleton()
+      ) : viewMode === 'stream' ? (
+        <FlatList
+          ref={flatListRef}
+          data={filteredStreamItems}
+          keyExtractor={item => item._id || item.id}
+          contentContainerStyle={[
+            styles.listContent,
+            filteredStreamItems.length === 0 && styles.emptyListGrow,
+          ]}
+          renderItem={({ item }) => (
+            <QuickMemoCard
+              item={item}
+              serverOffsetMs={serverOffsetMs}
+              isTimerActive={isTimerActive}
+              onPressItem={handlePressItem}
+              onLongPressItem={handleLongPressItem}
+              onCopyQuick={it => void handleCopyItem(it)}
+              onOpenConvertedNote={noteId =>
+                router.push({ pathname: '/note/[id]', params: { id: noteId } })
+              }
+            />
+          )}
+          onContentSizeChange={() => {
+            if (shouldScrollToBottomRef.current && filteredStreamItems.length > 0) {
+              shouldScrollToBottomRef.current = false;
+              flatListRef.current?.scrollToEnd({ animated: false });
+            }
+          }}
+          onScroll={e => {
+            const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+            isNearBottomRef.current =
+              layoutMeasurement.height + contentOffset.y >= contentSize.height - 96;
+          }}
+          scrollEventThrottle={120}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={() => loadFullList(true)}
+              tintColor={accentColor}
+              colors={['#1890ff']}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <View style={[styles.emptyIconCircle, { backgroundColor: theme.backgroundElement }]}>
+                <Ionicons name="paper-plane-outline" size={32} color={theme.textSecondary} />
+              </View>
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>暂无随心记</Text>
+              <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
+                输入文字、粘贴链接或选取图片文件，手机与电脑即时同步
+              </Text>
+            </View>
+          }
+        />
       ) : (
         <ScrollView
           contentContainerStyle={styles.listContent}
           refreshControl={
             <RefreshControl
               refreshing={isRefreshing}
-              onRefresh={() => loadFiles(true)}
-              tintColor="#1890ff"
+              onRefresh={() => loadFullList(true)}
+              tintColor={accentColor}
+              colors={['#1890ff']}
             />
           }
         >
-          {/* 渲染子文件夹 */}
-          {viewData.folders.map(folder => renderFolderCard(folder))}
+          {folderTree.folders.map(folder => (
+            <TouchableOpacity
+              key={folder.key}
+              style={[
+                styles.folderCard,
+                { backgroundColor: theme.card, borderColor: theme.border },
+              ]}
+              onPress={() => {
+                setCurrentPath(folder.fullPath);
+                setActiveFolderScope(folder.storageType);
+              }}
+              onLongPress={() => handleFolderLongPress(folder)}
+              delayLongPress={400}
+              activeOpacity={0.75}
+            >
+              <View
+                style={[
+                  styles.folderIconSlot,
+                  {
+                    backgroundColor: isDark ? 'rgba(217, 119, 6, 0.18)' : '#fef3c7',
+                  },
+                ]}
+              >
+                <Ionicons name="folder" size={22} color="#d97706" />
+              </View>
+              <View style={styles.folderMeta}>
+                <Text style={[styles.folderTitle, { color: theme.text }]} numberOfLines={1}>
+                  {folder.name}
+                </Text>
+                <View style={styles.folderSubRow}>
+                  <Text style={[styles.folderSize, { color: theme.textSecondary }]}>
+                    {folder.items.length} 个文件 · {formatBytes(folder.totalSize)}
+                  </Text>
+                  {folder.storageType === 'temp' ? (
+                    <CountdownBadge
+                      expireAt={folder.minExpireAt}
+                      fallbackSeconds={folder.minRemaining}
+                      serverOffsetMs={serverOffsetMs}
+                      isTimerActive={isTimerActive}
+                    />
+                  ) : (
+                    <View
+                      style={[
+                        styles.permFolderBadge,
+                        { backgroundColor: isDark ? 'rgba(5, 150, 105, 0.2)' : '#ecfdf5' },
+                      ]}
+                    >
+                      <Text style={styles.permFolderText}>永久</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={theme.textSecondary} />
+            </TouchableOpacity>
+          ))}
 
-          {/* 渲染当前目录直属文件 */}
-          {viewData.files.map(file => renderFileCard(file))}
+          {folderTree.files.map(item => (
+            <QuickMemoCard
+              key={item._id || item.id}
+              item={item}
+              serverOffsetMs={serverOffsetMs}
+              isTimerActive={isTimerActive}
+              onPressItem={handlePressItem}
+              onLongPressItem={handleLongPressItem}
+              onCopyQuick={it => void handleCopyItem(it)}
+              onOpenConvertedNote={noteId =>
+                router.push({ pathname: '/note/[id]', params: { id: noteId } })
+              }
+            />
+          ))}
 
-          {/* 空白占位 */}
-          {isEmpty && (
+          {folderTree.folders.length === 0 && folderTree.files.length === 0 && (
             <View style={styles.emptyContainer}>
-              <Ionicons
-                name={currentPath ? 'folder-open-outline' : 'cloud-upload-outline'}
-                size={48}
-                color="#cbd5e1"
-              />
-              <Text style={styles.emptyTitle}>
-                {currentPath
-                  ? `【${breadcrumbSegments[breadcrumbSegments.length - 1]}】目录为空`
-                  : `暂无${currentTab === 'temp' ? '临时' : '永久'}文件`}
-              </Text>
-              <Text style={styles.emptySubtitle}>
-                点击下方「上传文件」按钮，选择手机相册、系统文件或直接上传完整文件夹
+              <View style={[styles.emptyIconCircle, { backgroundColor: theme.backgroundElement }]}>
+                <Ionicons name="folder-open-outline" size={32} color={theme.textSecondary} />
+              </View>
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>当前目录为空</Text>
+              <Text style={[styles.emptySubtitle, { color: theme.textSecondary }]}>
+                点击左下角附件按钮上传文件或文件夹
               </Text>
             </View>
           )}
         </ScrollView>
       )}
 
-      {/* 底部悬浮上传按钮 */}
-      <View style={styles.bottomBar}>
-        <TouchableOpacity
-          style={styles.uploadFab}
-          onPress={() => setShowPickerSheet(true)}
-          disabled={isUploading || isBatchUploading}
-        >
-          {isUploading || isBatchUploading ? (
-            <ActivityIndicator size="small" color="#ffffff" />
+      {/* 吸底快捷输入栏 */}
+      <View
+        style={[
+          styles.composerContainer,
+          { backgroundColor: theme.card, borderTopColor: theme.border },
+        ]}
+      >
+        <View style={styles.composerTopRow}>
+          <TouchableOpacity
+            style={[
+              styles.ttlPill,
+              {
+                backgroundColor:
+                  sendStorageType === 'temp'
+                    ? isDark
+                      ? 'rgba(217, 119, 6, 0.18)'
+                      : '#fef3c7'
+                    : isDark
+                    ? 'rgba(5, 150, 105, 0.18)'
+                    : '#ecfdf5',
+              },
+            ]}
+            onPress={() => setSendStorageType(prev => (prev === 'temp' ? 'permanent' : 'temp'))}
+            hitSlop={6}
+            activeOpacity={0.75}
+          >
+            <View
+              style={[
+                styles.ttlDot,
+                { backgroundColor: sendStorageType === 'temp' ? '#d97706' : '#059669' },
+              ]}
+            />
+            <Text
+              style={[
+                styles.ttlText,
+                { color: sendStorageType === 'temp' ? '#d97706' : '#059669' },
+              ]}
+            >
+              {sendStorageType === 'temp' ? '临时保留 · 20 分钟' : '永久保留'}
+            </Text>
+            <Ionicons
+              name="swap-horizontal-outline"
+              size={13}
+              color={sendStorageType === 'temp' ? '#d97706' : '#059669'}
+            />
+          </TouchableOpacity>
+
+          <Text style={[styles.composerHint, { color: theme.textSecondary }]}>
+            长按卡片可操作
+          </Text>
+        </View>
+
+        <View style={styles.composerInputRow}>
+          <TouchableOpacity
+            style={[styles.composerIconBtn, { backgroundColor: theme.backgroundElement }]}
+            onPress={() => setShowAttachSheet(true)}
+            disabled={isBatchUploading}
+            activeOpacity={0.75}
+          >
+            <Ionicons name="add" size={22} color={theme.text} />
+          </TouchableOpacity>
+
+          <TextInput
+            ref={composerInputRef}
+            style={[
+              styles.composerInput,
+              {
+                color: theme.text,
+                backgroundColor: theme.backgroundElement,
+                borderColor: theme.border,
+              },
+            ]}
+            value={composerText}
+            onChangeText={setComposerText}
+            placeholder="输入文字或粘贴链接..."
+            placeholderTextColor={theme.textSecondary}
+            multiline
+          />
+
+          {hasTypedText ? (
+            <TouchableOpacity
+              style={[styles.sendBtn, isSending && styles.disabledBtn]}
+              onPress={() => void handleSendText()}
+              disabled={isSending}
+              activeOpacity={0.85}
+            >
+              {isSending ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <Ionicons name="arrow-up" size={20} color="#ffffff" />
+              )}
+            </TouchableOpacity>
           ) : (
-            <>
-              <Ionicons name="cloud-upload" size={18} color="#ffffff" style={{ marginRight: 6 }} />
-              <Text style={styles.uploadFabText}>
-                上传至【{currentTab === 'temp' ? '临时暂存' : '永久文件'}】
-              </Text>
-            </>
+            <TouchableOpacity
+              style={[
+                styles.pasteBtn,
+                {
+                  backgroundColor: isDark ? 'rgba(56, 189, 248, 0.16)' : '#eff6ff',
+                  borderColor: accentColor,
+                },
+              ]}
+              onPress={() => void handlePasteClipboard()}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="clipboard-outline" size={18} color={accentColor} />
+              <Text style={[styles.pasteBtnText, { color: accentColor }]}>粘贴</Text>
+            </TouchableOpacity>
           )}
-        </TouchableOpacity>
+        </View>
       </View>
 
-      {/* 上传来源选择抽屉 */}
+      {/* 附件来源选择弹窗 */}
       <Modal
-        visible={showPickerSheet}
+        visible={showAttachSheet}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowPickerSheet(false)}
+        statusBarTranslucent
+        onRequestClose={() => setShowAttachSheet(false)}
       >
         <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
-          onPress={() => setShowPickerSheet(false)}
+          onPress={() => setShowAttachSheet(false)}
         >
-          <View style={styles.modalSheet}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>选择暂存文件来源 (单文件最高100MB)</Text>
+          <View style={[styles.attachSheet, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <View style={[styles.sheetHandle, { backgroundColor: theme.border }]} />
+            <Text style={[styles.sheetTitle, { color: theme.textSecondary }]}>
+              选择附件发送（单文件上限 100MB）
+            </Text>
 
-            <TouchableOpacity style={styles.sheetOption} onPress={handlePickFromLibrary}>
-              <View style={[styles.sheetIconBox, { backgroundColor: '#eff6ff' }]}>
-                <Ionicons name="images-outline" size={22} color="#2563eb" />
+            <TouchableOpacity
+              style={[styles.sheetOption, { borderBottomColor: theme.border }]}
+              onPress={() => void handlePickFromLibrary()}
+            >
+              <View
+                style={[
+                  styles.sheetIconBox,
+                  { backgroundColor: isDark ? 'rgba(56, 189, 248, 0.16)' : '#eff6ff' },
+                ]}
+              >
+                <Ionicons name="images-outline" size={21} color={accentColor} />
               </View>
-              <View style={styles.sheetOptionTextCol}>
-                <Text style={styles.sheetOptionPrimary}>从手机相册选取</Text>
-                <Text style={styles.sheetOptionSecondary}>支持图片、动图与高清视频</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.sheetOption} onPress={handlePickFromDocuments}>
-              <View style={[styles.sheetIconBox, { backgroundColor: '#f0fdf4' }]}>
-                <Ionicons name="document-text-outline" size={22} color="#16a34a" />
-              </View>
-              <View style={styles.sheetOptionTextCol}>
-                <Text style={styles.sheetOptionPrimary}>选取单个系统文件</Text>
-                <Text style={styles.sheetOptionSecondary}>支持 PDF、Word、Excel、压缩包等</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.sheetOption} onPress={handlePickFolder}>
-              <View style={[styles.sheetIconBox, { backgroundColor: '#fdf4ff' }]}>
-                <Ionicons name="folder-open" size={22} color="#a855f7" />
-              </View>
-              <View style={styles.sheetOptionTextCol}>
-                <Text style={styles.sheetOptionPrimary}>上传完整文件夹 (保留目录层级)</Text>
-                <Text style={styles.sheetOptionSecondary}>
-                  {Platform.OS === 'web'
-                    ? '选择浏览器文件夹，自动扫描子目录及内部文件'
-                    : '选取多个文件打包为目录，支持一键下载ZIP与层级浏览'}
+              <View style={styles.sheetOptionCol}>
+                <Text style={[styles.sheetOptionPrimary, { color: theme.text }]}>从手机相册选取</Text>
+                <Text style={[styles.sheetOptionSub, { color: theme.textSecondary }]}>
+                  发送图片或视频
                 </Text>
               </View>
-              <Ionicons name="chevron-forward" size={18} color="#cbd5e1" />
+              <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.sheetCancelBtn}
-              onPress={() => setShowPickerSheet(false)}
+              style={[styles.sheetOption, { borderBottomColor: theme.border }]}
+              onPress={() => void handlePickFromDocuments()}
             >
-              <Text style={styles.sheetCancelText}>取消</Text>
+              <View
+                style={[
+                  styles.sheetIconBox,
+                  { backgroundColor: isDark ? 'rgba(5, 150, 105, 0.16)' : '#ecfdf5' },
+                ]}
+              >
+                <Ionicons name="document-text-outline" size={21} color="#059669" />
+              </View>
+              <View style={styles.sheetOptionCol}>
+                <Text style={[styles.sheetOptionPrimary, { color: theme.text }]}>选取系统文件</Text>
+                <Text style={[styles.sheetOptionSub, { color: theme.textSecondary }]}>
+                  支持 PDF、文档、代码或压缩包
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.sheetOption, { borderBottomWidth: 0 }]} onPress={handlePickFolder}>
+              <View
+                style={[
+                  styles.sheetIconBox,
+                  { backgroundColor: isDark ? 'rgba(217, 119, 6, 0.16)' : '#fef3c7' },
+                ]}
+              >
+                <Ionicons name="folder-open-outline" size={21} color="#d97706" />
+              </View>
+              <View style={styles.sheetOptionCol}>
+                <Text style={[styles.sheetOptionPrimary, { color: theme.text }]}>上传完整文件夹</Text>
+                <Text style={[styles.sheetOptionSub, { color: theme.textSecondary }]}>
+                  保留目录层级，支持一键打包 ZIP
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.sheetCancelBtn, { backgroundColor: theme.backgroundElement }]}
+              onPress={() => setShowAttachSheet(false)}
+            >
+              <Text style={[styles.sheetCancelText, { color: theme.textSecondary }]}>取消</Text>
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
 
-      {/* 原生端文件夹名称确认弹窗 */}
-      <Modal
+      {/* 原生文件夹命名弹窗（复用 TextPromptModal） */}
+      <TextPromptModal
         visible={showFolderNameModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowFolderNameModal(false)}
-      >
-        <View style={styles.centerModalOverlay}>
-          <View style={styles.folderModalCard}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <Ionicons name="folder" size={22} color="#f59e0b" />
-              <Text style={styles.folderModalTitle}>创建并上传文件夹</Text>
-            </View>
-            <Text style={styles.folderModalDesc}>
-              请输入要在云端暂存区归纳的文件夹名称，确认后选择要归入该文件夹的文件：
-            </Text>
-
-            <TextInput
-              style={styles.folderModalInput}
-              value={folderNameInput}
-              onChangeText={setFolderNameInput}
-              placeholder="例如：会议纪要资料、设计图集..."
-              placeholderTextColor="#94a3b8"
-              autoFocus
-            />
-
-            <View style={styles.folderModalActions}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalCancelBtn]}
-                onPress={() => setShowFolderNameModal(false)}
-              >
-                <Text style={styles.modalCancelText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalConfirmBtn]}
-                onPress={handleNativeFolderConfirm}
-              >
-                <Text style={styles.modalConfirmText}>下一步：选取文件</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        title="新建并上传文件夹"
+        subtitle="请命名目录，随后将打开系统文件选择器选取多文件归入该目录"
+        placeholder="例如：会议资料、设计截图..."
+        defaultValue={defaultFolderLabel}
+        confirmLabel="下一步：选取文件"
+        onClose={() => setShowFolderNameModal(false)}
+        onConfirm={value => handleNativeFolderConfirm(value)}
+      />
 
       {/* 批量上传进度遮罩 */}
-      <Modal visible={isBatchUploading} transparent animationType="fade">
-        <View style={styles.centerModalOverlay}>
-          <View style={styles.progressCard}>
-            <ActivityIndicator size="large" color="#7c3aed" style={{ marginBottom: 14 }} />
-            <Text style={styles.progressTitle}>
-              正在批量上传 ({batchCurrentIndex} / {batchTotalCount})
+      <Modal visible={isBatchUploading} transparent animationType="fade" statusBarTranslucent>
+        <View style={styles.progressOverlay}>
+          <View style={[styles.progressCard, { backgroundColor: theme.card, borderColor: theme.border }]}>
+            <ActivityIndicator size="large" color={accentColor} />
+            <Text style={[styles.progressTitle, { color: theme.text }]}>
+              正在上传 ({batchCurrentIndex} / {batchTotalCount})
             </Text>
-            <Text style={styles.progressSub} numberOfLines={1}>
-              {currentUploadingFileName}
+            <Text style={[styles.progressSub, { color: accentColor }]} numberOfLines={1}>
+              {currentUploadingName}
             </Text>
-            <Text style={styles.progressHint}>请保持网络连接，上传完成后将自动展示目录</Text>
           </View>
         </View>
       </Modal>
 
-      {/* 沉浸式全屏文件即时预览模态框 */}
+      {/* 全屏媒体与文本预览 */}
       <FilePreviewModal
-        visible={Boolean(previewFile)}
-        file={previewFile}
-        onClose={() => setPreviewFile(null)}
-        onPromote={handlePromote}
+        visible={Boolean(previewItem)}
+        file={previewItem as PreviewableFile | null}
+        serverOffsetMs={serverOffsetMs}
+        onClose={() => setPreviewItem(null)}
+        onPromote={f => void handlePromoteItem(f as QuickMemoItem)}
+        onConvertToNote={f => {
+          setPreviewItem(null);
+          setConvertTarget(f as QuickMemoItem);
+        }}
       />
-    </View>
+
+      {/* 一键转存为正式笔记弹窗 */}
+      <QuickNoteConvertModal
+        visible={Boolean(convertTarget)}
+        item={convertTarget}
+        onClose={() => setConvertTarget(null)}
+        onConverted={(updatedMemo, createdNote) => {
+          setItems(prev =>
+            mergeQuickMemoDelta(prev, { items: [updatedMemo] }, serverOffsetRef.current)
+          );
+          showNotice('已转存为笔记', `已保存至《${createdNote.title}》`);
+        }}
+      />
+
+      {/* 400ms 长按上下文动作面板 */}
+      <ActionContextSheet
+        visible={Boolean(contextSheet)}
+        title={contextSheet?.title}
+        subtitle={contextSheet?.subtitle}
+        items={contextSheet?.items || []}
+        onClose={() => setContextSheet(null)}
+      />
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
   },
   segmentContainer: {
     flexDirection: 'row',
-    backgroundColor: '#e2e8f0',
     marginHorizontal: 16,
-    marginTop: 12,
+    marginTop: 10,
     marginBottom: 8,
-    borderRadius: 8,
+    borderRadius: 10,
+    borderWidth: 1,
     padding: 3,
   },
   segmentBtn: {
@@ -1044,444 +1491,356 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 8,
-    borderRadius: 6,
-    gap: 6,
+    minHeight: 38,
+    borderRadius: 8,
+    gap: 5,
   },
   segmentBtnActive: {
-    backgroundColor: '#ffffff',
-    shadowColor: '#000',
+    shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 2,
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
   segmentText: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#64748b',
   },
   segmentTextActive: {
-    color: '#0f172a',
     fontWeight: '700',
   },
   countBadge: {
-    backgroundColor: '#cbd5e1',
-    borderRadius: 10,
+    borderRadius: 8,
     paddingHorizontal: 6,
     paddingVertical: 1,
-  },
-  countBadgeActive: {
-    backgroundColor: '#eff6ff',
   },
   countText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#475569',
+    fontFamily: MONO_FONT,
   },
-  countTextActive: {
-    color: '#2563eb',
+  toolbarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 16,
+    paddingRight: 16,
+    marginBottom: 8,
+    gap: 8,
   },
-  hintBar: {
+  filterScroll: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginHorizontal: 16,
-    marginBottom: 8,
   },
-  hintText: {
-    fontSize: 12,
-    color: '#64748b',
-    flex: 1,
-  },
-  breadcrumbBar: {
+  filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 16,
-    marginBottom: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#ffffff',
-    borderRadius: 8,
+    gap: 4,
+    minHeight: 36,
+    paddingHorizontal: 11,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
   },
-  backBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingRight: 10,
-    marginRight: 6,
-    borderRightWidth: 1,
-    borderRightColor: '#e2e8f0',
-    gap: 2,
-  },
-  backBtnText: {
-    fontSize: 13,
+  filterChipText: {
+    fontSize: 12,
     fontWeight: '600',
-    color: '#2563eb',
   },
-  breadcrumbContent: {
+  modeToggleBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
+    minHeight: 36,
+    paddingHorizontal: 10,
+    borderRadius: 18,
+    borderWidth: 1,
   },
-  breadcrumbText: {
-    fontSize: 13,
-    color: '#64748b',
+  modeToggleText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
-  breadcrumbTextActive: {
-    color: '#0f172a',
-    fontWeight: '700',
+  quotaBar: {
+    paddingHorizontal: 18,
+    marginBottom: 6,
+  },
+  quotaText: {
+    fontSize: 11,
+    fontFamily: MONO_FONT,
   },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 90,
+    paddingTop: 4,
+    paddingBottom: 14,
   },
-  card: {
-    backgroundColor: '#ffffff',
+  emptyListGrow: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
+  skeletonWrap: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    gap: 10,
+  },
+  skeletonCard: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#e2e8f0',
     padding: 14,
-    marginBottom: 10,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    gap: 8,
+  },
+  skeletonLineLg: {
+    height: 14,
+    width: '78%',
+    borderRadius: 6,
+  },
+  skeletonLineMd: {
+    height: 12,
+    width: '52%',
+    borderRadius: 6,
+  },
+  skeletonLineSm: {
+    height: 10,
+    width: '28%',
+    borderRadius: 5,
   },
   folderCard: {
-    backgroundColor: '#fffdfa',
-    borderColor: '#fde68a',
-  },
-  cardHeaderRow: {
+    minHeight: 62,
     flexDirection: 'row',
     alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 10,
+    gap: 12,
   },
-  iconBox: {
+  folderIconSlot: {
     width: 44,
     height: 44,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
   },
-  folderIconBox: {
-    backgroundColor: '#fef3c7',
-  },
-  cardMetaCol: {
+  folderMeta: {
     flex: 1,
-    marginRight: 10,
+    gap: 4,
   },
-  headerPreviewBtn: {
-    backgroundColor: '#eff6ff',
-    borderColor: '#bfdbfe',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 4,
-  },
-  folderCardTitle: {
+  folderTitle: {
     fontSize: 15,
-    fontWeight: '700',
-    color: '#b45309',
-    marginBottom: 4,
-    flex: 1,
-  },
-  cardSubRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  cardSize: {
-    fontSize: 12,
-    color: '#94a3b8',
-  },
-  badgePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f1f5f9',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    gap: 4,
-  },
-  badgeUrgent: {
-    backgroundColor: '#fee2e2',
-  },
-  badgeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#3b82f6',
-  },
-  badgeDotUrgent: {
-    backgroundColor: '#ef4444',
-  },
-  badgeText: {
-    fontSize: 11,
-    color: '#475569',
-    fontWeight: '500',
-  },
-  badgeTextUrgent: {
-    color: '#dc2626',
-    fontWeight: '700',
-  },
-  permanentPill: {
-    backgroundColor: '#ecfdf5',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  permanentText: {
-    fontSize: 11,
-    color: '#059669',
     fontWeight: '600',
   },
-  cardActionRow: {
+  folderSubRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    borderTopWidth: 1,
-    borderTopColor: '#f1f5f9',
-    marginTop: 12,
-    paddingTop: 10,
     gap: 8,
   },
-  actionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: '#f8fafc',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    gap: 4,
-  },
-  actionBtnText: {
+  folderSize: {
     fontSize: 12,
-    color: '#475569',
-    fontWeight: '500',
+    fontFamily: MONO_FONT,
   },
-  deleteBtn: {
-    backgroundColor: '#fef2f2',
-    borderColor: '#fecaca',
+  permFolderBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
   },
-  centerContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-  },
-  loadingText: {
-    fontSize: 13,
-    color: '#64748b',
-    marginTop: 10,
+  permFolderText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#059669',
+    fontFamily: MONO_FONT,
   },
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 60,
-    paddingHorizontal: 30,
+    paddingVertical: 56,
+    paddingHorizontal: 28,
+  },
+  emptyIconCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
   },
   emptyTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#475569',
-    marginTop: 12,
     marginBottom: 6,
   },
   emptySubtitle: {
     fontSize: 13,
-    color: '#94a3b8',
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: 19,
   },
-  bottomBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+  composerContainer: {
     borderTopWidth: 1,
-    borderTopColor: '#e2e8f0',
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 10,
+    gap: 8,
   },
-  uploadFab: {
+  composerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+  },
+  ttlPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    minHeight: 30,
+    borderRadius: 15,
+  },
+  ttlDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  ttlText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  composerHint: {
+    fontSize: 11,
+  },
+  composerInputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  composerIconBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  composerInput: {
+    flex: 1,
+    minHeight: 44,
+    maxHeight: 104,
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingTop: Platform.OS === 'ios' ? 11 : 10,
+    paddingBottom: Platform.OS === 'ios' ? 11 : 10,
+    fontSize: 15,
+    lineHeight: 20,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
+  },
+  sendBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#1890ff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pasteBtn: {
+    minWidth: 64,
+    height: 44,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#2563eb',
-    paddingVertical: 12,
-    borderRadius: 10,
-    shadowColor: '#2563eb',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 3,
+    gap: 4,
   },
-  uploadFabText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#ffffff',
+  pasteBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  disabledBtn: {
+    opacity: 0.6,
   },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.5)',
     justifyContent: 'flex-end',
   },
-  modalSheet: {
-    backgroundColor: '#ffffff',
+  attachSheet: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 32 : 18,
     paddingHorizontal: 20,
   },
   sheetHandle: {
-    width: 36,
+    width: 38,
     height: 4,
-    backgroundColor: '#cbd5e1',
     borderRadius: 2,
     alignSelf: 'center',
     marginBottom: 14,
   },
   sheetTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#64748b',
-    marginBottom: 14,
+    marginBottom: 10,
   },
   sheetOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
+    minHeight: 62,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   sheetIconBox: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
   },
-  sheetOptionTextCol: {
+  sheetOptionCol: {
     flex: 1,
+    gap: 2,
   },
   sheetOptionPrimary: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#0f172a',
-    marginBottom: 2,
   },
-  sheetOptionSecondary: {
+  sheetOptionSub: {
     fontSize: 12,
-    color: '#94a3b8',
   },
   sheetCancelBtn: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    marginTop: 8,
-    borderRadius: 10,
-    backgroundColor: '#f1f5f9',
+    height: 48,
+    marginTop: 10,
+    borderRadius: 12,
   },
   sheetCancelText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#475569',
   },
-  centerModalOverlay: {
+  progressOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
   },
-  folderModalCard: {
-    width: '100%',
-    maxWidth: 380,
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 20,
-  },
-  folderModalTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#0f172a',
-  },
-  folderModalDesc: {
-    fontSize: 13,
-    color: '#64748b',
-    lineHeight: 18,
-    marginBottom: 14,
-  },
-  folderModalInput: {
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 44,
-    fontSize: 14,
-    color: '#0f172a',
-    marginBottom: 16,
-  },
-  folderModalActions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 10,
-  },
-  modalBtn: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-  },
-  modalCancelBtn: {
-    backgroundColor: '#f1f5f9',
-  },
-  modalCancelText: {
-    fontSize: 14,
-    color: '#64748b',
-  },
-  modalConfirmBtn: {
-    backgroundColor: '#2563eb',
-  },
-  modalConfirmText: {
-    fontSize: 14,
-    color: '#ffffff',
-    fontWeight: '600',
-  },
   progressCard: {
     width: '100%',
-    maxWidth: 320,
-    backgroundColor: '#ffffff',
+    maxWidth: 300,
     borderRadius: 16,
-    padding: 24,
+    borderWidth: 1,
+    padding: 22,
     alignItems: 'center',
+    gap: 10,
   },
   progressTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
-    color: '#0f172a',
-    marginBottom: 6,
   },
   progressSub: {
     fontSize: 13,
-    color: '#7c3aed',
     fontWeight: '600',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  progressHint: {
-    fontSize: 11,
-    color: '#94a3b8',
     textAlign: 'center',
   },
 });
